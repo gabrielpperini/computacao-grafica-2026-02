@@ -1,5 +1,7 @@
 # Especificação da Implementação
 
+> Comentário Professor: Vocês não preencheram o SPEC! Preencham-no com a maior brevidade possível.
+
 > [!CAUTION]
 > - Você <ins>**não pode utilizar ferramentas de IA para escrever esta
 >   especificação**</ins>
