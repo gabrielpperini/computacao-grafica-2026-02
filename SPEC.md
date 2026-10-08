@@ -1,134 +1,82 @@
 # Especificação da Implementação
 
-> [!CAUTION]
-> - Você <ins>**não pode utilizar ferramentas de IA para escrever esta
->   especificação**</ins>
-
-> [!WARNING]
-> - Após a entrega da primeira versão completa, esta especificação não
->   poderá ser alterada. A implementação final deverá corresponder ao que
->   estiver descrito neste arquivo.
-
 ## Integrantes da dupla
 
-- **Aluno 1 - Nome**: <mark>`<preencher>`</mark>
-- **Aluno 1 - Cartão UFRGS**: <mark>`<preencher>`</mark>
+- **Aluno 1 - Nome**: `Gabriel Prestes Perini`
+- **Aluno 1 - Cartão UFRGS**: `00334582`
 
-- **Aluno 2 - Nome**: <mark>`<preencher>`</mark>
-- **Aluno 2 - Cartão UFRGS**: <mark>`<preencher>`</mark>
+- **Aluno 2 - Nome**: `Bruno Machado Haberkamp`
+- **Aluno 2 - Cartão UFRGS**: `00314594`
 
 ## Detalhes do que será implementado
 
-- **Título do trabalho**: <mark>`<preencher>`</mark>
-- **Parágrafo curto descrevendo o que será implementado**: <mark>`<preencher>`</mark>
+- **Título do trabalho**: `Rail Rush`
+- **Parágrafo curto descrevendo o que será implementado**: `Jogo 3D de corrida infinita que soma pontos pela distância e coleta de moedas, com obstáculos e power-ups. O personagem principal corre automaticamente e o jogador pode trocar entre 3 faixas, rolar e pular para evitar obstáculos e coletar moedas. Vai ter os power ups classicos do jogo e mais um extra de distribuiçao de moedas em curva Bézier cúbica. A velocidade aumenta com o tempo e é game over quando ele colide com um obstáculo.`
 
 ## Especificação visual
 
 ### Vídeo - Link
 
-> [!IMPORTANT]
-> - Coloque aqui um link para um vídeo que mostre a aplicação gráfica
->   de referência que você vai implementar. **Sua implementação deverá
->   ser o mais parecido possível com o que é mostrado no vídeo (mais
->   detalhes abaixo).**
-> - **Você não pode escolher como referência: (1) algum trabalho realizado
->   por outros alunos desta disciplina, em semestres anteriores. (2) Minecraft.**
-> - Por exemplo, você pode colocar um vídeo de um jogo que você gosta,
->   e seu trabalho final será uma re-implementação do jogo.
-> - O vídeo pode ser um link para YouTube, Google Drive, ou arquivo mp4 dentro
->   do próprio repositório. Mas, garanta que qualquer um tenha
->   permissão de acesso ao vídeo através deste link.
-
-<mark>`<preencher>`</mark>
+[https://www.youtube.com/watch?v=bdmG3oh-ZD8](https://www.youtube.com/watch?v=bdmG3oh-ZD8)
 
 ### Vídeo - Timestamp
 
-> [!IMPORTANT]
-> - Coloque aqui um **intervalo de ~30 segundos** do vídeo acima, que
->   será a base de comparação para avaliar se o seu trabalho final
->   conseguiu ou não reproduzir a referência.
-
-- **Timestamp inicial**: <mark>`<preencher>`</mark>
-- **Timestamp final**: <mark>`<preencher>`</mark>
+- **Timestamp inicial**: `1:30`
+- **Timestamp final**: `2:00`
 
 ### Imagens
 
-> [!IMPORTANT]
-> - Coloque aqui **três imagens** capturadas do vídeo acima, que você
->   irá usar como ilustração para as explicações que vêm abaixo.
-> - As imagens devem estar armazenadas neste repositório, no diretório
->   `images/spec/`, com os nomes `image1`, `image2` e `image3`.
-> - Cada imagem deve usar o formato `.jpg` ou `.png`. Ajuste a extensão
->   nos vínculos abaixo para que corresponda ao arquivo armazenado.
-> - Escolha imagens que correspondam a momentos do intervalo indicado
->   acima ou que sejam relevantes para a comparação com a implementação.
-
 #### Imagem 1
 
-- **Descrição**: <mark>`<preencher>`</mark>
+- **Descrição**: `Personagem principal alternando de linha para colidir com o power-up e coletando-o.`
 
-![Imagem 1](images/spec/image1.jpg)
+![Imagem 1](images/spec/image1.png)
 
 #### Imagem 2
 
-- **Descrição**: <mark>`<preencher>`</mark>
+- **Descrição**: `Personagem principal coletando moedas no jogo através de colisões.`
 
-![Imagem 2](images/spec/image2.jpg)
+![Imagem 2](images/spec/image2.png)
 
 #### Imagem 3
 
-- **Descrição**: <mark>`<preencher>`</mark>
+- **Descrição**: `Personagem principal se movendo para nao colidir com os obstáculos (trens, placas, túneis, etc.).`
 
-![Imagem 3](images/spec/image3.jpg)
+![Imagem 3](images/spec/image3.png)
 
 ## Especificação textual
 
-Para cada um dos requisitos abaixo (detalhados no [Enunciado do Trabalho final - Moodle](https://moodle.ufrgs.br/mod/assign/view.php?id=6302370)), escreva um parágrafo **curto** explicando como este requisito será atendido, apontando itens específicos do vídeo/imagens que você incluiu acima que atendem estes requisitos.
-
 ### Malhas poligonais complexas
-<mark>`<preencher>`</mark>
+`São os .obj, dentre eles o personagem principal, os obstáculos (trens, placas, túneis, etc.), ambientes e os power-ups. Todos eles são malhas poligonais complexas que serão carregadas e renderizadas na cena.`
 
 ### Transformações geométricas controladas pelo usuário
-<mark>`<preencher>`</mark>
+`Setas laterais trocam a faixa do personagem (movimento lateral), seta pra cima faz pular e pra baixo rolar.`
 
 ### Diferentes tipos de câmeras
-<mark>`<preencher>`</mark>
+`A camera principal é look-at em 3ª pessoa, mas há também uma câmera livre com o jogo pausado que é ativada quando clica C. A camera principal tem posicionamento olhando para frente do personagem principal. A camera livre tem o jogo pausado e pode olhar ao redor do cenario se deslocando pela cena.`
 
 ### Instâncias de objetos
-<mark>`<preencher>`</mark>
+`São as moedas, trens, placas, barreiras, túneis, power-ups.`
 
 ### Testes de intersecção
-<mark>`<preencher>`</mark>
+`Todos estarão em collisions.cpp, personagens e obstaculos que viram game over, personagem e moedas pra coleta, personagem e power-ups pra coleta, rampas para subirem em trens.`
 
 ### Modelos de Iluminação em todos os objetos
-<mark>`<preencher>`</mark>
+`Blinn-Phong (difuso + especular + ambiente), com uma luz direcional fazendo o papel de sol. Interpolação de Phong (por fragmento) na maioria dos objetos e Gouraud (por vértice) em moedas, para mostrar os dois modelos.`
 
 ### Mapeamento de texturas em todos os objetos
-<mark>`<preencher>`</mark>
+`Chão com trilhos, paredes com texturas de pedra, prédios do ambiente com texturas de tijolos, moedas com textura de ouro, personagem, trens, placas, túneis e power-ups com suas próprias texturas custumizadas.`
 
 ### Movimentação com curva Bézier cúbica
-<mark>`<preencher>`</mark>
+`Vai ter um power-up em formato de cofrinho de porco que ao ser coletado, faz um porquinho com asas voar em uma curva Bézier cúbica no céu, e distribuindo moedas pelo caminho deixando um rastro de moedas`
 
 ### Animações baseadas no tempo ($\Delta t$)
-<mark>`<preencher>`</mark>
+`velocidade do personagem principal, velocidade dos obstáculos, velocidade dos trens em movimento, velocidade da camera principal, troca de faixa, pulo, rolamento e o fator t da curva Bézier cúbica do power-up de distribuição de moedas.`
 
 ### Funcionalidade extra obrigatória
 
-> [!IMPORTANT]
-> - Descreva a funcionalidade extra relacionada à Computação Gráfica
->   que será implementada.
-> - Esta funcionalidade também deverá ser documentada no arquivo
->   `README.md` da entrega final.
-
-<mark>`<preencher>`</mark>
+`Ao coletar moedas e power ups irá ter um sistema de particulas na colisão para demonstrar a coleta. Também terá um GUI com menu, pausa e gameover.`
 
 ## Limitações esperadas
 
-> [!IMPORTANT]
-> - Coloque aqui uma lista de detalhes visuais ou de interação que
->   aparecem no vídeo e/ou imagens acima, mas que você **não pretende
->   implementar** ou que você **irá implementar parcialmente**.
-> - Para cada item, **explique por que** não será implementado ou por
->   que será implementado parcialmente.
-
-<mark>`<preencher>`</mark>
+`Animaçoes do personagem, como braços e cabeça. Inspetor e cachorro não será implementado. O visual será mais simples e não tão cartoon como no jogo original, sombra no chão do personagem não será implementada, HUD completo com avatar e recorde não será implementado. Pista curva também não será implementada, apenas pista reta.`
