@@ -55,6 +55,8 @@
 ### Diferentes tipos de câmeras
 `A camera principal é look-at em 3ª pessoa, mas há também uma câmera livre com o jogo pausado que é ativada quando clica C. A camera principal tem posicionamento olhando para frente do personagem principal. A camera livre tem o jogo pausado e pode olhar ao redor do cenario se deslocando pela cena.`
 
+> Comentário Professor: implementar movimento da câmera ao entrar em um túnel.
+
 ### Instâncias de objetos
 `São as moedas, trens, placas, barreiras, túneis, power-ups.`
 
@@ -63,6 +65,8 @@
 
 ### Modelos de Iluminação em todos os objetos
 `Blinn-Phong (difuso + especular + ambiente), com uma luz direcional fazendo o papel de sol. Interpolação de Phong (por fragmento) na maioria dos objetos e Gouraud (por vértice) em moedas, para mostrar os dois modelos.`
+
+> Comentário Professor: uma luz direcional não parece suficiente para atingir o visual do jogo. Vão ter que experimentar com mais de uma fonte de luz.
 
 ### Mapeamento de texturas em todos os objetos
 `Chão com trilhos, paredes com texturas de pedra, prédios do ambiente com texturas de tijolos, moedas com textura de ouro, personagem, trens, placas, túneis e power-ups com suas próprias texturas custumizadas.`
@@ -77,6 +81,12 @@
 
 `Ao coletar moedas e power ups irá ter um sistema de particulas na colisão para demonstrar a coleta. Também terá um GUI com menu, pausa e gameover.`
 
+> Comentário Professor: no vídeo de referência não há particulas propriamente ditas. Pode ser implementado, mas deve ser visivelmente particulas se movimentando dinamicamente.
+
 ## Limitações esperadas
 
 `Animaçoes do personagem, como braços e cabeça. Inspetor e cachorro não será implementado. O visual será mais simples e não tão cartoon como no jogo original, sombra no chão do personagem não será implementada, HUD completo com avatar e recorde não será implementado. Pista curva também não será implementada, apenas pista reta.`
+
+> Comentário Professor: o visual de cartoon faz parte da referência visual escolhida. Ou (1) deve ser implementado conforme referência visual; ou (2) adicionar uma nova imagem de referência visual que será usada.
+
+> Comentário Professor: pista curva é parte importante do jogo e deve ser implementada.
