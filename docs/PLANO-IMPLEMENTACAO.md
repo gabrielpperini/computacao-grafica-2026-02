@@ -439,16 +439,16 @@ bool  LandsOnTop(const AABB& player_prev, const AABB& player_now, const AABB& ob
   para o `Game` via `void SetObstacleExtents(ObstacleType, glm::vec3 half_extents)` chamado pelo
   `main.cpp` depois de carregar os OBJ.
 
-- [ ] **Passo 1: testes** — `Test_EveryChunkHasPassableLane` (gerar 500 chunks com seeds 1..20;
+- [x] **Passo 1: testes** — `Test_EveryChunkHasPassableLane` (gerar 500 chunks com seeds 1..20;
   para cada `s` de chunk, pelo menos uma faixa sem SIGN/TRAIN), `Test_HitBarrierGameOver`,
   `Test_JumpOverLowBarrier`, `Test_RollUnderHighBarrier`, `Test_CoinCollectedOnce`,
   `Test_DespawnBehind`.
-- [ ] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
-- [ ] **Passo 5:** desenhar obstáculos e moedas como instâncias (um VAO por tipo, uma `model` por
+- [x] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
+- [x] **Passo 5:** desenhar obstáculos e moedas como instâncias (um VAO por tipo, uma `model` por
   instância); moedas girando com `dt`. Texto provisório de pontuação com `TextRendering_PrintString`.
   Tecla `Espaço`/`Enter` em GAME_OVER chama `Reset()`.
-- [ ] **Passo 6:** rodar: bater, pular e rolar funcionam como descrito; sem colisão "fantasma".
-- [ ] **Passo 7:** commit `IA: obstáculos, moedas e game over`.
+- [x] **Passo 6:** rodar: bater, pular e rolar funcionam como descrito; sem colisão "fantasma".
+- [x] **Passo 7:** commit `IA: obstáculos, moedas e game over`.
 
 ---
 

@@ -10,6 +10,9 @@
 //   2. Em BuildScenarios(), acrescente um bloco "scenarios.push_back(...)" com
 //      nome, duração (s simulados), a lista de AutotestStep {tempo, tecla,
 //      ação, rótulo do screenshot ou NULL} e o final_check (ou NULL).
+//      Opcionais: 'setup' (configura g_Game antes do 1º quadro, ex.: SetupNoSpawn
+//      para uma corrida que não pode terminar em colisão) e 'frame_hook'
+//      (chamado a cada quadro, para registrar estados intermediários).
 //   3. Nada mais: tests/run_e2e.sh obtém a lista por "main --autotest-list".
 // As teclas são entregues à mesma função HandleKey() usada pelo KeyCallback
 // real (nunca ao Correcao_KeyCallback, pois Shift+0..9 encerra o processo).
@@ -46,8 +49,53 @@ extern Game g_Game;
 // Cenários
 // ---------------------------------------------------------------------------
 
+// setup: corrida sem obstáculos/moedas gerados (cenários de física/câmera que
+// não podem terminar em colisão).
+static void SetupNoSpawn()
+{
+    g_Game.spawn_enabled = false;
+    g_Game.Reset();
+}
+
+// Estados intermediários registrados pelos frame_hooks (um cenário por processo).
+static float g_MaxY          = 0.0f;  // maior altura do jogador
+static bool  g_SawRoll       = false; // jogador rolando no chão em algum quadro
+static bool  g_SawGameOver   = false; // passou por GAME_OVER
+static float g_DeathS        = -1.0f; // s do jogador no 1º quadro em GAME_OVER
+static bool  g_DeathTouching = false; // nesse quadro, algum obstáculo encostava no jogador
+
+static void Hook_JumpRoll()
+{
+    const Player& p = g_Game.player;
+    g_MaxY = std::max(g_MaxY, p.y);
+    if (p.roll_timer > 0.0f && p.grounded)
+        g_SawRoll = true;
+}
+
+static void Hook_GameOver()
+{
+    if (g_Game.mode == GameMode::GAME_OVER && !g_SawGameOver)
+    {
+        g_SawGameOver = true;
+        g_DeathS      = g_Game.player.s;
+        // A caixa do jogador, alongada para trás pelo passo do quadro (caixa
+        // varrida), toca alguma parte de algum obstáculo?
+        AABB swept = g_Game.PlayerBox();
+        swept.min.z -= PLAYER_MAX_SPEED * Autotest_FixedDt();
+        AABB parts[3];
+        for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
+        {
+            int n = ObstacleParts(g_Game.obstacles[i], parts);
+            for (int k = 0; k < n; ++k)
+                if (AABBIntersectsAABB(swept, parts[k]))
+                    g_DeathTouching = true;
+        }
+    }
+}
+
 // lane_jump_roll: troca para a direita, pulo, rolamento e duas vezes para a
-// esquerda; no fim o jogador está na faixa -1, no chão, ainda jogando.
+// esquerda; no fim o jogador está na faixa -1, no chão, ainda jogando, e o
+// pulo e o rolamento de fato aconteceram no meio do caminho.
 static bool Check_lane_jump_roll(std::string* why)
 {
     char buf[160];
@@ -55,6 +103,17 @@ static bool Check_lane_jump_roll(std::string* why)
     if (g_Game.mode != GameMode::PLAYING)
     {
         *why = "modo de jogo diferente de PLAYING";
+        return false;
+    }
+    if (g_MaxY < 1.5f)
+    {
+        snprintf(buf, sizeof(buf), "o pulo nao aconteceu: altura maxima = %.2f m (esperava >= 1.5)", g_MaxY);
+        *why = buf;
+        return false;
+    }
+    if (!g_SawRoll)
+    {
+        *why = "o rolamento nao aconteceu (roll_timer nunca > 0 no chao)";
         return false;
     }
     if (p.lane != -1 || std::fabs(p.x - (-LANE_WIDTH)) > 1e-3f)
@@ -105,6 +164,118 @@ static bool Check_long_run(std::string* why)
     return true;
 }
 
+// obstacle_types: um obstáculo de cada tipo (e moedas) logo à frente, sem
+// spawn, para conferir de perto no screenshot que estão apoiados nos trilhos,
+// dentro das faixas e com a textura sem esticar.
+static void SetupObstacleTypes()
+{
+    SetupNoSpawn();
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 14.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 18.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 14.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1, 30.0f));
+    for (int i = 0; i < 4; ++i)
+    {
+        Coin c = {0, 8.0f + i * COIN_SPACING, COIN_HEIGHT, false};
+        g_Game.coins.push_back(c);
+    }
+}
+
+static bool Check_obstacle_types(std::string* why)
+{
+    if (g_Game.mode != GameMode::PLAYING || g_Game.obstacles.size() != 4)
+    {
+        *why = "o jogador bateu ou os obstaculos do cenario sumiram";
+        return false;
+    }
+    return true;
+}
+
+// coins: sem entrada, o jogador passa pela fileira de boas-vindas do 1º chunk
+// (WELCOME_COIN_COUNT moedas na faixa inicial, antes de qualquer obstáculo) e
+// coleta todas. Não depende da semente: o 1º chunk é sempre igual.
+static bool Check_coins(std::string* why)
+{
+    char buf[160];
+    float expected = g_Game.player.s + 10.0f * g_Game.multiplier * g_Game.coins_collected;
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "jogo terminou antes de passar pelas moedas";
+        return false;
+    }
+    if (g_Game.coins_collected != WELCOME_COIN_COUNT || std::fabs(g_Game.score - expected) > 0.1f)
+    {
+        snprintf(buf, sizeof(buf), "moedas = %d (esperava %d), pontos = %.2f (esperava %.2f)",
+                 g_Game.coins_collected, WELCOME_COIN_COUNT, g_Game.score, expected);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// Confere que a corrida acabou por uma colisão de verdade (depois do trecho
+// inicial livre e com um obstáculo de fato junto do jogador, sem "colisão
+// fantasma").
+static bool CheckDeath(std::string* why)
+{
+    char buf[160];
+    if (!g_SawGameOver)
+    {
+        *why = "o jogador nunca bateu (sem GAME_OVER em 40 s sem entrada)";
+        return false;
+    }
+    if (g_DeathS < OBSTACLE_FREE_START - 2.0f * PLAYER_HALF_DEPTH)
+    {
+        snprintf(buf, sizeof(buf), "GAME_OVER cedo demais: s = %.2f m (trecho inicial e livre)", g_DeathS);
+        *why = buf;
+        return false;
+    }
+    if (!g_DeathTouching)
+    {
+        snprintf(buf, sizeof(buf), "GAME_OVER em s = %.2f sem obstaculo encostado no jogador", g_DeathS);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// game_over: spawn ligado (semente fixa), sem entrada: o jogador bate em algo
+// e o jogo fica parado em GAME_OVER até o fim.
+static bool Check_game_over(std::string* why)
+{
+    if (g_Game.mode != GameMode::GAME_OVER)
+    {
+        *why = "modo de jogo diferente de GAME_OVER no fim";
+        return false;
+    }
+    return CheckDeath(why);
+}
+
+// restart / restart_space: depois do GAME_OVER, Enter (ou Espaço) recomeça a
+// corrida do zero; com Espaço, o jogador NÃO pula na corrida nova.
+static bool Check_restart(std::string* why)
+{
+    char buf[160];
+    const Player& p = g_Game.player;
+    if (!CheckDeath(why))
+        return false;
+    if (g_Game.mode != GameMode::PLAYING || p.s > 8.0f || g_Game.score > 8.0f ||
+        g_Game.coins_collected != 0)
+    {
+        snprintf(buf, sizeof(buf), "nao reiniciou: modo %d, s = %.2f, pontos = %.2f, moedas = %d",
+                 (int)g_Game.mode, p.s, g_Game.score, g_Game.coins_collected);
+        *why = buf;
+        return false;
+    }
+    if (!p.grounded || p.y != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "a tecla de reinicio virou pulo: y = %.3f", p.y);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -125,6 +296,8 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.name        = "lane_jump_roll";
         s.duration    = 6.0f;
         s.final_check = Check_lane_jump_roll;
+        s.setup       = SetupNoSpawn;
+        s.frame_hook  = Hook_JumpRoll;
         s.steps.push_back(AutotestStep{0.5f, 0, 0, "start"});
         s.steps.push_back(AutotestStep{1.0f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{1.6f, 0, 0, "right"});
@@ -145,8 +318,66 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.name        = "long_run";
         s.duration    = 60.0f;
         s.final_check = Check_long_run;
+        s.setup       = SetupNoSpawn;
         s.steps.push_back(AutotestStep{30.0f, 0, 0, "t30"});
         s.steps.push_back(AutotestStep{59.5f, 0, 0, "t60"});
+        scenarios.push_back(s);
+    }
+
+    // obstacle_types: close-up de cada tipo de obstáculo e das moedas.
+    {
+        AutotestScenario s;
+        s.name        = "obstacle_types";
+        s.duration    = 0.5f;
+        s.final_check = Check_obstacle_types;
+        s.setup       = SetupObstacleTypes;
+        s.steps.push_back(AutotestStep{0.1f, 0, 0, "closeup"});
+        scenarios.push_back(s);
+    }
+
+    // coins: fileira de moedas de boas-vindas coletada sem entrada.
+    {
+        AutotestScenario s;
+        s.name        = "coins";
+        s.duration    = 3.0f;
+        s.final_check = Check_coins;
+        s.steps.push_back(AutotestStep{0.6f, 0, 0, "ahead"});
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "collected"});
+        scenarios.push_back(s);
+    }
+
+    // game_over: obstáculos gerados com a semente fixa, sem entrada, até bater.
+    {
+        AutotestScenario s;
+        s.name        = "game_over";
+        s.duration    = 40.0f;
+        s.final_check = Check_game_over;
+        s.frame_hook  = Hook_GameOver;
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "obstacles"});
+        s.steps.push_back(AutotestStep{39.5f, 0, 0, "end"});
+        scenarios.push_back(s);
+    }
+
+    // restart: como game_over, e no fim Enter recomeça a corrida.
+    {
+        AutotestScenario s;
+        s.name        = "restart";
+        s.duration    = 40.0f;
+        s.final_check = Check_restart;
+        s.frame_hook  = Hook_GameOver;
+        s.steps.push_back(AutotestStep{39.5f, GLFW_KEY_ENTER, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{39.9f, 0, 0, "after"});
+        scenarios.push_back(s);
+    }
+
+    // restart_space: idem com Espaço (que em PLAYING é pulo).
+    {
+        AutotestScenario s;
+        s.name        = "restart_space";
+        s.duration    = 40.0f;
+        s.final_check = Check_restart;
+        s.frame_hook  = Hook_GameOver;
+        s.steps.push_back(AutotestStep{39.5f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
         scenarios.push_back(s);
     }
 
@@ -167,6 +398,12 @@ static size_t           g_NextStep = 0;
 
 bool  Autotest_Active()    { return g_Active; }
 float Autotest_FixedDt()   { return AUTOTEST_DT; }
+
+void Autotest_Start()
+{
+    if (g_Active && g_Scenario.setup != NULL)
+        g_Scenario.setup();
+}
 
 // Se a janela foi fechada antes do fim do cenário (ESC, botão de fechar,
 // crash do contexto...), conta como falha e avisa no mesmo formato.
@@ -303,6 +540,9 @@ void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
         Finish(window, false, why);
         return;
     }
+
+    if (g_Scenario.frame_hook != NULL)
+        g_Scenario.frame_hook();
 
     // Executa os passos vencidos (teclas e/ou screenshot).
     while (g_NextStep < g_Scenario.steps.size() &&

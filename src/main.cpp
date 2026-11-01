@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 
 // Headers abaixo são específicos de C++
@@ -148,6 +149,7 @@ void TextRendering_Init();
 float TextRendering_LineHeight(GLFWwindow* window);
 float TextRendering_CharWidth(GLFWwindow* window);
 void TextRendering_PrintString(GLFWwindow* window, const std::string &str, float x, float y, float scale = 1.0f);
+void TextRendering_SetColor(float r, float g, float b); // cor das próximas strings (padrão: preto)
 void TextRendering_PrintMatrix(GLFWwindow* window, glm::mat4 M, float x, float y, float scale = 1.0f);
 void TextRendering_PrintVector(GLFWwindow* window, glm::vec4 v, float x, float y, float scale = 1.0f);
 void TextRendering_PrintMatrixVectorProduct(GLFWwindow* window, glm::mat4 M, glm::vec4 v, float x, float y, float scale = 1.0f);
@@ -158,6 +160,7 @@ void TextRendering_PrintMatrixVectorProductDivW(GLFWwindow* window, glm::mat4 M,
 // outras informações do programa. Definidas após main().
 void TextRendering_ShowModelViewProjection(GLFWwindow* window, glm::mat4 projection, glm::mat4 view, glm::mat4 model, glm::vec4 p_model);
 void TextRendering_ShowRunInfo(GLFWwindow* window);
+void TextRendering_ShowGameOver(GLFWwindow* window);
 void TextRendering_ShowFramesPerSecond(GLFWwindow* window);
 
 // Funções callback para comunicação com o sistema operacional e interação do
@@ -229,6 +232,32 @@ DynamicStripMesh g_TrackRails;  // 6 trilhos (2 por faixa)
 // Rotação em torno de Y que vira o coelho para o "forward" local -Z, isto é,
 // de costas para a câmera.
 const float PLAYER_MODEL_YAW = -1.5707963f;
+
+// Obstáculos provisórios (até os modelos finais da Tarefa 3.2): o cubo
+// unitário escalado para estas dimensões (m), na ordem de ObstacleType. As
+// semi-extensões entregues ao Game (SetObstacleExtents) saem da AABB do modelo
+// escalado, e o desenho escala o modelo a partir das caixas que o Game devolve
+// (ObstacleParts): o que se vê é exatamente o que colide.
+const glm::vec3 OBSTACLE_PLACEHOLDER_SIZE[OBSTACLE_TYPE_COUNT] = {
+    glm::vec3(2.0f, 0.9f, 0.3f),  // BARRIER_LOW
+    glm::vec3(2.0f, 1.9f, 0.3f),  // BARRIER_HIGH (viga; o vão de 1.1 m fica embaixo)
+    glm::vec3(2.0f, 3.0f, 0.3f),  // SIGN
+    glm::vec3(2.2f, 3.2f, 12.0f), // TRAIN
+    glm::vec3(2.0f, 1.5f, 8.0f),  // RAMP (ainda não gerada)
+};
+const int OBSTACLE_OBJECT_ID[OBSTACLE_TYPE_COUNT] = {BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP};
+void ConfigureObstacleExtents();
+
+// Moedas: a esfera achatada como um disco de pé, girando em torno do eixo
+// vertical. O disco desenhado é um pouco menor que a esfera de coleta
+// (COIN_RADIUS), para a coleta ser "generosa".
+const float COIN_DRAW_DIAMETER  = 0.8f;  // m
+const float COIN_DRAW_THICKNESS = 0.12f; // m
+const float COIN_SPIN_SPEED     = 3.0f;  // rad/s
+float g_CoinSpin = 0.0f;                 // ângulo atual (acumula dt)
+
+// Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
+void RestartRun();
 
 // Variável que controla se o texto informativo será mostrado na tela.
 bool g_ShowInfoText = true;
@@ -335,6 +364,11 @@ int main(int argc, char* argv[])
     ComputeNormals(&cubemodel);
     BuildTrianglesAndAddToVirtualScene(&cubemodel);
 
+    // Esfera: moedas provisórias (achatadas como disco).
+    ObjModel spheremodel("../../data/sphere.obj");
+    ComputeNormals(&spheremodel);
+    BuildTrianglesAndAddToVirtualScene(&spheremodel);
+
     if ( argc > 1 && !autotest && argv[1][0] != '-' )
     {
         ObjModel model(argv[1]);
@@ -359,6 +393,15 @@ int main(int argc, char* argv[])
     // o cenário seja determinístico; no jogo normal, semente pelo relógio.
     if (!autotest)
         g_Game = Game((unsigned)time(NULL));
+
+    // Dimensões dos obstáculos a partir dos modelos carregados (depois de
+    // criar g_Game, que nasce com as dimensões padrão).
+    ConfigureObstacleExtents();
+
+    // Configuração do cenário E2E (ex.: desligar o spawn), antes do 1º quadro.
+    if (autotest)
+        Autotest_Start();
+
     g_Camera.Snap(g_Game.track.FrameAt(g_Game.player.s), g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s));
 
@@ -391,6 +434,7 @@ int main(int argc, char* argv[])
 
         // Atualizamos a simulação do jogo e a câmera que segue o jogador.
         g_Game.Update(dt);
+        g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
 
         const Player& player = g_Game.player;
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
@@ -487,8 +531,60 @@ int main(int argc, char* argv[])
             DrawObject("the_cube", model, BUILDING, tex_brick, UV_BOX, 1.0f / 3.0f);
         }
 
-        // Imprimimos na tela a distância percorrida, a velocidade e a faixa.
+        // Obstáculos: instâncias do cubo (um VAO para todos), uma matriz de
+        // modelagem por parte sólida. Cada parte é uma caixa em coordenadas de
+        // pista (x lateral, y altura, z = s) vinda do Game; o cubo é escalado
+        // para o tamanho dela, apoiado em y = part.min.y e orientado pelo
+        // referencial da pista no centro da caixa. UV_BOX: textura em metros,
+        // sem esticar (uma repetição a cada 2 m).
+        AABB parts[3];
+        for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
+        {
+            const Obstacle& o = g_Game.obstacles[i];
+            int n = ObstacleParts(o, parts);
+            for (int k = 0; k < n; ++k)
+            {
+                glm::vec3 size = parts[k].max - parts[k].min;
+                float cx = 0.5f * (parts[k].min.x + parts[k].max.x);
+                float cs = 0.5f * (parts[k].min.z + parts[k].max.z);
+                TrackFrame f = g_Game.track.FrameAt(cs);
+                glm::vec4 p = f.position + f.right * cx + glm::vec4(0.0f, parts[k].min.y, 0.0f, 0.0f);
+                glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
+                                * Matrix_Rotate_Y(f.heading)
+                                * Matrix_OnGround("the_cube",
+                                                  size.x / cube_size.x,
+                                                  size.y / cube_size.y,
+                                                  size.z / cube_size.z);
+                DrawObject("the_cube", model, OBSTACLE_OBJECT_ID[(int)o.type], tex_metal, UV_BOX, 0.5f);
+            }
+        }
+
+        // Moedas: instâncias da esfera achatada (disco de pé), girando em
+        // torno do eixo vertical com o ângulo acumulado por dt.
+        {
+            glm::vec3 sphere_size = ObjectSize("the_sphere");
+            for (size_t i = 0; i < g_Game.coins.size(); ++i)
+            {
+                const Coin& c = g_Game.coins[i];
+                if (c.collected)
+                    continue;
+                TrackFrame f = g_Game.track.FrameAt(c.s);
+                glm::vec4 p = f.position + f.right * (c.lane * LANE_WIDTH)
+                            + glm::vec4(0.0f, c.y - 0.5f * COIN_DRAW_DIAMETER, 0.0f, 0.0f);
+                glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
+                                * Matrix_Rotate_Y(f.heading + g_CoinSpin)
+                                * Matrix_OnGround("the_sphere",
+                                                  COIN_DRAW_DIAMETER  / sphere_size.x,
+                                                  COIN_DRAW_DIAMETER  / sphere_size.y,
+                                                  COIN_DRAW_THICKNESS / sphere_size.z);
+                DrawObject("the_sphere", model, COIN, tex_metal, UV_SPHERICAL);
+            }
+        }
+
+        // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
+        // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
+        TextRendering_ShowGameOver(window);
 
         // Imprimimos na tela informação sobre o número de quadros renderizados
         // por segundo (frames per second).
@@ -600,10 +696,47 @@ void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint 
     DrawVirtualObject(name);
 }
 
+// Objeto de g_VirtualScene pelo nome. Ao contrário de g_VirtualScene[name],
+// não insere silenciosamente um objeto vazio quando o nome não existe (o que
+// desenharia nada, com AABB zerada): aborta com mensagem clara.
+const SceneObject& FindSceneObject(const char* name)
+{
+    std::map<std::string, SceneObject>::const_iterator it = g_VirtualScene.find(name);
+    if (it == g_VirtualScene.end())
+    {
+        fprintf(stderr, "ERROR: objeto \"%s\" nao existe em g_VirtualScene (nome do shape no .obj?).\n", name);
+        std::exit(EXIT_FAILURE);
+    }
+    return it->second;
+}
+
+// Passa ao Game as semi-extensões de cada obstáculo, tiradas da AABB do modelo
+// que o representa, escalado para OBSTACLE_PLACEHOLDER_SIZE (por enquanto,
+// sempre o cubo; com os modelos finais muda só o modelo/escala aqui).
+void ConfigureObstacleExtents()
+{
+    glm::vec3 cube_size = ObjectSize("the_cube");
+    for (int t = 0; t < OBSTACLE_TYPE_COUNT; ++t)
+    {
+        glm::vec3 scale = OBSTACLE_PLACEHOLDER_SIZE[t] / cube_size;
+        glm::vec3 half  = 0.5f * cube_size * scale;
+        g_Game.SetObstacleExtents((ObstacleType)t, half);
+    }
+}
+
+// Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a
+// transição suave, que faria a câmera "voar" de volta pela pista).
+void RestartRun()
+{
+    g_Game.Reset();
+    g_Camera.Snap(g_Game.track.FrameAt(g_Game.player.s), g_Game.player.x,
+                  g_Game.track.IsTunnelAt(g_Game.player.s));
+}
+
 // Dimensões da AABB de um objeto de g_VirtualScene (coordenadas de modelo).
 glm::vec3 ObjectSize(const char* name)
 {
-    const SceneObject& obj = g_VirtualScene[name];
+    const SceneObject& obj = FindSceneObject(name);
     return obj.bbox_max - obj.bbox_min;
 }
 
@@ -611,7 +744,7 @@ glm::vec3 ObjectSize(const char* name)
 // centro da base da sua AABB fique na origem (objeto "em pé" sobre y = 0).
 glm::mat4 Matrix_OnGround(const char* name, float sx, float sy, float sz)
 {
-    const SceneObject& obj = g_VirtualScene[name];
+    const SceneObject& obj = FindSceneObject(name);
     float cx = 0.5f * (obj.bbox_min.x + obj.bbox_max.x);
     float cz = 0.5f * (obj.bbox_min.z + obj.bbox_max.z);
     return Matrix_Scale(sx, sy, sz) * Matrix_Translate(-cx, -obj.bbox_min.y, -cz);
@@ -714,12 +847,13 @@ void DrawVirtualObject(const char* object_name)
     // "Ligamos" o VAO. Informamos que queremos utilizar os atributos de
     // vértices apontados pelo VAO criado pela função BuildTrianglesAndAddToVirtualScene(). Veja
     // comentários detalhados dentro da definição de BuildTrianglesAndAddToVirtualScene().
-    glBindVertexArray(g_VirtualScene[object_name].vertex_array_object_id);
+    const SceneObject& obj = FindSceneObject(object_name);
+    glBindVertexArray(obj.vertex_array_object_id);
 
     // Setamos as variáveis "bbox_min" e "bbox_max" do fragment shader
     // com os parâmetros da axis-aligned bounding box (AABB) do modelo.
-    glm::vec3 bbox_min = g_VirtualScene[object_name].bbox_min;
-    glm::vec3 bbox_max = g_VirtualScene[object_name].bbox_max;
+    glm::vec3 bbox_min = obj.bbox_min;
+    glm::vec3 bbox_max = obj.bbox_max;
     glUniform4f(g_bbox_min_uniform, bbox_min.x, bbox_min.y, bbox_min.z, 1.0f);
     glUniform4f(g_bbox_max_uniform, bbox_max.x, bbox_max.y, bbox_max.z, 1.0f);
 
@@ -729,10 +863,10 @@ void DrawVirtualObject(const char* object_name)
     // a documentação da função glDrawElements() em
     // http://docs.gl/gl3/glDrawElements.
     glDrawElements(
-        g_VirtualScene[object_name].rendering_mode,
-        g_VirtualScene[object_name].num_indices,
+        obj.rendering_mode,
+        obj.num_indices,
         GL_UNSIGNED_INT,
-        (void*)(g_VirtualScene[object_name].first_index * sizeof(GLuint))
+        (void*)(obj.first_index * sizeof(GLuint))
     );
 
     // "Desligamos" o VAO, evitando assim que operações posteriores venham a
@@ -1270,6 +1404,15 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);
 
+    // Fim de jogo: Enter (ou Espaço) recomeça a corrida. O return evita que
+    // o mesmo Espaço vire um pulo na corrida nova.
+    if (action == GLFW_PRESS && g_Game.mode == GameMode::GAME_OVER &&
+        (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE))
+    {
+        RestartRun();
+        return;
+    }
+
     // Controles do jogador (só ao pressionar; a repetição automática da
     // tecla segurada é ignorada):
     //   setas esquerda/direita ou A/D -> troca de faixa
@@ -1384,18 +1527,67 @@ void TextRendering_ShowModelViewProjection(
     TextRendering_PrintMatrixVectorProductMoreDigits(window, viewport_mapping, p_ndc, -1.0f, 1.0f-26*pad, 1.0f);
 }
 
-// Escrevemos na tela a distância percorrida, a velocidade e a faixa do jogador.
+// Imprime 'str' na cor (r,g,b) com uma "sombra" preta deslocada 2 pixels
+// para baixo e para a direita: legível sobre qualquer fundo.
+static void PrintShadowed(GLFWwindow* window, const char* str, float x, float y, float scale,
+                          float r, float g, float b)
+{
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    float dx = 2.0f * 2.0f / (float)width;  // 2 pixels em NDC
+    float dy = 2.0f * 2.0f / (float)height;
+    TextRendering_SetColor(0.0f, 0.0f, 0.0f);
+    TextRendering_PrintString(window, str, x + dx, y - dy, scale);
+    TextRendering_SetColor(r, g, b);
+    TextRendering_PrintString(window, str, x, y, scale);
+    TextRendering_SetColor(0.0f, 0.0f, 0.0f);
+}
+
+// Placar no canto superior esquerdo (sempre visível): pontos, moedas e
+// distância. Com o texto informativo ligado (tecla H), também a velocidade e a
+// faixa, no canto inferior esquerdo.
 void TextRendering_ShowRunInfo(GLFWwindow* window)
 {
+    float lineheight = TextRendering_LineHeight(window);
+    float charwidth  = TextRendering_CharWidth(window);
+    const float hud_scale = 1.5f;
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "Pontos: %d", (int)g_Game.score);
+    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 1.5f * hud_scale * lineheight, hud_scale, 1.0f, 1.0f, 1.0f);
+    snprintf(buffer, sizeof(buffer), "Moedas: %d", g_Game.coins_collected);
+    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 2.5f * hud_scale * lineheight, hud_scale, 1.0f, 0.85f, 0.2f);
+    snprintf(buffer, sizeof(buffer), "Distancia: %.0f m", g_Game.player.s);
+    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 3.5f * hud_scale * lineheight, hud_scale, 1.0f, 1.0f, 1.0f);
+
     if ( !g_ShowInfoText )
         return;
 
-    float lineheight = TextRendering_LineHeight(window);
-
-    char buffer[80];
-    snprintf(buffer, sizeof(buffer), "Distancia: %6.1f m   Velocidade: %4.1f m/s   Faixa: %+d",
-             g_Game.player.s, g_Game.player.speed, g_Game.player.lane);
+    snprintf(buffer, sizeof(buffer), "Velocidade: %4.1f m/s   Faixa: %+d",
+             g_Game.player.speed, g_Game.player.lane);
     TextRendering_PrintString(window, buffer, -1.0f+lineheight/10, -1.0f+2*lineheight/10, 1.0f);
+}
+
+// Imprime 'str' centralizado horizontalmente na altura y (NDC), com sombra.
+static void PrintCentered(GLFWwindow* window, const char* str, float y, float scale,
+                          float r, float g, float b)
+{
+    float width = (float)strlen(str) * TextRendering_CharWidth(window) * scale;
+    PrintShadowed(window, str, -0.5f * width, y, scale, r, g, b);
+}
+
+// Mensagem de fim de jogo, no centro da tela.
+void TextRendering_ShowGameOver(GLFWwindow* window)
+{
+    if (g_Game.mode != GameMode::GAME_OVER)
+        return;
+
+    float lineheight = TextRendering_LineHeight(window);
+    char buffer[80];
+    PrintCentered(window, "GAME OVER", 0.15f, 4.0f, 1.0f, 0.25f, 0.15f);
+    snprintf(buffer, sizeof(buffer), "Pontos: %d   Moedas: %d", (int)g_Game.score, g_Game.coins_collected);
+    PrintCentered(window, buffer, 0.15f - 2.5f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
+    PrintCentered(window, "Enter (ou Espaco) para reiniciar", 0.15f - 5.0f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
 }
 
 // Escrevemos na tela o número de quadros renderizados por segundo (frames per

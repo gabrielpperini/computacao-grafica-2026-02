@@ -27,11 +27,12 @@ const GLchar* const textvertexshader_source = ""
 const GLchar* const textfragmentshader_source = ""
 "#version 330\n"
 "uniform sampler2D tex;\n"
+"uniform vec3 textcolor;\n"
 "in vec2 texCoords;\n"
 "out vec4 fragColor;\n"
 "void main()\n"
 "{\n"
-    "fragColor = vec4(0, 0, 0, texture(tex, texCoords).r);\n"
+    "fragColor = vec4(textcolor, texture(tex, texCoords).r);\n"
 "}\n"
 "\0";
 
@@ -86,6 +87,18 @@ GLuint textVAO;
 GLuint textVBO;
 GLuint textprogram_id;
 GLuint texttexture_id;
+GLint  textcolor_uniform;
+
+// Cor do texto (RGB em [0,1]) usada pelas próximas chamadas de
+// TextRendering_PrintString. Padrão: preto.
+float g_TextColor[3] = {0.0f, 0.0f, 0.0f};
+
+void TextRendering_SetColor(float r, float g, float b)
+{
+    g_TextColor[0] = r;
+    g_TextColor[1] = g;
+    g_TextColor[2] = b;
+}
 
 void TextRendering_Init()
 {
@@ -115,6 +128,7 @@ void TextRendering_Init()
 
     GLuint texttex_uniform;
     texttex_uniform = glGetUniformLocation(textprogram_id, "tex");
+    textcolor_uniform = glGetUniformLocation(textprogram_id, "textcolor");
     glCheckError();
 
     GLuint textureunit = 31;
@@ -197,6 +211,7 @@ void TextRendering_PrintString(GLFWwindow* window, const std::string &str, float
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         glUseProgram(textprogram_id);
+        glUniform3f(textcolor_uniform, g_TextColor[0], g_TextColor[1], g_TextColor[2]);
         glBindVertexArray(textVAO);
 
         glDrawArrays(GL_TRIANGLES, 0, 6);

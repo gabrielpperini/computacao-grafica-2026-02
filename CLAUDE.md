@@ -130,13 +130,13 @@ implementado** — o base é só um visualizador.
 | Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado |
 | Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`); falta a câmera livre |
-| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ prédios: o VAO de `the_cube` desenhado a cada 12 m nos dois lados, cada um com sua `model` |
-| Testes de intersecção com propósito, em `collisions.cpp` | ⚠️ API pronta, integração na 2.2 |
+| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ prédios e obstáculos: o VAO de `the_cube` desenhado várias vezes, cada um com sua `model`; moedas: o VAO de `the_sphere` achatado, uma `model` por moeda |
+| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta. Rampa/pouso no trem (`RampHeightAt`/`LandsOnTop`) entram na 4.4 |
 | Iluminação **não-trivial** em todos os objetos | ⚠️ só Lambert difuso com luz fixa; precisa de Phong/Blinn-Phong, especular, etc. |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 3 imagens (`red_brick`, `rocky_terrain_02`, `metal_plate`); revisar quando entrarem os modelos finais |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
-| Objetivo e lógica de controle não-triviais | ❌ |
+| Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
 
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
@@ -205,8 +205,13 @@ Read para conferir visualmente. **Para criar um cenário** edite só `BuildScena
 comportamento visível deve acrescentar um cenário. As teclas do harness passam por
 `HandleKey()` (em `main.cpp`), nunca por `Correcao_KeyCallback()`. O `final_check` lê o estado
 do jogo pelo global `g_Game` (semente fixa 12345 no autotest). Um cenário falha também com
-passos além da duração ou se a janela fechar antes do fim. Cenários atuais: `smoke`,
-`lane_jump_roll` (faixa, pulo, rolamento) e `long_run` (60 s de corrida).
+passos além da duração ou se a janela fechar antes do fim. Opcionais por cenário: `setup`
+(configura `g_Game` antes do 1º quadro — `SetupNoSpawn` desliga o spawn de obstáculos para
+cenários que não podem terminar em colisão) e `frame_hook` (registra estados intermediários).
+Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn), `long_run`
+(60 s de corrida; sem spawn), `obstacle_types` (close-up de cada obstáculo e das moedas),
+`coins` (fileira de boas-vindas coletada), `game_over` (bate sem entrada) e `restart` /
+`restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo).
 
 ### Ao adicionar um novo arquivo `.cpp`
 
@@ -223,9 +228,11 @@ passos além da duração ou se a janela fechar antes do fim. Cenários atuais: 
 
 ## Arquitetura
 
-`src/main.cpp` (~1600 linhas) cuida de janela, shaders, texturas, VAOs, desenho e callbacks. A
+`src/main.cpp` (~1800 linhas) cuida de janela, shaders, texturas, VAOs, desenho e callbacks. A
 lógica sem OpenGL fica em módulos testados por `tests/logic_tests.cpp`: `track.cpp` (pista e
-referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras; global `g_Game` em `main.cpp`),
+referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras, spawn de obstáculos/moedas por
+chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp` (todos os testes
+de intersecção),
 `camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
 `scenery.cpp` (faixas de chão/trilhos e prédios do trecho visível `[s-20, s+150]`). Os demais
 `.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
@@ -248,7 +255,9 @@ ObjModel("../../data/x.obj")            // tinyobjloader; lança se algum shape 
 ```
 
 A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`the_bunny`,
-`the_cube`; hoje só esses dois são carregados), não o nome do arquivo. Um OBJ com vários shapes vira várias entradas
+`the_cube`, `the_sphere`), não o nome do arquivo. Use `FindSceneObject()`/`ObjectSize()`, que
+abortam com mensagem se o nome não existir (nunca `g_VirtualScene[nome]`, que insere um objeto
+vazio em silêncio). Um OBJ com vários shapes vira várias entradas
 compartilhando o mesmo VAO. Objetos sem nome no OBJ fazem o programa lançar exceção.
 
 Para **instâncias** (requisito obrigatório), basta chamar `DrawObject()` (ou `DrawVirtualObject()`)
@@ -266,12 +275,22 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 - **Uniforms**: `model`, `view`, `projection`, `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` têm seus
   locations cacheados nos globais `g_*_uniform` em `LoadShadersFromFiles()`. Um uniform novo
   precisa ser declarado no shader, ter o global criado e o `glGetUniformLocation()` adicionado ali.
-- **IDs de objeto e modos de UV**: os `#define` (`PLAYER`, `GROUND`, ..., `PARTICLE` e
+- **IDs de objeto e modos de UV**: as constantes `const int` (`PLAYER`, `GROUND`, ..., `PARTICLE` e
   `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`/`UV_BOX`) vivem em `include/object_ids.h` e são
-  **copiados** para o topo de `shader_fragment.glsl` — alterar um exige alterar o outro. O fragment
+  **copiadas** para o topo de `shader_fragment.glsl` (a sintaxe é a mesma em C++ e GLSL) — alterar
+  um exige alterar o outro. Não são `#define` porque `BARRIER_LOW`, `SIGN`, `TRAIN` etc. também
+  são nomes de `ObstacleType` (`game.h`). O fragment
   shader usa `uv_mode` para gerar U,V (UV do OBJ, planar XZ em coordenadas de mundo, planar XY
-  normalizado pela AABB, ou esférico) e multiplica por `uv_scale`; `object_id` fica reservado para
-  a iluminação por tipo de objeto.
+  normalizado pela AABB, ou esférico) e multiplica por `uv_scale`; `object_id` dá um tom
+  provisório a obstáculos e moedas (até a Tarefa 3.2) e fica para a iluminação por tipo de objeto.
+
+**Obstáculos e moedas**: `Game` gera um chunk de `CHUNK_LENGTH` por vez (até `s + SPAWN_AHEAD`)
+e descarta o que fica `DESPAWN_BEHIND` para trás. Cada obstáculo é uma `AABB` em coordenadas
+de pista; `ObstacleParts()` devolve as caixas sólidas (a barreira alta tem viga + 2 postes) e é
+usada **tanto na colisão quanto no desenho** (o cubo é escalado para cada caixa), então o que se
+vê é o que colide. As dimensões vêm de `ConfigureObstacleExtents()` em `main.cpp` (AABB do
+modelo escalado → `Game::SetObstacleExtents`). A colisão usa a caixa varrida do jogador (antes ∪
+depois do passo) contra tunneling. `spawn_enabled = false` desliga a geração (testes de física).
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler
@@ -302,8 +321,9 @@ matrizes de modelagem para hierarquias de objetos.
 
 Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW (o estado
 do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição): `←`/`→` ou
-`A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; `H` liga e desliga o
-texto informativo (distância, velocidade, faixa, FPS); `R` recarrega shaders; `ESC` fecha.
+`A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; no GAME OVER, `Enter`
+(ou `Espaço`) reinicia a corrida; `H` liga e desliga o texto informativo (velocidade, faixa,
+FPS — o placar de pontos/moedas/distância fica sempre visível); `R` recarrega shaders; `ESC` fecha.
 Não há controle por mouse no momento. Todo atalho precisa acabar documentado no manual dentro
 do `README.md`.
 

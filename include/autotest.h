@@ -27,7 +27,13 @@ struct AutotestScenario
     const char*                name;
     float                      duration;    // tempo simulado total (s)
     std::vector<AutotestStep>  steps;       // em ordem crescente de 'time'
-    bool (*final_check)(std::string* why);  // NULL = só "não crashou, sem erro de GL"
+    bool (*final_check)(std::string* why) = NULL;  // NULL = só "não crashou, sem erro de GL"
+    // Opcional: configura o jogo antes do 1º quadro (ex.: desligar o spawn de
+    // obstáculos). Chamado por Autotest_Start().
+    void (*setup)() = NULL;
+    // Opcional: chamado a cada quadro (antes das teclas do quadro), para
+    // registrar estados intermediários que o final_check confere no fim.
+    void (*frame_hook)() = NULL;
 };
 
 // Procura "--autotest <nome>" em argv. Retorna true se o cenário existe.
@@ -37,6 +43,10 @@ struct AutotestScenario
 bool  Autotest_Begin(int argc, char* argv[]);
 bool  Autotest_Active();
 float Autotest_FixedDt();   // 1/60 s: no autotest o dt é fixo (execução determinística)
+
+// Chamar uma vez, depois de criar/configurar o jogo e antes do 1º quadro:
+// roda o 'setup' do cenário (se houver).
+void  Autotest_Start();
 
 // Chamar uma vez por quadro, DEPOIS de desenhar e ANTES de glfwSwapBuffers().
 // 'sim_time' é o tempo simulado acumulado (soma dos dt). Injeta as teclas

@@ -23,29 +23,29 @@ uniform mat4 projection;
 
 // Identificadores de objeto (uniform "object_id") e modos de UV (uniform
 // "uv_mode"). ATENÇÃO: espelham include/object_ids.h; manter em sincronia.
-#define PLAYER             0
-#define GROUND             1
-#define RAIL               2
-#define BUILDING           3
-#define BARRIER_LOW        4
-#define BARRIER_HIGH       5
-#define SIGN               6
-#define TRAIN              7
-#define RAMP               8
-#define TUNNEL             9
-#define COIN              10
-#define POWERUP_MAGNET    11
-#define POWERUP_SNEAKERS  12
-#define POWERUP_MULTIPLIER 13
-#define POWERUP_PIGGY     14
-#define FLYING_PIG        15
-#define PARTICLE          16
+const int PLAYER             = 0;
+const int GROUND             = 1;
+const int RAIL               = 2;
+const int BUILDING           = 3;
+const int BARRIER_LOW        = 4;
+const int BARRIER_HIGH       = 5;
+const int SIGN               = 6;
+const int TRAIN              = 7;
+const int RAMP               = 8;
+const int TUNNEL             = 9;
+const int COIN              = 10;
+const int POWERUP_MAGNET    = 11;
+const int POWERUP_SNEAKERS  = 12;
+const int POWERUP_MULTIPLIER = 13;
+const int POWERUP_PIGGY     = 14;
+const int FLYING_PIG        = 15;
+const int PARTICLE          = 16;
 
-#define UV_OBJ        0 // UV vindas do arquivo OBJ
-#define UV_PLANAR_XZ  1 // Projeção planar em XZ do mundo
-#define UV_BBOX_XY    2 // Projeção planar em XY do modelo, normalizada pela AABB
-#define UV_SPHERICAL  3 // Projeção esférica em coordenadas do modelo
-#define UV_BOX        4 // Projeção "caixa" em metros do objeto
+const int UV_OBJ        = 0; // UV vindas do arquivo OBJ
+const int UV_PLANAR_XZ  = 1; // Projeção planar em XZ do mundo
+const int UV_BBOX_XY    = 2; // Projeção planar em XY do modelo, normalizada pela AABB
+const int UV_SPHERICAL  = 3; // Projeção esférica em coordenadas do modelo
+const int UV_BOX        = 4; // Projeção "caixa" em metros do objeto
 
 uniform int object_id;
 uniform int uv_mode;
@@ -85,7 +85,9 @@ void main()
     vec4 n = normalize(normal);
 
     // Vetor que define o sentido da fonte de luz em relação ao ponto atual.
-    vec4 l = normalize(vec4(1.0,1.0,0.0,0.0));
+    // Com componente +Z, para que as faces dos obstáculos voltadas para o
+    // jogador (que corre para -Z) não fiquem só com o termo ambiente.
+    vec4 l = normalize(vec4(1.0,1.0,0.7,0.0));
 
     // Vetor que define o sentido da câmera em relação ao ponto atual.
     vec4 v = normalize(camera_position - p);
@@ -160,6 +162,17 @@ void main()
     // Refletância difusa lida da textura do objeto (unidade 0). O sampler usa
     // GL_REPEAT, então uv_scale > 1 repete a imagem em vez de esticá-la.
     vec3 Kd0 = texture(TextureImage0, vec2(U,V) * uv_scale).rgb;
+
+    // Tons provisórios sobre a textura metálica, para distinguir os obstáculos
+    // e as moedas até os modelos/texturas finais (Tarefa 3.2).
+    if ( object_id == BARRIER_LOW || object_id == BARRIER_HIGH )
+        Kd0 *= vec3(1.0, 0.55, 0.15);  // laranja de obra
+    else if ( object_id == SIGN )
+        Kd0 *= vec3(0.35, 0.55, 1.0);  // placa azul
+    else if ( object_id == TRAIN )
+        Kd0 *= vec3(0.75, 0.25, 0.2);  // vagão vermelho
+    else if ( object_id == COIN )
+        Kd0 = vec3(1.0, 0.75, 0.15) * (0.7 + 0.8 * Kd0.r); // dourado (textura só como relevo)
 
     // Equação de Iluminação (provisória até a Blinn-Phong da Tarefa 3.1):
     // Lambert + um termo ambiente, para que as faces que não recebem a luz
