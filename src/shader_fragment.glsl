@@ -174,8 +174,28 @@ out vec4 color;
 #define M_PI   3.14159265358979323846
 #define M_PI_2 1.57079632679489661923
 
+// Partículas de coleta (Tarefa 6.1; object_id == PARTICLE): cor (uniform
+// material_kd_tint) e alfa global (particle_alpha = life/max_life da partícula).
+uniform float particle_alpha;
+
 void main()
 {
+    // Partículas: sprite redondo PROCEDURAL (textura gerada aqui, sem imagem),
+    // desenhado com blending aditivo (GL_SRC_ALPHA, GL_ONE) pelo main.cpp. O
+    // quad tem UV em [0,1]^2; d = distância ao centro em [0,1] na borda do
+    // círculo inscrito. O brilho cai suavemente (smoothstep) até 0 na borda, com
+    // um núcleo mais quente no meio. Não é iluminado: partículas brilham sozinhas.
+    if ( object_id == PARTICLE )
+    {
+        float d = length(texcoords - vec2(0.5)) * 2.0;
+        float glow = 1.0 - smoothstep(0.25, 1.0, d);   // disco com borda suave
+        float core = 1.0 - smoothstep(0.0, 0.55, d);   // centro mais quente
+        vec3 c = material_kd_tint * (0.9 + 0.8 * core);
+        color.rgb = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
+        color.a = glow * particle_alpha;
+        return;
+    }
+
     // Obtemos a posição da câmera utilizando a inversa da matriz que define o
     // sistema de coordenadas da câmera.
     vec4 origin = vec4(0.0, 0.0, 0.0, 1.0);

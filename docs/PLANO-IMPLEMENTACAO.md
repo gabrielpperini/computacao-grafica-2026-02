@@ -638,9 +638,9 @@ public:
 - Desenho: quad billboard (model matrix montada com `right`/`up` da câmera), textura de brilho
   com alpha, `glEnable(GL_BLEND)` aditivo, `glDepthMask(GL_FALSE)`, desenhado depois dos opacos.
   Alpha e tamanho decaem com `life/max_life` (uniform `particle_fade`).
-- [ ] **Passo 1: testes** — `Test_ParticlesExpire`, `Test_CapacityRespected` (emitir 2000 →
+- [x] **Passo 1: testes** — `Test_ParticlesExpire`, `Test_CapacityRespected` (emitir 2000 →
   `Alive().size() <= 512`), `Test_ParticlesMoveWithDt`.
-- [ ] **Passo 2:** implementar; `OK`; rodar: explosão dourada ao pegar moeda; commit
+- [x] **Passo 2:** implementar; `OK`; rodar: explosão dourada ao pegar moeda; commit
   `IA: sistema de partículas na coleta`.
 
 ### Tarefa 6.2: GUI com ImGui (menu, pausa, game over, HUD)

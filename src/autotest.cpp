@@ -39,6 +39,7 @@
 #include "autotest.h"
 #include "camera.h"
 #include "game.h"
+#include "particles.h"
 #include "scenery.h"
 
 // Definida em main.cpp: o mesmo tratamento de teclas que o KeyCallback usa.
@@ -54,6 +55,8 @@ extern ThirdPersonCamera g_Camera;
 extern FreeCamera g_FreeCamera;
 extern bool g_KeyHeld[];
 extern float g_TunnelDimming;
+// Partículas da coleta (main.cpp).
+extern ParticleSystem g_Particles;
 
 // ---------------------------------------------------------------------------
 // Cenários
@@ -401,6 +404,93 @@ static bool Check_piggy(std::string* why)
     {
         snprintf(buf, sizeof(buf), "curva do porco x = [%.1f, %.1f], altura max = %.1f (nao parece a Bezier)",
                  g_PigMinX, g_PigMaxX, g_PigMaxY);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// particles (Tarefa 6.1): uma moeda e um power-up (ímã) na faixa do jogador,
+// sem obstáculos. Cada coleta dispara uma explosão de partículas no ponto dela:
+// 30 douradas na moeda, 80 vermelhas no power-up. O hook registra quantas
+// partículas existiam no quadro da coleta; no fim (> 1 s depois) todas já
+// expiraram. (O main.cpp consome os eventos do Game antes do hook, então a
+// contagem de Alive() no quadro da coleta é a da explosão recém-criada.)
+static void SetupParticles()
+{
+    SetupNoSpawn();
+    Coin coin = {0, 12.0f, COIN_HEIGHT, false};
+    g_Game.coins.push_back(coin);
+    const PowerUp magnet = {PowerUpType::MAGNET, 0, 30.0f, false};
+    g_Game.powerups.push_back(magnet);
+}
+
+static int  g_PtPrevCoins   = 0;
+static bool g_PtPrevMagnet  = false;
+static int  g_PtCoinBurst   = -1;  // partículas vivas no quadro da coleta da moeda
+static int  g_PtPowerBurst  = -1;  // idem, do power-up
+static int  g_PtMaxAlive    = 0;
+static int  g_PtFrame       = 0;
+static bool g_PtColorsOk    = true; // cores: douradas na moeda, vermelhas no power-up
+
+static void Hook_Particles()
+{
+    ++g_PtFrame;
+    const std::vector<Particle>& alive = g_Particles.Alive();
+    g_PtMaxAlive = std::max(g_PtMaxAlive, (int)alive.size());
+    if (g_Game.coins_collected > g_PtPrevCoins)
+    {
+        g_PtCoinBurst = (int)alive.size();
+        for (size_t i = 0; i < alive.size(); ++i)
+            if (alive[i].color.r < 0.9f || alive[i].color.b > 0.4f)
+                g_PtColorsOk = false;
+    }
+    g_PtPrevCoins = g_Game.coins_collected;
+    const bool magnet = g_Game.PowerUpActive(PowerUpType::MAGNET);
+    if (magnet && !g_PtPrevMagnet)
+    {
+        g_PtPowerBurst = (int)alive.size();
+        for (size_t i = 0; i < alive.size(); ++i)
+            if (alive[i].color.r < 0.9f || alive[i].color.g > 0.4f)
+                g_PtColorsOk = false;
+    }
+    g_PtPrevMagnet = magnet;
+}
+
+static bool Check_particles(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "jogo terminou (nao ha obstaculos neste cenario)";
+        return false;
+    }
+    if (g_PtCoinBurst != 30)
+    {
+        snprintf(buf, sizeof(buf), "particulas no quadro da moeda = %d (esperava 30)", g_PtCoinBurst);
+        *why = buf;
+        return false;
+    }
+    if (g_PtPowerBurst != 80)
+    {
+        snprintf(buf, sizeof(buf), "particulas no quadro do power-up = %d (esperava 80)", g_PtPowerBurst);
+        *why = buf;
+        return false;
+    }
+    if (!g_PtColorsOk)
+    {
+        *why = "cor das particulas errada (moeda dourada / power-up vermelho)";
+        return false;
+    }
+    if (!g_Game.events.empty())
+    {
+        *why = "eventos de coleta nao foram consumidos";
+        return false;
+    }
+    if (!g_Particles.Alive().empty())
+    {
+        snprintf(buf, sizeof(buf), "ainda ha %d particulas vivas no fim (deviam ter expirado)",
+                 (int)g_Particles.Alive().size());
         *why = buf;
         return false;
     }
@@ -1258,6 +1348,24 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{8.0f, 0, 0, "timers_low"});
         s.steps.push_back(AutotestStep{13.0f, GLFW_KEY_UP, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{13.3f, 0, 0, "expired_jump"});
+        scenarios.push_back(s);
+    }
+
+    // particles: a moeda é pega em ~1 s e o power-up em ~2.4 s; capturas logo
+    // depois de cada explosão e uma ~1 s depois (já apagadas).
+    {
+        AutotestScenario s;
+        s.name        = "particles";
+        s.duration    = 4.5f;
+        s.final_check = Check_particles;
+        s.setup       = SetupParticles;
+        s.frame_hook  = Hook_Particles;
+        s.steps.push_back(AutotestStep{0.3f, 0, 0, "before"});
+        s.steps.push_back(AutotestStep{1.1f, 0, 0, "coin"});
+        s.steps.push_back(AutotestStep{1.35f, 0, 0, "coin_late"});
+        s.steps.push_back(AutotestStep{2.55f, 0, 0, "powerup"});
+        s.steps.push_back(AutotestStep{2.8f, 0, 0, "powerup_late"});
+        s.steps.push_back(AutotestStep{3.8f, 0, 0, "faded"});
         scenarios.push_back(s);
     }
 

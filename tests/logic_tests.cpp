@@ -16,6 +16,7 @@
 #include "collisions.h"
 #include "game.h"
 #include "game_config.h"
+#include "particles.h"
 #include "scenery.h"
 #include "track.h"
 
@@ -3420,6 +3421,195 @@ void Test_PigPauseAndReset()
     assert(!g.pig.active && g.pig.t == 0.0f && g.pig_coins_dropped == 0 && g.coins.empty());
 }
 
+// ------------------------------------------------- Partículas (6.1)
+
+static int AliveCount(const ParticleSystem& ps) { return (int)ps.Alive().size(); }
+
+// Toda partícula some depois do maior tempo de vida (0.9 s) e a explosão cria
+// o número pedido, no ponto da coleta, com os limites de velocidade/vida/tamanho.
+void Test_ParticlesExpire()
+{
+    ParticleSystem ps(PARTICLE_CAPACITY);
+    assert(AliveCount(ps) == 0);
+    const vec4 origin(3.0f, 1.0f, -20.0f, 1.0f);
+    ps.Emit(origin, 30, glm::vec3(1.0f, 0.8f, 0.2f), 7);
+    assert(AliveCount(ps) == 30);
+    for (size_t i = 0; i < ps.Alive().size(); ++i) {
+        const Particle& p = ps.Alive()[i];
+        assert(near(p.position, origin));
+        assert(p.velocity.y >= 0.0f);                       // hemisfério superior
+        const float speed = glm::length(glm::vec3(p.velocity.x, p.velocity.y, p.velocity.z));
+        assert(speed >= PARTICLE_MIN_SPEED - 1e-3f && speed <= PARTICLE_MAX_SPEED + 1e-3f);
+        assert(p.life == p.max_life);
+        assert(p.max_life >= PARTICLE_MIN_LIFE && p.max_life <= PARTICLE_MAX_LIFE);
+        assert(p.size >= PARTICLE_MIN_SIZE && p.size <= PARTICLE_MAX_SIZE);
+    }
+    // Antes do menor tempo de vida (0.4 s) todas estão vivas.
+    for (int i = 0; i < 20; ++i) ps.Update(0.016f);   // 0.32 s
+    assert(AliveCount(ps) == 30);
+    // Depois de 0.9 s (+ folga) nenhuma sobra.
+    for (int i = 0; i < 50; ++i) ps.Update(0.016f);   // 1.12 s no total
+    assert(AliveCount(ps) == 0);
+
+    // As vidas diferem: aos 0.512 s algumas já morreram e outras não.
+    ps.Emit(origin, 80, glm::vec3(1.0f), 11);
+    for (int i = 0; i < 32; ++i) ps.Update(0.016f);   // 0.512 s
+    assert(AliveCount(ps) > 0 && AliveCount(ps) < 80);
+    ps.Clear();
+    assert(AliveCount(ps) == 0);
+}
+
+// O pool tem capacidade fixa: emitir 2000 não passa de 512 vivas; as vagas
+// liberadas pela morte voltam a ser usadas.
+void Test_CapacityRespected()
+{
+    ParticleSystem ps(512);
+    ps.Emit(vec4(0, 0, 0, 1), 2000, glm::vec3(1.0f), 1);
+    assert(AliveCount(ps) <= 512);
+    assert(AliveCount(ps) == 512);
+    ps.Emit(vec4(0, 0, 0, 1), 100, glm::vec3(1.0f), 2);   // cheio: descarta
+    assert(AliveCount(ps) == 512);
+    for (int i = 0; i < 70; ++i) ps.Update(0.016f);
+    assert(AliveCount(ps) == 0);
+    ps.Emit(vec4(0, 0, 0, 1), 40, glm::vec3(1.0f), 3);
+    assert(AliveCount(ps) == 40);
+
+    ParticleSystem tiny(10);
+    tiny.Emit(vec4(0, 0, 0, 1), 25, glm::vec3(1.0f), 4);
+    assert(AliveCount(tiny) == 10);
+    tiny.Emit(vec4(0, 0, 0, 1), -5, glm::vec3(1.0f), 5);  // contagem negativa: nada
+    assert(AliveCount(tiny) == 10);
+}
+
+// Sem alocação em tempo de jogo: depois de muitas emissões e atualizações o
+// armazenamento interno continua no mesmo endereço (o vetor nunca realoca).
+void Test_ParticlesNoReallocation()
+{
+    ParticleSystem ps(512);
+    ps.Emit(vec4(0, 0, 0, 1), 1, glm::vec3(1.0f), 0);
+    const Particle* storage = ps.Alive().data();
+    assert(storage != nullptr);
+    for (int round = 0; round < 200; ++round) {
+        ps.Emit(vec4(0, 1, 0, 1), 80, glm::vec3(1.0f), 100 + round);
+        for (int k = 0; k < 5; ++k) ps.Update(0.016f);
+        assert(ps.Alive().data() == storage);
+        assert(AliveCount(ps) <= 512);
+    }
+}
+
+// Mesmo resultado com passos de 1/30 s e 1/120 s (posição integrada com dt
+// de forma exata): partículas movem-se por dt, não por quadro. Compara pares
+// de mesma semente (a ordem é a mesma enquanto nenhuma morre).
+void Test_ParticlesMoveWithDt()
+{
+    ParticleSystem a(512), b(512);
+    const vec4 origin(1.0f, 0.5f, -10.0f, 1.0f);
+    a.Emit(origin, 40, glm::vec3(1.0f), 42);
+    b.Emit(origin, 40, glm::vec3(1.0f), 42);
+    for (int i = 0; i < 9; ++i)  a.Update(1.0f / 30.0f);    // 0.3 s
+    for (int i = 0; i < 36; ++i) b.Update(1.0f / 120.0f);   // 0.3 s
+    assert(AliveCount(a) == 40 && AliveCount(b) == 40);
+    for (size_t i = 0; i < 40; ++i) {
+        assert(near(a.Alive()[i].position, b.Alive()[i].position, 1e-3f));
+        assert(near(a.Alive()[i].velocity, b.Alive()[i].velocity, 1e-3f));
+        assert(nearf(a.Alive()[i].life, b.Alive()[i].life, 1e-3f));
+    }
+    // Analítico com uma partícula: v.y cai PARTICLE_GRAVITY por segundo e
+    // p = p0 + v0 t - g t^2 / 2 em y.
+    ParticleSystem one(8);
+    one.Emit(origin, 1, glm::vec3(1.0f), 5);
+    const Particle p0 = one.Alive()[0];
+    for (int i = 0; i < 12; ++i) one.Update(0.02f);          // 0.24 s < vida mínima
+    const Particle p1 = one.Alive()[0];
+    const float t = 0.24f;
+    assert(nearf(p1.velocity.y, p0.velocity.y - PARTICLE_GRAVITY * t, 1e-3f));
+    assert(nearf(p1.position.y, p0.position.y + p0.velocity.y * t - 0.5f * PARTICLE_GRAVITY * t * t, 1e-3f));
+    assert(nearf(p1.position.x, p0.position.x + p0.velocity.x * t, 1e-3f));
+    assert(nearf(p1.position.z, p0.position.z + p0.velocity.z * t, 1e-3f));
+    // dt = 0 congela; dt negativo é ignorado.
+    one.Update(0.0f);
+    one.Update(-1.0f);
+    assert(near(one.Alive()[0].position, p1.position, 1e-6f));
+}
+
+// Mesma semente -> mesma explosão; sementes diferentes -> explosões diferentes.
+void Test_ParticlesDeterministic()
+{
+    ParticleSystem a(512), b(512), c(512);
+    const vec4 o(0, 1, 0, 1);
+    a.Emit(o, 50, glm::vec3(1.0f), 9);
+    b.Emit(o, 50, glm::vec3(1.0f), 9);
+    c.Emit(o, 50, glm::vec3(1.0f), 10);
+    bool differs = false;
+    for (size_t i = 0; i < 50; ++i) {
+        assert(near(a.Alive()[i].velocity, b.Alive()[i].velocity, 1e-9f));
+        assert(a.Alive()[i].life == b.Alive()[i].life && a.Alive()[i].size == b.Alive()[i].size);
+        if (!near(a.Alive()[i].velocity, c.Alive()[i].velocity)) differs = true;
+    }
+    assert(differs);
+}
+
+// Game: a coleta de uma moeda registra um evento COIN no centro dela.
+void Test_CoinPickupEmitsEvent()
+{
+    Game g = QuietGame();
+    assert(g.events.empty());
+    Coin c = {0, 4.0f, COIN_HEIGHT, false};
+    g.coins.push_back(c);
+    while (g.coins_collected == 0 && g.player.s < 20.0f) g.Update(1.0f / 60.0f);
+    assert(g.coins_collected == 1);
+    assert(g.events.size() == 1);
+    assert(g.events[0].kind == CollectKind::COIN);
+    assert(nearf(g.events[0].position.x, 0.0f) && nearf(g.events[0].position.y, COIN_HEIGHT));
+    assert(nearf(g.events[0].position.z, 4.0f));
+    // O evento fica até o consumidor limpar; a mesma moeda não gera outro.
+    for (int i = 0; i < 30; ++i) g.Update(1.0f / 60.0f);
+    assert(g.events.size() == 1);
+}
+
+// Game: a coleta de power-up registra POWERUP com o tipo e a posição dele
+// (inclusive o cofrinho).
+void Test_PowerupPickupEmitsEvent()
+{
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::SNEAKERS, 0, 3.0f));
+    g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 9.0f));
+    while (g.player.s < 14.0f) g.Update(1.0f / 60.0f);
+    // (O cofrinho lança o porco, que solta moedas: filtra só os power-ups.)
+    std::vector<CollectEvent> pu;
+    for (size_t i = 0; i < g.events.size(); ++i)
+        if (g.events[i].kind == CollectKind::POWERUP) pu.push_back(g.events[i]);
+    assert(pu.size() == 2);
+    assert(pu[0].powerup == PowerUpType::SNEAKERS);
+    assert(nearf(pu[0].position.x, 0.0f) && nearf(pu[0].position.y, POWERUP_HEIGHT));
+    assert(nearf(pu[0].position.z, 3.0f));
+    assert(pu[1].powerup == PowerUpType::PIGGY && nearf(pu[1].position.z, 9.0f));
+}
+
+// Reset limpa os eventos; se ninguém os consome a lista não cresce sem limite
+// (e não realoca: capacidade reservada).
+void Test_EventsResetAndBounded()
+{
+    Game g = QuietGame();
+    Coin c = {0, 3.0f, COIN_HEIGHT, false};
+    g.coins.push_back(c);
+    while (g.coins_collected == 0) g.Update(1.0f / 60.0f);
+    assert(!g.events.empty());
+    g.Reset();
+    assert(g.events.empty());
+
+    const size_t cap = g.events.capacity();
+    assert(cap >= COLLECT_EVENT_CAPACITY);
+    for (int i = 0; i < 200; ++i) {
+        Coin extra = {0, 2.0f + 0.5f * i, COIN_HEIGHT, false};
+        g.coins.push_back(extra);
+    }
+    for (int i = 0; i < 1200 && g.mode == GameMode::PLAYING; ++i) g.Update(1.0f / 60.0f);
+    assert(g.coins_collected > (int)COLLECT_EVENT_CAPACITY);
+    assert(g.events.size() <= COLLECT_EVENT_CAPACITY);
+    assert(g.events.capacity() == cap);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -3575,6 +3765,15 @@ int main()
     Test_PigNoSpawnBeforeTunnel();
     Test_PigNoCoinsInsideTunnel();
     Test_PigPauseAndReset();
+    // Partículas na coleta (6.1)
+    Test_ParticlesExpire();
+    Test_CapacityRespected();
+    Test_ParticlesNoReallocation();
+    Test_ParticlesMoveWithDt();
+    Test_ParticlesDeterministic();
+    Test_CoinPickupEmitsEvent();
+    Test_PowerupPickupEmitsEvent();
+    Test_EventsResetAndBounded();
     printf("OK\n");
     return 0;
 }

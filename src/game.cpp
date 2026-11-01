@@ -89,6 +89,8 @@ void Game::Reset()
     obstacles.clear();
     coins.clear();
     powerups.clear();
+    events.clear();
+    events.reserve(COLLECT_EVENT_CAPACITY);
     coins_collected = 0;
     score = 0.0f;
     multiplier = 1;
@@ -250,6 +252,7 @@ void Game::Update(float dt)
             c.collected = true;
             coins_collected += 1;
             score += 10.0f * multiplier;
+            PushCollectEvent(CollectKind::COIN, PowerUpType::MAGNET, center);
         }
     }
 
@@ -286,6 +289,18 @@ void Game::StepPowerUpTimers(float dt)
     multiplier = PowerUpActive(PowerUpType::MULTIPLIER) ? 2 : 1;
 }
 
+void Game::PushCollectEvent(CollectKind kind, PowerUpType powerup, const glm::vec3& position)
+{
+    // Depois de uma cópia/atribuição de Game a capacidade pode ter se perdido:
+    // reserva de novo (uma vez), para o push_back abaixo nunca realocar.
+    if (events.capacity() < COLLECT_EVENT_CAPACITY)
+        events.reserve(COLLECT_EVENT_CAPACITY);
+    if (events.size() >= COLLECT_EVENT_CAPACITY)
+        return;
+    CollectEvent e = {kind, powerup, position};
+    events.push_back(e);
+}
+
 // Coleta os power-ups tocados pela caixa varrida do jogador. Pegar um tipo com
 // duração (re)põe o tempo em POWERUP_DURATION: o mesmo tipo de novo só
 // renova, não soma nem duplica o efeito. O cofrinho só registra o pedido de
@@ -300,6 +315,7 @@ void Game::CollectPowerUps(const AABB& swept)
         if (!SphereIntersectsAABB(center, POWERUP_RADIUS, swept))
             continue;
         p.collected = true;
+        PushCollectEvent(CollectKind::POWERUP, p.type, center);
         if (p.type == PowerUpType::PIGGY)
             piggy_pickups += 1;
         else

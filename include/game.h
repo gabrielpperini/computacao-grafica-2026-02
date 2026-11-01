@@ -172,6 +172,22 @@ const float TRACK_KEEP_MARGIN       = 5.0f;  // m
 // (o.box). Devolve o número de partes escritas em parts[0..2].
 int ObstacleParts(const Obstacle& o, AABB parts[3]);
 
+// ---- Eventos de coleta (Tarefa 6.1) ----
+//
+// Cada moeda ou power-up coletado registra um evento em Game::events, com a
+// posição em coordenadas de PISTA (x lateral, y altura, z = s) do centro do que
+// foi pego. Quem desenha (main.cpp) converte para o mundo, dispara as partículas
+// e limpa a lista a cada quadro. O Game não conhece partículas nem OpenGL. Se
+// ninguém consumir, a lista guarda no máximo COLLECT_EVENT_CAPACITY eventos (os
+// seguintes são descartados), então nunca cresce nem realoca depois do reserve.
+enum class CollectKind { COIN, POWERUP };
+struct CollectEvent {
+    CollectKind kind;
+    PowerUpType powerup;  // só vale para kind == POWERUP
+    glm::vec3 position;
+};
+const size_t COLLECT_EVENT_CAPACITY = 64;
+
 class Game {
 public:
     explicit Game(unsigned seed);
@@ -269,6 +285,10 @@ public:
     int piggy_pickups;
     bool PowerUpActive(PowerUpType type) const { return powerup_timer[(int)type] > 0.0f; }
 
+    // Coletas do(s) último(s) passo(s) ainda não consumidas (Tarefa 6.1; veja
+    // CollectEvent). Quem consome as lê e chama events.clear(). Reset() limpa.
+    std::vector<CollectEvent> events;
+
     // Porco voador (Tarefa 5.3). pig_coins_dropped = moedas soltas por ele
     // desde o Reset (as puladas por cair dentro de obstáculo não contam).
     FlyingPig pig;
@@ -331,6 +351,8 @@ private:
     void StepFlyingPig(float dt);
     void DropPigCoin();
     void StepFallingCoins(float dt);
+    // Registra uma coleta em 'events' (descarta se a lista já está cheia).
+    void PushCollectEvent(CollectKind kind, PowerUpType powerup, const glm::vec3& position);
     float Random01();             // [0, 1), portável (só usa a saída do mt19937)
     int RandomInt(int lo, int hi); // [lo, hi]
 

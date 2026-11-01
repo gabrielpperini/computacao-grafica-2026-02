@@ -53,6 +53,7 @@
 #include "matrices.h"
 #include "game_config.h"
 #include "object_ids.h"
+#include "particles.h"
 #include "autotest.h"
 #include "game.h"
 #include "camera.h"
@@ -375,6 +376,21 @@ const float PIG_WING_ROOT_Y = 0.50f;
 const float PIG_WING_ROOT_Z = 0.02f;
 void DrawFlyingPig(const Game& game);
 
+// Partículas de coleta (Tarefa 6.1): sistema sem GL (include/particles.h) + um
+// quad unitário com UV, desenhado uma vez por partícula como billboard
+// (voltado para a câmera) com blending aditivo, depois de todos os opacos.
+// g_Particles é global e não-static para o harness E2E conferi-lo.
+ParticleSystem g_Particles(PARTICLE_CAPACITY);
+unsigned g_ParticleSeed = 1;          // semente da próxima explosão (incrementa a cada evento)
+GLuint g_ParticleQuadVAO = 0;
+const int PARTICLES_PER_COIN    = 30;
+const int PARTICLES_PER_POWERUP = 80;
+const glm::vec3 PARTICLE_COIN_COLOR = glm::vec3(1.00f, 0.78f, 0.20f); // dourado
+void CreateParticleQuad();
+glm::vec3 PowerUpParticleColor(PowerUpType type);
+void EmitCollectParticles(Game& game);
+void DrawParticles(const glm::mat4& view);
+
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
 
@@ -403,6 +419,7 @@ GLint g_material_kd_tint_uniform;
 GLint g_material_ks_uniform;
 GLint g_material_q_uniform;
 GLint g_material_emissive_uniform;
+GLint g_particle_alpha_uniform;
 GLint g_num_tunnels_uniform;
 GLint g_tunnel_start_uniform;
 GLint g_tunnel_forward_uniform;
@@ -580,6 +597,9 @@ int main(int argc, char* argv[])
     // Inicializamos o código para renderização de texto.
     TextRendering_Init();
 
+    // Quad unitário das partículas (criado em código, sem arquivo .obj).
+    CreateParticleQuad();
+
     // Malhas dinâmicas do chão, dos trilhos e dos dormentes, com capacidade
     // para o trecho visível inteiro (veja MaxVerticesPerStrip() e
     // MaxSleeperVertices() em scenery.cpp).
@@ -653,6 +673,12 @@ int main(int argc, char* argv[])
 
         // Atualizamos a simulação do jogo e a câmera que segue o jogador.
         g_Game.Update(dt);
+        // Partículas da coleta: as já existentes andam primeiro e só então
+        // nascem as novas (a explosão aparece inteira no quadro da coleta). Só
+        // avançam em PLAYING (dt = 0 fora dele): congelam na câmera livre, na
+        // pausa e no game over, como o resto do jogo.
+        g_Particles.Update(g_Game.mode == GameMode::PLAYING ? dt : 0.0f);
+        EmitCollectParticles(g_Game);
         // Câmera livre: o jogo fica congelado (nada se anima, nem as moedas).
         const bool free_camera = g_Game.mode == GameMode::FREE_CAMERA;
         if (!free_camera)
@@ -869,6 +895,10 @@ int main(int argc, char* argv[])
         // Porco voador do cofrinho, voando na curva de Bézier no céu.
         if (g_Game.pig.active)
             DrawFlyingPig(g_Game);
+
+        // Partículas da coleta: por último entre os objetos 3D (translúcidas,
+        // aditivas, sem escrever no z-buffer).
+        DrawParticles(view);
         // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
         // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
@@ -1336,11 +1366,127 @@ void DrawFlyingPig(const Game& game)
     }
 }
 
+// Quad unitário [-0.5, 0.5]^2 no plano XY, normal +Z, UV em [0,1]^2, como
+// GL_TRIANGLE_STRIP de 4 vértices (CCW visto de +Z). Mesmos "locations" de
+// shader_vertex.glsl (0 = posição, 1 = normal, 2 = UV).
+void CreateParticleQuad()
+{
+    const float positions[16] = {-0.5f, -0.5f, 0.0f, 1.0f,   0.5f, -0.5f, 0.0f, 1.0f,
+                                 -0.5f,  0.5f, 0.0f, 1.0f,   0.5f,  0.5f, 0.0f, 1.0f};
+    const float normals[16]   = {0.0f, 0.0f, 1.0f, 0.0f,   0.0f, 0.0f, 1.0f, 0.0f,
+                                 0.0f, 0.0f, 1.0f, 0.0f,   0.0f, 0.0f, 1.0f, 0.0f};
+    const float uvs[8]        = {0.0f, 0.0f,   1.0f, 0.0f,   0.0f, 1.0f,   1.0f, 1.0f};
+    const float* data[3]      = {positions, normals, uvs};
+    const GLint  dims[3]      = {4, 4, 2};
+
+    glGenVertexArrays(1, &g_ParticleQuadVAO);
+    glBindVertexArray(g_ParticleQuadVAO);
+    for (GLuint i = 0; i < 3; ++i)
+    {
+        GLuint vbo;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, 4 * dims[i] * sizeof(float), data[i], GL_STATIC_DRAW);
+        glVertexAttribPointer(i, dims[i], GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(i);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+// Cor das faíscas de cada power-up (brilhantes, para o blending aditivo).
+glm::vec3 PowerUpParticleColor(PowerUpType type)
+{
+    switch (type)
+    {
+    case PowerUpType::MAGNET:     return glm::vec3(1.00f, 0.30f, 0.25f); // vermelho
+    case PowerUpType::SNEAKERS:   return glm::vec3(0.30f, 0.65f, 1.00f); // azul
+    case PowerUpType::MULTIPLIER: return glm::vec3(0.45f, 1.00f, 0.40f); // verde
+    case PowerUpType::PIGGY:      return glm::vec3(1.00f, 0.50f, 0.75f); // rosa
+    }
+    return glm::vec3(1.0f);
+}
+
+// Consome os eventos de coleta do Game (posição em coordenadas de pista:
+// x lateral, y altura, z = s): converte cada um para o MUNDO com o referencial
+// da pista em s e dispara a explosão (moeda: PARTICLES_PER_COIN douradas;
+// power-up: PARTICLES_PER_POWERUP na cor do tipo). As partículas ficam onde
+// nasceram (não acompanham o jogador). Esvazia a lista, sem alocar.
+void EmitCollectParticles(Game& game)
+{
+    std::vector<CollectEvent>& events = game.events;
+    for (size_t i = 0; i < events.size(); ++i)
+    {
+        const CollectEvent& e = events[i];
+        const TrackFrame f = game.track.FrameAt(e.position.z);
+        const glm::vec4 world = f.position + f.right * e.position.x
+                              + glm::vec4(0.0f, e.position.y, 0.0f, 0.0f);
+        if (e.kind == CollectKind::COIN)
+            g_Particles.Emit(world, PARTICLES_PER_COIN, PARTICLE_COIN_COLOR, g_ParticleSeed++);
+        else
+            g_Particles.Emit(world, PARTICLES_PER_POWERUP, PowerUpParticleColor(e.powerup), g_ParticleSeed++);
+    }
+    events.clear();
+}
+
+// Desenha as partículas vivas como billboards: o quad unitário com a matriz de
+// modelagem montada A MAO (sem glm::rotate/lookAt) a partir dos eixos da câmera.
+// As linhas da matriz de visão são os eixos da câmera em coordenadas de mundo
+// (view[coluna][linha]): linha 0 = direita, linha 1 = cima, linha 2 = "trás"
+// (de onde a câmera olha, ou seja, a normal do quad voltada para ela). A matriz
+// tem as colunas (direita*size, cima*size, trás, posição). Tamanho e alfa
+// caem com life/max_life. Blending aditivo (GL_SRC_ALPHA, GL_ONE): sobreposição
+// soma brilho e a ordem de desenho não importa (não precisa ordenar). O
+// z-buffer é lido (partículas atrás de prédios ficam escondidas) mas não
+// escrito, e o culling é desligado. Tudo é restaurado ao fim.
+void DrawParticles(const glm::mat4& view)
+{
+    const std::vector<Particle>& alive = g_Particles.Alive();
+    if (alive.empty())
+        return;
+
+    const glm::vec4 right(view[0][0], view[1][0], view[2][0], 0.0f);
+    const glm::vec4 up(view[0][1], view[1][1], view[2][1], 0.0f);
+    const glm::vec4 back(view[0][2], view[1][2], view[2][2], 0.0f);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+
+    glUniform1i(g_object_id_uniform, PARTICLE);
+    glUniform1i(g_uv_mode_uniform, UV_OBJ);
+    glUniform1f(g_uv_scale_uniform, 1.0f);
+    glUniform1i(g_shading_mode_uniform, 0);
+    glBindVertexArray(g_ParticleQuadVAO);
+    for (size_t i = 0; i < alive.size(); ++i)
+    {
+        const Particle& p = alive[i];
+        const float fade = std::max(p.life / p.max_life, 0.0f);   // 1 -> 0 ao longo da vida
+        const float size = p.size * fade;
+        glm::mat4 model(1.0f);
+        model[0] = right * size;
+        model[1] = up * size;
+        model[2] = back;
+        model[3] = p.position;
+        glUniformMatrix4fv(g_model_uniform, 1, GL_FALSE, glm::value_ptr(model));
+        glUniform3f(g_material_kd_tint_uniform, p.color.x, p.color.y, p.color.z);
+        glUniform1f(g_particle_alpha_uniform, fade);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+    glBindVertexArray(0);
+
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
 // Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a
 // transição suave, que faria a câmera "voar" de volta pela pista).
 void RestartRun()
 {
     g_Game.Reset();
+    g_Particles.Clear();
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
@@ -1551,6 +1697,7 @@ void LoadShadersFromFiles()
     g_material_ks_uniform          = glGetUniformLocation(g_GpuProgramID, "material_ks");
     g_material_q_uniform           = glGetUniformLocation(g_GpuProgramID, "material_q");
     g_material_emissive_uniform    = glGetUniformLocation(g_GpuProgramID, "material_emissive");
+    g_particle_alpha_uniform       = glGetUniformLocation(g_GpuProgramID, "particle_alpha");
     g_num_tunnels_uniform          = glGetUniformLocation(g_GpuProgramID, "num_tunnels");
     g_tunnel_start_uniform         = glGetUniformLocation(g_GpuProgramID, "tunnel_start");
     g_tunnel_forward_uniform       = glGetUniformLocation(g_GpuProgramID, "tunnel_forward");
