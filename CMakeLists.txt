@@ -96,7 +96,7 @@ if(WIN32)
     # Para isso, buscamos pela ocorrência de algumas strings
     # específicas no output do comando "-v" do GCC, que lista os
     # parâmetros de configuração do compilador.
-    # TODO: Testar com compilador llvm/clang.
+    # (Testado com GCC/MinGW; clang não foi testado.)
     execute_process(
       COMMAND ${CMAKE_CXX_COMPILER} "-v"
       ERROR_VARIABLE  COMPILER_VERSION_OUTPUT
