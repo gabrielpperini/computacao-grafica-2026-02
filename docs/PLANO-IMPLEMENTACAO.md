@@ -327,7 +327,7 @@ registrar `src/track.cpp` nos dois builds e no alvo de testes.
   pulo só com `grounded`; rolar no ar força `vy = -JUMP_VELOCITY` (desce rápido) e inicia
   `roll_timer`; pular cancela rolamento; `speed` cresce `PLAYER_ACCEL` por segundo até o máximo.
 
-- [ ] **Passo 1: testes**
+- [x] **Passo 1: testes**
   ```cpp
   void Test_LaneClamp()   { Game g(1); g.HandleInput(Input::LEFT); g.HandleInput(Input::LEFT);
                             assert(g.player.lane == -1); }
@@ -348,8 +348,8 @@ registrar `src/track.cpp` nos dois builds e no alvo de testes.
                              for (int i=0;i<240;i++) b.Update(1/240.f);
                              assert(fabs(a.player.s - b.player.s) < 0.01f); }
   ```
-- [ ] **Passo 2:** rodar — falha; **Passo 3:** implementar; **Passo 4:** rodar — `OK`.
-- [ ] **Passo 5:** commit `IA: jogador com troca de faixa, pulo e rolamento`.
+- [x] **Passo 2:** rodar — falha; **Passo 3:** implementar; **Passo 4:** rodar — `OK`.
+- [x] **Passo 5:** commit `IA: jogador com troca de faixa, pulo e rolamento`.
 
 ### Tarefa 1.3: Câmera 3ª pessoa e desenho da corrida
 

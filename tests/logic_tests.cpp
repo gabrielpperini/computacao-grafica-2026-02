@@ -9,6 +9,7 @@
 
 #include <glm/vec4.hpp>
 
+#include "game.h"
 #include "game_config.h"
 #include "track.h"
 
@@ -149,6 +150,163 @@ void Test_TrackLeftCurveEndsHeadingLeft()
     assert(nearf(er.heading, -kHalfPi, 1e-3f));
 }
 
+// ---------------------------------------------------------------- Game (1.2)
+
+void Test_LaneClamp()
+{
+    Game g(1);
+    g.HandleInput(Input::LEFT);
+    g.HandleInput(Input::LEFT);
+    assert(g.player.lane == -1);
+    g.HandleInput(Input::RIGHT);
+    g.HandleInput(Input::RIGHT);
+    g.HandleInput(Input::RIGHT);
+    assert(g.player.lane == 1);
+}
+
+void Test_LaneMoveTime() // 1 faixa em 1 s (LANE_WIDTH / LANE_SWITCH_SPEED < 1 s)
+{
+    Game g(1);
+    g.HandleInput(Input::RIGHT);
+    for (int i = 0; i < 60; i++) g.Update(1 / 60.f);
+    assert(std::fabs(g.player.x - LANE_WIDTH) < 1e-4);
+}
+
+void Test_LaneNoOvershoot() // x nunca passa do alvo, nem com dt grande
+{
+    Game g(1);
+    g.HandleInput(Input::LEFT);
+    for (int i = 0; i < 30; i++) {
+        g.Update(MAX_DT);
+        assert(g.player.x >= -LANE_WIDTH);
+    }
+    assert(g.player.x == -LANE_WIDTH);
+}
+
+void Test_JumpLands()
+{
+    Game g(1);
+    g.HandleInput(Input::JUMP);
+    g.Update(0.01f);
+    assert(g.player.y > 0);
+    for (int i = 0; i < 200; i++) g.Update(0.01f);
+    assert(g.player.y == 0 && g.player.grounded);
+    assert(g.player.vy == 0);
+}
+
+void Test_NoDoubleJump()
+{
+    Game g(1);
+    g.HandleInput(Input::JUMP);
+    g.Update(0.1f);
+    float vy = g.player.vy;
+    g.HandleInput(Input::JUMP);
+    assert(g.player.vy == vy);
+}
+
+void Test_SpeedCap()
+{
+    Game g(1);
+    for (int i = 0; i < 100000; i++) g.Update(MAX_DT);
+    assert(g.player.speed == PLAYER_MAX_SPEED);
+}
+
+void Test_SpeedRamp() // 5 s de jogo -> +5 * PLAYER_ACCEL
+{
+    Game g(1);
+    for (int i = 0; i < 100; i++) g.Update(MAX_DT);
+    assert(nearf(g.player.speed, PLAYER_START_SPEED + 5 * PLAYER_ACCEL, 1e-3f));
+}
+
+void Test_DtIndependent()
+{
+    Game a(1), b(1);
+    for (int i = 0; i < 60; i++) a.Update(1 / 60.f);
+    for (int i = 0; i < 240; i++) b.Update(1 / 240.f);
+    assert(std::fabs(a.player.s - b.player.s) < 0.01f);
+}
+
+void Test_DtClamped() // dt gigante vale no máximo MAX_DT
+{
+    Game a(1), b(1);
+    a.Update(5.0f);
+    b.Update(MAX_DT);
+    assert(a.player.s == b.player.s);
+    a.Update(-1.0f); // dt negativo não anda para trás
+    assert(a.player.s == b.player.s);
+}
+
+void Test_RollTimerExpires()
+{
+    Game g(1);
+    g.HandleInput(Input::ROLL);
+    assert(g.player.roll_timer == ROLL_DURATION);
+    g.Update(ROLL_DURATION / 20);
+    assert(g.player.roll_timer > 0);
+    for (int i = 0; i < 20; i++) g.Update(0.05f);
+    assert(g.player.roll_timer == 0);
+}
+
+void Test_JumpCancelsRoll()
+{
+    Game g(1);
+    g.HandleInput(Input::ROLL);
+    g.HandleInput(Input::JUMP);
+    assert(g.player.roll_timer == 0);
+    assert(g.player.vy > 0 && !g.player.grounded);
+}
+
+void Test_RollInAirDescendsFaster()
+{
+    Game g(1);
+    g.HandleInput(Input::JUMP);
+    g.Update(0.05f);
+    assert(g.player.vy > 0);
+    g.HandleInput(Input::ROLL);
+    assert(g.player.vy == -JUMP_VELOCITY);
+    assert(g.player.roll_timer == ROLL_DURATION);
+    for (int i = 0; i < 100; i++) g.Update(0.01f);
+    assert(g.player.grounded && g.player.y == 0);
+}
+
+void Test_InputIgnoredWhenNotPlaying()
+{
+    Game g(1);
+    g.mode = GameMode::PAUSED;
+    g.HandleInput(Input::LEFT);
+    g.HandleInput(Input::JUMP);
+    g.Update(0.05f);
+    assert(g.player.lane == 0 && g.player.grounded);
+    assert(g.player.s == 0 && g.elapsed == 0);
+}
+
+void Test_GameResetRestoresState()
+{
+    Game g(7), fresh(7);
+    g.HandleInput(Input::RIGHT);
+    g.HandleInput(Input::JUMP);
+    for (int i = 0; i < 100; i++) g.Update(0.02f);
+    g.mode = GameMode::GAME_OVER;
+    g.Reset();
+    assert(g.mode == GameMode::PLAYING);
+    assert(g.elapsed == 0);
+    assert(g.player.lane == 0 && g.player.x == 0 && g.player.y == 0);
+    assert(g.player.s == 0 && g.player.speed == PLAYER_START_SPEED);
+    assert(g.player.grounded && g.player.vy == 0 && g.player.roll_timer == 0);
+    // pista regenerada com a mesma semente: mesmos frames que um jogo novo
+    g.Update(0.05f);
+    fresh.Update(0.05f);
+    assert(near(g.track.FrameAt(100).position, fresh.track.FrameAt(100).position));
+}
+
+void Test_GameKeepsTrackAhead()
+{
+    Game g(1);
+    for (int i = 0; i < 200; i++) g.Update(MAX_DT);
+    assert(g.track.SegmentAt(g.player.s + SPAWN_AHEAD - 1.0f) != nullptr);
+    assert(g.track.SegmentAt(g.player.s) != nullptr);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -158,6 +316,21 @@ int main()
     Test_TrackDeterministicSeed();
     Test_TrackCurveContinuity();
     Test_TrackLeftCurveEndsHeadingLeft();
+    Test_LaneClamp();
+    Test_LaneMoveTime();
+    Test_LaneNoOvershoot();
+    Test_JumpLands();
+    Test_NoDoubleJump();
+    Test_SpeedCap();
+    Test_SpeedRamp();
+    Test_DtIndependent();
+    Test_DtClamped();
+    Test_RollTimerExpires();
+    Test_JumpCancelsRoll();
+    Test_RollInAirDescendsFaster();
+    Test_InputIgnoredWhenNotPlaying();
+    Test_GameResetRestoresState();
+    Test_GameKeepsTrackAhead();
     printf("OK\n");
     return 0;
 }
