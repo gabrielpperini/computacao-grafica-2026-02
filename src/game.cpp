@@ -699,8 +699,10 @@ int Game::SafeLaneOfChunk(int chunk) const
 // Anda cada trem móvel (velocity < 0) em velocity*dt. Ele para (velocity = 0,
 // de vez) se a ponta dianteira passaria de min_s (o começo da reta onde nasceu)
 // ou entraria na folga TRAIN_STOP_GAP de outro obstáculo da mesma faixa que
-// está à sua frente. Os obstáculos ficam em ordem de s, então quem está à
-// frente já andou neste passo. Positivo não é suportado (nenhum trem sobe).
+// está à sua frente. Dentro de cada faixa os obstáculos ficam em ordem de s (um
+// por chunk, a rampa antes do trem; o vetor todo não está ordenado, pois o
+// chunk percorre as faixas em sequência), então quem está à frente na mesma
+// faixa já andou neste passo. Positivo não é suportado (nenhum trem sobe).
 void Game::MoveObstacles(float dt)
 {
     obstacle_dz_.assign(obstacles.size(), 0.0f);

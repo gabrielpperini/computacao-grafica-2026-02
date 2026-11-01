@@ -280,7 +280,7 @@ public:
     Track track;
     float elapsed;  // tempo simulado em PLAYING (s)
 
-    std::vector<Obstacle> obstacles; // ordenados por s (ordem de geração)
+    std::vector<Obstacle> obstacles; // ordem de geração: por chunk, depois por faixa (-1, 0, 1), com a rampa antes do trem; só POR FAIXA fica em ordem de s
     std::vector<Coin> coins;
     int coins_collected;
     float score;     // += distância percorrida; += 10*multiplier por moeda
