@@ -22,6 +22,18 @@ set(SOURCES
   src/glad.c
 )
 
+# Dear ImGui v1.92.9b (https://github.com/ocornut/imgui, licença MIT), copiado
+# sem alterações (só o comentário FONTE no topo) em third_party/imgui: GUI do
+# jogo (menu, pausa, game over e HUD). Só o executável principal usa.
+set(IMGUI_SOURCES
+  third_party/imgui/imgui.cpp
+  third_party/imgui/imgui_draw.cpp
+  third_party/imgui/imgui_tables.cpp
+  third_party/imgui/imgui_widgets.cpp
+  third_party/imgui/backends/imgui_impl_glfw.cpp
+  third_party/imgui/backends/imgui_impl_opengl3.cpp
+)
+
 cmake_minimum_required(VERSION 3.5.0)
 
 project(LAB_FCG VERSION 1.0.0)
@@ -54,7 +66,7 @@ set(EXECUTABLE_NAME main)
 
 # Verifica se todos os arquivos fonte estão presentes no diretório
 # atual. Se não estão, avisa sobre CMakeLists mal configurado.
-foreach(source_file IN LISTS SOURCES)
+foreach(source_file IN LISTS SOURCES IMGUI_SOURCES)
   if(NOT EXISTS ${PROJECT_SOURCE_DIR}/${source_file})
     message(FATAL_ERROR "
 O arquivo ${PROJECT_SOURCE_DIR}/${source_file} não existe.
@@ -63,9 +75,10 @@ Por favor, atualize a lista de arquivos fonte no arquivo CMakeLists.txt.")
   endif()
 endforeach()
 
-add_executable(${EXECUTABLE_NAME} ${SOURCES})
+add_executable(${EXECUTABLE_NAME} ${SOURCES} ${IMGUI_SOURCES})
 
-target_include_directories(${EXECUTABLE_NAME} BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(${EXECUTABLE_NAME} BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/third_party/imgui ${PROJECT_SOURCE_DIR}/third_party/imgui/backends)
 
 # Testes unitários da lógica do jogo (sem OpenGL/GLFW).
 # Compile com: cmake --build build --target logic_tests

@@ -32,6 +32,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <cfloat>
 
 // Headers das bibliotecas OpenGL
 #include <glad/glad.h>   // Criação de contexto OpenGL 3.3
@@ -47,6 +48,11 @@
 #include <tiny_obj_loader.h>
 
 #include <stb_image.h>
+
+// Interface gráfica (menu, pausa, game over, HUD): Dear ImGui, em third_party/imgui.
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 
 // Headers locais, definidos na pasta "include/"
 #include "utils.h"
@@ -171,8 +177,6 @@ void TextRendering_PrintMatrixVectorProductDivW(GLFWwindow* window, glm::mat4 M,
 // outras informações do programa. Definidas após main().
 void TextRendering_ShowModelViewProjection(GLFWwindow* window, glm::mat4 projection, glm::mat4 view, glm::mat4 model, glm::vec4 p_model);
 void TextRendering_ShowRunInfo(GLFWwindow* window);
-void TextRendering_ShowGameOver(GLFWwindow* window);
-void TextRendering_ShowFreeCamera(GLFWwindow* window);
 void TextRendering_ShowFramesPerSecond(GLFWwindow* window);
 
 // Funções callback para comunicação com o sistema operacional e interação do
@@ -394,6 +398,24 @@ void DrawParticles(const glm::mat4& view);
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
 
+// Interface gráfica com Dear ImGui (Tarefa 6.2): tela de menu, pausa, fim de
+// jogo e o HUD da corrida. A cena 3D continua sendo desenhada (congelada)
+// atrás das janelas.
+void Gui_Init(GLFWwindow* window);     // depois de instalar os nossos callbacks
+void Gui_Frame(GLFWwindow* window);    // monta e desenha a GUI (depois da cena 3D)
+void Gui_Shutdown();
+// Ações dos botões, também usadas pelos atalhos de teclado.
+void StartRunFromMenu();               // MENU -> PLAYING (corrida nova)
+void PauseRun(GLFWwindow* window);     // PLAYING/FREE_CAMERA -> PAUSED
+void ResumeRun();                      // PAUSED -> PLAYING
+void GoToMenu();                       // PAUSED/GAME_OVER -> MENU (corrida nova ao fundo)
+void EnterFreeCamera(GLFWwindow* window);
+void LeaveFreeCamera(GLFWwindow* window);
+// Harness E2E: agenda um clique de mouse de verdade (pela fila de eventos do
+// ImGui) no centro do botão com o rótulo dado, desenhado no último quadro.
+// Devolve false se esse botão não estava na tela.
+bool Gui_ClickButton(const char* label);
+
 // Variável que controla se o texto informativo será mostrado na tela.
 bool g_ShowInfoText = true;
 
@@ -597,6 +619,11 @@ int main(int argc, char* argv[])
     // Inicializamos o código para renderização de texto.
     TextRendering_Init();
 
+    // GUI (ImGui). Inicializada DEPOIS de glfwSetKeyCallback/CursorPosCallback:
+    // o backend do ImGui guarda os nossos callbacks e os chama antes dos dele
+    // (o KeyCallback, com o Correcao_KeyCallback em primeiro, continua valendo).
+    Gui_Init(window);
+
     // Quad unitário das partículas (criado em código, sem arquivo .obj).
     CreateParticleQuad();
 
@@ -635,6 +662,11 @@ int main(int argc, char* argv[])
     // em que os modelos são escalados no desenho.
     if (!autotest)
         g_Game = Game((unsigned)time(NULL));
+
+    // O jogo abre no menu. No autotest a corrida já começa em PLAYING (o
+    // cenário que quer o menu pede start_in_menu; veja Autotest_Start()).
+    if (!autotest)
+        g_Game.mode = GameMode::MENU;
 
     // Configuração do cenário E2E (ex.: desligar o spawn), antes do 1º quadro.
     if (autotest)
@@ -679,9 +711,11 @@ int main(int argc, char* argv[])
         // pausa e no game over, como o resto do jogo.
         g_Particles.Update(g_Game.mode == GameMode::PLAYING ? dt : 0.0f);
         EmitCollectParticles(g_Game);
-        // Câmera livre: o jogo fica congelado (nada se anima, nem as moedas).
+        // Câmera livre e pausa: o jogo fica congelado (nada se anima, nem as
+        // moedas). No menu e no game over as moedas seguem girando ao fundo.
         const bool free_camera = g_Game.mode == GameMode::FREE_CAMERA;
-        if (!free_camera)
+        const bool paused = g_Game.mode == GameMode::PAUSED;
+        if (!free_camera && !paused)
         {
             g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
             g_PowerUpSpin = std::fmod(g_PowerUpSpin + POWERUP_SPIN_SPEED * dt, 6.2831853f);
@@ -709,8 +743,10 @@ int main(int argc, char* argv[])
         }
         else
         {
-            g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
-                            g_Game.CameraTargetHeight());
+            // Na pausa a câmera também fica parada (nem termina a suavização).
+            if (!paused)
+                g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
+                                g_Game.CameraTargetHeight());
             camera_in_tunnel = g_Game.track.IsTunnelAt(player.s - g_Camera.Back());
         }
         // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
@@ -899,15 +935,14 @@ int main(int argc, char* argv[])
         // Partículas da coleta: por último entre os objetos 3D (translúcidas,
         // aditivas, sem escrever no z-buffer).
         DrawParticles(view);
-        // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
-        // de GAME OVER centralizada.
-        TextRendering_ShowRunInfo(window);
-        TextRendering_ShowGameOver(window);
-        TextRendering_ShowFreeCamera(window);
 
-        // Imprimimos na tela informação sobre o número de quadros renderizados
-        // por segundo (frames per second).
+        // Texto de depuração (tecla H): velocidade, faixa e quadros por segundo.
+        TextRendering_ShowRunInfo(window);
         TextRendering_ShowFramesPerSecond(window);
+
+        // GUI por cima de tudo: HUD da corrida, aviso da câmera livre e as
+        // janelas de menu, pausa e fim de jogo (veja Gui_Frame()).
+        Gui_Frame(window);
 
         // Harness E2E: injeta teclas, tira screenshots e checa erros de GL
         // (precisa ser depois de desenhar e antes do swap).
@@ -932,7 +967,8 @@ int main(int argc, char* argv[])
         glfwPollEvents();
     }
 
-    // Finalizamos o uso dos recursos do sistema operacional
+    // Finalizamos a GUI e o uso dos recursos do sistema operacional
+    Gui_Shutdown();
     glfwTerminate();
 
     // Fim do programa
@@ -1490,6 +1526,429 @@ void RestartRun()
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+// Estados da corrida usados pela GUI e pelos atalhos de teclado
+// ---------------------------------------------------------------------------
+
+// PLAYING -> FREE_CAMERA: a câmera livre começa exatamente onde a 3ª pessoa
+// estava; o cursor é capturado para o mouse girar o olhar sem limite.
+void EnterFreeCamera(GLFWwindow* window)
+{
+    g_Game.mode = GameMode::FREE_CAMERA;
+    g_FreeCamera.StartAt(g_Camera.Pose());
+    g_CursorPointValid = false;
+    if (!Autotest_Active()) // no E2E o cursor do desktop fica quieto
+    {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (glfwRawMouseMotionSupported())
+            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+}
+
+// FREE_CAMERA -> PLAYING: volta à corrida de onde parou, com a 3ª pessoa de
+// novo no lugar certo (sem suavizar desde a posição da câmera livre), e
+// devolve o cursor normal.
+void LeaveFreeCamera(GLFWwindow* window)
+{
+    g_Game.mode = GameMode::PLAYING;
+    g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
+                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
+    if (!Autotest_Active())
+    {
+        // Desfaz exatamente o que EnterFreeCamera() fez (movimento bruto e captura).
+        if (glfwRawMouseMotionSupported())
+            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+
+void StartRunFromMenu()
+{
+    RestartRun(); // corrida nova, em PLAYING
+}
+
+void PauseRun(GLFWwindow* window)
+{
+    if (g_Game.mode == GameMode::FREE_CAMERA)
+        LeaveFreeCamera(window); // devolve o cursor para usar os botões
+    if (g_Game.mode == GameMode::PLAYING)
+        g_Game.mode = GameMode::PAUSED;
+}
+
+void ResumeRun()
+{
+    if (g_Game.mode == GameMode::PAUSED)
+        g_Game.mode = GameMode::PLAYING;
+}
+
+// Lista de controles aberta na janela do menu (botão "Controles")?
+bool g_GuiShowControls = false;
+
+void GoToMenu()
+{
+    RestartRun(); // ao fundo do menu fica a largada de uma corrida nova
+    g_Game.mode = GameMode::MENU;
+    g_GuiShowControls = false;
+}
+
+// ---------------------------------------------------------------------------
+// GUI (Dear ImGui)
+// ---------------------------------------------------------------------------
+
+// Retângulo (coordenadas de janela do ImGui) de cada botão desenhado no
+// último quadro, pelo rótulo. Usado pelo harness E2E para clicar no botão.
+struct GuiRect { float x0, y0, x1, y1; };
+std::map<std::string, GuiRect> g_GuiButtons;
+// Clique pendente do E2E: 1 = apertar no próximo quadro, 2 = soltar, 0 = nada.
+int     g_GuiClickPhase = 0;
+GuiRect g_GuiClickRect;
+
+// Estilo de referência (tamanhos para uma janela de 600 pixels de altura) e
+// a escala aplicada a ele no momento (acompanha a altura da janela).
+ImGuiStyle g_GuiBaseStyle;
+float      g_GuiScale = 0.0f;
+
+// Cores da GUI.
+const ImVec4 GUI_ACCENT    = ImVec4(1.00f, 0.62f, 0.15f, 1.00f); // laranja (título, botões)
+const ImVec4 GUI_GOLD      = ImVec4(1.00f, 0.84f, 0.25f, 1.00f); // moedas
+const ImVec4 GUI_DANGER    = ImVec4(1.00f, 0.32f, 0.25f, 1.00f); // GAME OVER
+const ImVec4 GUI_TEXT_DIM  = ImVec4(0.72f, 0.75f, 0.82f, 1.00f); // dicas e rótulos
+
+void Gui_Init(GLFWwindow* window)
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = NULL; // não grava imgui.ini ao lado do executável
+    io.LogFilename = NULL;
+
+    // Fonte vetorial embutida no ImGui: continua nítida quando a GUI é escalada.
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.FontSizeBase = 18.0f;
+    io.Fonts->AddFontDefaultVector();
+
+    ImGui::StyleColorsDark();
+    style.WindowRounding    = 12.0f;
+    style.FrameRounding     = 8.0f;
+    style.ChildRounding     = 8.0f;
+    style.WindowBorderSize  = 0.0f;
+    style.FrameBorderSize   = 0.0f;
+    style.WindowPadding     = ImVec2(22.0f, 18.0f);
+    style.FramePadding      = ImVec2(12.0f, 6.0f);
+    style.ItemSpacing       = ImVec2(10.0f, 9.0f);
+    style.CellPadding       = ImVec2(8.0f, 3.0f);
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]         = ImVec4(0.07f, 0.08f, 0.12f, 0.92f);
+    c[ImGuiCol_Text]             = ImVec4(0.96f, 0.96f, 0.98f, 1.00f);
+    c[ImGuiCol_Separator]        = ImVec4(1.00f, 0.62f, 0.15f, 0.45f);
+    c[ImGuiCol_Button]           = ImVec4(0.90f, 0.50f, 0.10f, 1.00f);
+    c[ImGuiCol_ButtonHovered]    = ImVec4(1.00f, 0.64f, 0.22f, 1.00f);
+    c[ImGuiCol_ButtonActive]     = ImVec4(0.78f, 0.40f, 0.06f, 1.00f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.18f, 0.20f, 0.26f, 0.90f);
+    c[ImGuiCol_PlotHistogram]    = GUI_ACCENT;
+    c[ImGuiCol_TableRowBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.05f);
+    c[ImGuiCol_TableBorderLight] = ImVec4(1.00f, 1.00f, 1.00f, 0.10f);
+    g_GuiBaseStyle = style;
+
+    // Backends GLFW e OpenGL 3.3. Com install_callbacks = true o ImGui
+    // instala os callbacks dele e encadeia os que já registramos (os nossos
+    // rodam primeiro), por isso esta chamada vem depois dos glfwSet*Callback.
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+}
+
+void Gui_Shutdown()
+{
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
+bool Gui_ClickButton(const char* label)
+{
+    std::map<std::string, GuiRect>::const_iterator it = g_GuiButtons.find(label);
+    if (it == g_GuiButtons.end())
+        return false;
+    g_GuiClickRect  = it->second;
+    g_GuiClickPhase = 1;
+    return true;
+}
+
+// Clique do E2E: posição + botão esquerdo entram na fila de eventos do ImGui
+// DEPOIS da posição real do cursor que o backend GLFW acabou de enfileirar
+// (por isso é chamado entre ImGui_ImplGlfw_NewFrame() e ImGui::NewFrame()).
+// Apertar e soltar vão em quadros seguidos, como um clique de verdade.
+static void Gui_InjectPendingClick()
+{
+    if (g_GuiClickPhase == 0)
+        return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(0.5f * (g_GuiClickRect.x0 + g_GuiClickRect.x1),
+                        0.5f * (g_GuiClickRect.y0 + g_GuiClickRect.y1));
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, g_GuiClickPhase == 1);
+    g_GuiClickPhase = (g_GuiClickPhase == 1) ? 2 : 0;
+}
+
+// Botão da largura da janela; guarda o retângulo dele para o E2E.
+static bool GuiButton(const char* label)
+{
+    const bool pressed = ImGui::Button(label, ImVec2(-FLT_MIN, 1.9f * ImGui::GetFontSize()));
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    GuiRect r = {a.x, a.y, b.x, b.y};
+    g_GuiButtons[label] = r;
+    return pressed;
+}
+
+// Texto centralizado na largura disponível da janela.
+static void GuiTextCentered(const char* text, const ImVec4& color)
+{
+    const float w = ImGui::CalcTextSize(text).x;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > w)
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 0.5f * (avail - w));
+    ImGui::TextColored(color, "%s", text);
+}
+
+// Título grande e centralizado.
+static void GuiTitle(const char* text, const ImVec4& color, float size_factor)
+{
+    ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * size_factor);
+    GuiTextCentered(text, color);
+    ImGui::PopFont();
+}
+
+// Começa uma janela centralizada na tela, sem barra de título, com largura
+// mínima de 'min_width_em' vezes o tamanho da fonte.
+static void GuiBeginCentered(const char* id, float min_width_em)
+{
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 0.5f * vp->Size.x, vp->Pos.y + 0.5f * vp->Size.y),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(min_width_em * ImGui::GetFontSize(), 0.0f),
+                                        ImVec2(FLT_MAX, FLT_MAX));
+    ImGui::Begin(id, NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                           ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                           ImGuiWindowFlags_NoNav);
+}
+
+// Escurece a cena 3D atrás das janelas de menu, pausa e fim de jogo.
+static void GuiDimBackground()
+{
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::GetBackgroundDrawList()->AddRectFilled(
+        vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(5, 8, 20, 120));
+}
+
+// Lista de controles (botão "Controles" do menu).
+static void GuiControlsTable()
+{
+    static const char* const ROWS[][2] = {
+        {"Esquerda/Direita, A/D", "trocar de faixa"},
+        {"Cima, W ou Espaço",     "pular"},
+        {"Baixo ou S",            "rolar"},
+        {"P ou Esc",              "pausar / continuar"},
+        {"C",                     "câmera livre"},
+        {"",                      "(WASD, Espaço, Shift, mouse)"},
+        {"H",                     "texto de depuração (FPS)"},
+        {"R",                     "recarregar os shaders"},
+    };
+    if (ImGui::BeginTable("controles", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit))
+    {
+        for (size_t i = 0; i < sizeof(ROWS) / sizeof(ROWS[0]); ++i)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(GUI_ACCENT, "%s", ROWS[i][0]);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(ROWS[i][1]);
+        }
+        ImGui::EndTable();
+    }
+}
+
+static void Gui_Menu(GLFWwindow* window)
+{
+    GuiDimBackground();
+    GuiBeginCentered("##menu", 17.0f);
+    GuiTitle("RAIL RUSH", GUI_ACCENT, 3.0f);
+    GuiTextCentered("Corra pelos trilhos, desvie dos trens", GUI_TEXT_DIM);
+    GuiTextCentered("e junte moedas!", GUI_TEXT_DIM);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (GuiButton("Jogar"))
+        StartRunFromMenu();
+    if (GuiButton("Controles"))
+        g_GuiShowControls = !g_GuiShowControls;
+    if (g_GuiShowControls)
+        GuiControlsTable();
+    if (GuiButton("Sair"))
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    ImGui::Spacing();
+    GuiTextCentered("Enter: jogar", GUI_TEXT_DIM);
+    ImGui::End();
+}
+
+static void Gui_Pause()
+{
+    GuiDimBackground();
+    GuiBeginCentered("##pausa", 14.0f);
+    GuiTitle("PAUSADO", GUI_ACCENT, 2.2f);
+    ImGui::Spacing();
+    if (GuiButton("Continuar"))
+        ResumeRun();
+    if (GuiButton("Reiniciar"))
+        RestartRun();
+    if (GuiButton("Menu"))
+        GoToMenu();
+    ImGui::Spacing();
+    GuiTextCentered("P ou Esc: continuar", GUI_TEXT_DIM);
+    ImGui::End();
+}
+
+static void Gui_GameOver()
+{
+    GuiDimBackground();
+    GuiBeginCentered("##fim", 16.0f);
+    GuiTitle("GAME OVER", GUI_DANGER, 2.6f);
+    ImGui::Spacing();
+    if (ImGui::BeginTable("placar", 2, ImGuiTableFlags_SizingStretchSame))
+    {
+        char value[32];
+        const char* labels[3] = {"Pontos", "Moedas", "Distância"};
+        for (int i = 0; i < 3; ++i)
+        {
+            if (i == 0)
+                snprintf(value, sizeof(value), "%d", (int)g_Game.score);
+            else if (i == 1)
+                snprintf(value, sizeof(value), "%d", g_Game.coins_collected);
+            else
+                snprintf(value, sizeof(value), "%.0f m", g_Game.player.s);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(GUI_TEXT_DIM, "%s", labels[i]);
+            ImGui::TableSetColumnIndex(1);
+            // Valor alinhado à direita da coluna.
+            const float w = ImGui::CalcTextSize(value).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w);
+            ImGui::TextColored(i == 1 ? GUI_GOLD : ImVec4(1, 1, 1, 1), "%s", value);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    if (GuiButton("Jogar de novo"))
+        RestartRun();
+    if (GuiButton("Menu"))
+        GoToMenu();
+    ImGui::Spacing();
+    GuiTextCentered("Enter ou Espaço: jogar de novo", GUI_TEXT_DIM);
+    ImGui::End();
+}
+
+// HUD da corrida, no canto superior esquerdo: pontos, moedas, distância e os
+// power-ups ativos com uma barra do tempo restante. Não recebe mouse/teclado.
+static void Gui_Hud()
+{
+    const float pad = 10.0f * g_GuiScale;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + pad, vp->Pos.y + pad), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    ImGui::Begin("##hud", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    // Pontos em fonte grande, com o rótulo pequeno alinhado pela base.
+    const float y0 = ImGui::GetCursorPosY();
+    ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 1.7f);
+    ImGui::Text("%d", (int)g_Game.score);
+    const float big_h = ImGui::GetTextLineHeight();
+    ImGui::PopFont();
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(y0 + 0.92f * (big_h - ImGui::GetTextLineHeight()));
+    ImGui::TextColored(GUI_TEXT_DIM, "pontos");
+    ImGui::TextColored(GUI_GOLD, "Moedas: %d", g_Game.coins_collected);
+    ImGui::Text("Distância: %.0f m", g_Game.player.s);
+
+    // Power-ups ativos (Tarefa 5.2): nome, barra do tempo restante e segundos.
+    static const char* const NAMES[3] = {"Ímã", "Tênis", "Pontos x2"};
+    static const ImVec4 COLORS[3] = {ImVec4(1.00f, 0.45f, 0.40f, 1.0f),
+                                     ImVec4(0.45f, 0.80f, 1.00f, 1.0f),
+                                     ImVec4(1.00f, 0.85f, 0.30f, 1.0f)};
+    const float bar_x = ImGui::GetCursorPosX() + ImGui::CalcTextSize("Pontos x2").x +
+                        ImGui::GetStyle().ItemSpacing.x;
+    for (int t = 0; t < 3; ++t)
+    {
+        const float left = g_Game.powerup_timer[t];
+        if (left <= 0.0f)
+            continue;
+        // FramePadding.y = 0 na linha: a barra (da altura do texto) e os
+        // textos ficam alinhados pela mesma base.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+        ImGui::TextColored(COLORS[t], "%s", NAMES[t]);
+        ImGui::SameLine(bar_x);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, COLORS[t]);
+        ImGui::ProgressBar(std::min(1.0f, left / POWERUP_DURATION),
+                           ImVec2(6.0f * ImGui::GetFontSize(), ImGui::GetTextLineHeight()), "");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::Text("%2d s", (int)std::ceil(left));
+        ImGui::PopStyleVar();
+    }
+    ImGui::End();
+}
+
+// Câmera livre: aviso no topo da tela, centralizado.
+static void Gui_FreeCameraHint()
+{
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 0.5f * vp->Size.x, vp->Pos.y + 10.0f * g_GuiScale),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##camera_livre", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    GuiTitle("CÂMERA LIVRE", GUI_ACCENT, 1.4f);
+    GuiTextCentered("WASD, Espaço e Shift movem  |  mouse olha", ImVec4(1, 1, 1, 1));
+    GuiTextCentered("C volta ao jogo  |  P ou Esc pausa", GUI_TEXT_DIM);
+    ImGui::End();
+}
+
+void Gui_Frame(GLFWwindow* window)
+{
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    Gui_InjectPendingClick();
+
+    // Escala da GUI pela altura da janela (referência: 600 pixels), entre 1x e 2x.
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    const float scale = std::max(1.0f, std::min(2.0f, (float)height / 600.0f));
+    if (scale != g_GuiScale)
+    {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style = g_GuiBaseStyle;
+        style.ScaleAllSizes(scale);
+        style.FontScaleMain = scale;
+        g_GuiScale = scale;
+    }
+
+    ImGui::NewFrame();
+    g_GuiButtons.clear();
+
+    switch (g_Game.mode)
+    {
+    case GameMode::MENU:        Gui_Menu(window);       break;
+    case GameMode::PLAYING:     Gui_Hud();              break;
+    case GameMode::PAUSED:      Gui_Hud(); Gui_Pause(); break;
+    case GameMode::FREE_CAMERA: Gui_FreeCameraHint();   break;
+    case GameMode::GAME_OVER:   Gui_GameOver();         break;
+    }
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 // Dimensões da AABB de um objeto de g_VirtualScene (coordenadas de modelo).
@@ -2223,50 +2682,49 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
             g_KeyHeld[key] = false;
     }
 
+    // Telas da GUI (menu, pausa, game over): se o ImGui estiver usando o
+    // teclado (ex.: um campo de texto em foco), a tecla é só dele. Hoje a GUI
+    // não tem campos de texto, então isto não bloqueia os atalhos abaixo.
+    if (g_Game.mode != GameMode::PLAYING && g_Game.mode != GameMode::FREE_CAMERA &&
+        ImGui::GetCurrentContext() != NULL && ImGui::GetIO().WantCaptureKeyboard)
+        return;
+
+    const bool press = (action == GLFW_PRESS);
+    const bool confirm = (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE);
+
     // Tecla C: alterna entre a corrida (3ª pessoa) e a câmera livre, com o
     // jogo congelado. Só vale em PLAYING / FREE_CAMERA.
-    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+    if (key == GLFW_KEY_C && press)
     {
         if (g_Game.mode == GameMode::PLAYING)
-        {
-            // A câmera livre começa exatamente onde a 3ª pessoa estava; o
-            // cursor é capturado para o mouse girar o olhar sem limite.
-            g_Game.mode = GameMode::FREE_CAMERA;
-            g_FreeCamera.StartAt(g_Camera.Pose());
-            g_CursorPointValid = false;
-            if (!Autotest_Active()) // no E2E o cursor do desktop fica quieto
-            {
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                if (glfwRawMouseMotionSupported())
-                    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-            }
-        }
+            EnterFreeCamera(window);
         else if (g_Game.mode == GameMode::FREE_CAMERA)
-        {
-            // Volta à corrida de onde parou, com a 3ª pessoa de novo no lugar
-            // certo (sem suavizar desde a posição da câmera livre).
-            g_Game.mode = GameMode::PLAYING;
-            g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                          g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
-            if (!Autotest_Active())
-            {
-                // Desfaz exatamente o que a entrada fez (movimento bruto e captura).
-                if (glfwRawMouseMotionSupported())
-                    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            }
-        }
+            LeaveFreeCamera(window);
         return;
     }
 
-    // Se o usuário pressionar a tecla ESC, fechamos a janela.
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GL_TRUE);
+    // P ou ESC: pausa a corrida / continua. ESC não fecha mais o programa
+    // (sair é pelo botão "Sair" do menu). Na câmera livre, P/ESC sai dela
+    // (devolve o cursor) e já entra na pausa.
+    if ((key == GLFW_KEY_P || key == GLFW_KEY_ESCAPE) && press)
+    {
+        if (g_Game.mode == GameMode::PLAYING || g_Game.mode == GameMode::FREE_CAMERA)
+            PauseRun(window);
+        else if (g_Game.mode == GameMode::PAUSED)
+            ResumeRun();
+        return;
+    }
 
-    // Fim de jogo: Enter (ou Espaço) recomeça a corrida. O return evita que
+    // Menu: Enter (ou Espaço) equivale ao botão "Jogar". O return evita que
     // o mesmo Espaço vire um pulo na corrida nova.
-    if (action == GLFW_PRESS && g_Game.mode == GameMode::GAME_OVER &&
-        (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE))
+    if (press && confirm && g_Game.mode == GameMode::MENU)
+    {
+        StartRunFromMenu();
+        return;
+    }
+
+    // Fim de jogo: Enter (ou Espaço) equivale ao botão "Jogar de novo".
+    if (press && confirm && g_Game.mode == GameMode::GAME_OVER)
     {
         RestartRun();
         return;
@@ -2309,7 +2767,7 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
         g_ShowInfoText = !g_ShowInfoText;
     }
 
-    // Se o usuário apertar a tecla R, recarregamos os shaders dos arquivos "shader_fragment.glsl" e "shader_vertex.glsl".
+    // Tecla R: recarregamos os shaders dos arquivos "shader_fragment.glsl" e "shader_vertex.glsl".
     if (key == GLFW_KEY_R && action == GLFW_PRESS)
     {
         LoadShadersFromFiles();
@@ -2329,7 +2787,10 @@ void FreeCameraMouseLook(float dx_pixels, float dy_pixels)
 // Chamada pela GLFW a cada movimento do cursor.
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 {
-    if (g_Game.mode != GameMode::FREE_CAMERA)
+    // Fora da câmera livre (ou com o mouse sobre uma janela do ImGui) o
+    // movimento do cursor é só da GUI.
+    if (g_Game.mode != GameMode::FREE_CAMERA ||
+        (ImGui::GetCurrentContext() != NULL && ImGui::GetIO().WantCaptureMouse))
     {
         g_CursorPointValid = false; // recalibra na próxima captura
         return;
@@ -2422,103 +2883,19 @@ void TextRendering_ShowModelViewProjection(
     TextRendering_PrintMatrixVectorProductMoreDigits(window, viewport_mapping, p_ndc, -1.0f, 1.0f-26*pad, 1.0f);
 }
 
-// Imprime 'str' na cor (r,g,b) com uma "sombra" preta deslocada 2 pixels
-// para baixo e para a direita: legível sobre qualquer fundo.
-static void PrintShadowed(GLFWwindow* window, const char* str, float x, float y, float scale,
-                          float r, float g, float b)
-{
-    int width, height;
-    glfwGetWindowSize(window, &width, &height);
-    float dx = 2.0f * 2.0f / (float)width;  // 2 pixels em NDC
-    float dy = 2.0f * 2.0f / (float)height;
-    TextRendering_SetColor(0.0f, 0.0f, 0.0f);
-    TextRendering_PrintString(window, str, x + dx, y - dy, scale);
-    TextRendering_SetColor(r, g, b);
-    TextRendering_PrintString(window, str, x, y, scale);
-    TextRendering_SetColor(0.0f, 0.0f, 0.0f);
-}
-
-// Placar no canto superior esquerdo (sempre visível): pontos, moedas e
-// distância. Com o texto informativo ligado (tecla H), também a velocidade e a
-// faixa, no canto inferior esquerdo.
+// Texto de depuração (tecla H), no canto inferior esquerdo: velocidade e
+// faixa do jogador. O placar (pontos, moedas, distância, power-ups) é o HUD
+// do ImGui (Gui_Hud()).
 void TextRendering_ShowRunInfo(GLFWwindow* window)
 {
-    float lineheight = TextRendering_LineHeight(window);
-    float charwidth  = TextRendering_CharWidth(window);
-    const float hud_scale = 1.5f;
-
-    char buffer[80];
-    snprintf(buffer, sizeof(buffer), "Pontos: %d", (int)g_Game.score);
-    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 1.5f * hud_scale * lineheight, hud_scale, 1.0f, 1.0f, 1.0f);
-    snprintf(buffer, sizeof(buffer), "Moedas: %d", g_Game.coins_collected);
-    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 2.5f * hud_scale * lineheight, hud_scale, 1.0f, 0.85f, 0.2f);
-    snprintf(buffer, sizeof(buffer), "Distancia: %.0f m", g_Game.player.s);
-    PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 3.5f * hud_scale * lineheight, hud_scale, 1.0f, 1.0f, 1.0f);
-
-    // Power-ups ativos (Tarefa 5.2): nome, barra do tempo restante e segundos.
-    // ASCII apenas: a fonte do texto não tem acentos.
-    static const char* const POWERUP_HUD_NAMES[3] = {"IMA", "TENIS", "x2"};
-    static const float POWERUP_HUD_COLORS[3][3] = {
-        {1.0f, 0.45f, 0.4f}, {0.45f, 0.8f, 1.0f}, {1.0f, 0.85f, 0.3f}};
-    const int bar_cells = 10;
-    int line = 0;
-    for (int t = 0; t < 3; ++t)
-    {
-        const float left = g_Game.powerup_timer[t];
-        if (left <= 0.0f)
-            continue;
-        char bar[bar_cells + 1];
-        const int filled = std::min(bar_cells, (int)std::ceil(bar_cells * left / POWERUP_DURATION));
-        for (int i = 0; i < bar_cells; ++i)
-            bar[i] = (i < filled) ? '=' : ' ';
-        bar[bar_cells] = '\0';
-        snprintf(buffer, sizeof(buffer), "%-5s [%s] %2ds", POWERUP_HUD_NAMES[t], bar, (int)std::ceil(left));
-        PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - (4.8f + 1.0f * line) * hud_scale * lineheight,
-                      hud_scale, POWERUP_HUD_COLORS[t][0], POWERUP_HUD_COLORS[t][1], POWERUP_HUD_COLORS[t][2]);
-        ++line;
-    }
-
-    if ( !g_ShowInfoText )
+    if ( !g_ShowInfoText || g_Game.mode == GameMode::MENU )
         return;
 
+    float lineheight = TextRendering_LineHeight(window);
+    char buffer[80];
     snprintf(buffer, sizeof(buffer), "Velocidade: %4.1f m/s   Faixa: %+d",
              g_Game.player.speed, g_Game.player.lane);
     TextRendering_PrintString(window, buffer, -1.0f+lineheight/10, -1.0f+2*lineheight/10, 1.0f);
-    TextRendering_PrintString(window, "C: camera livre", -1.0f+lineheight/10, -1.0f+3.2f*lineheight, 1.0f);
-}
-
-// Imprime 'str' centralizado horizontalmente na altura y (NDC), com sombra.
-static void PrintCentered(GLFWwindow* window, const char* str, float y, float scale,
-                          float r, float g, float b)
-{
-    float width = (float)strlen(str) * TextRendering_CharWidth(window) * scale;
-    PrintShadowed(window, str, -0.5f * width, y, scale, r, g, b);
-}
-
-// Mensagem de fim de jogo, no centro da tela.
-void TextRendering_ShowGameOver(GLFWwindow* window)
-{
-    if (g_Game.mode != GameMode::GAME_OVER)
-        return;
-
-    float lineheight = TextRendering_LineHeight(window);
-    char buffer[80];
-    PrintCentered(window, "GAME OVER", 0.15f, 4.0f, 1.0f, 0.25f, 0.15f);
-    snprintf(buffer, sizeof(buffer), "Pontos: %d   Moedas: %d", (int)g_Game.score, g_Game.coins_collected);
-    PrintCentered(window, buffer, 0.15f - 2.5f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
-    PrintCentered(window, "Enter (ou Espaco) para reiniciar", 0.15f - 5.0f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
-}
-
-// Câmera livre: aviso no topo da tela (ASCII, a fonte não tem acentos).
-void TextRendering_ShowFreeCamera(GLFWwindow* window)
-{
-    if (g_Game.mode != GameMode::FREE_CAMERA)
-        return;
-
-    float lineheight = TextRendering_LineHeight(window);
-    PrintCentered(window, "CAMERA LIVRE", 1.0f - 2.0f * lineheight, 2.0f, 1.0f, 0.9f, 0.3f);
-    PrintCentered(window, "WASD / Espaco / Shift movem   mouse olha   C volta ao jogo",
-                  1.0f - 4.5f * lineheight, 1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 // Escrevemos na tela o número de quadros renderizados por segundo (frames per

@@ -658,8 +658,8 @@ public:
   - **PAUSED** (`P` ou `ESC`): *Continuar*, *Reiniciar*, *Menu*. `ESC` deixa de fechar o programa.
   - **GAME_OVER:** pontuação, moedas, distância, *Jogar de novo*, *Menu*.
   - **HUD** em PLAYING: pontuação, moedas, power-ups ativos com barra de tempo.
-- [ ] **Passo 1:** compilar nos dois builds (CMake no Windows e Linux, Makefile no macOS).
-- [ ] **Passo 2:** rodar: todos os botões funcionam com mouse; pausa congela tudo, inclusive
+- [x] **Passo 1:** compilar nos dois builds (CMake no Windows e Linux, Makefile no macOS).
+- [x] **Passo 2:** rodar: todos os botões funcionam com mouse; pausa congela tudo, inclusive
   partículas e porco. Commit `IA: GUI com menu, pausa, game over e HUD`.
 
 ---

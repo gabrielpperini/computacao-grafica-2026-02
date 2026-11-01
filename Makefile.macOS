@@ -1,9 +1,9 @@
 # Library load path para o homebrew em M1 Macs atualizado com base na sugestão
 # do aluno Matheus de Moraes Costa em 2022/2.
 
-./bin/macOS/main: src/*.cpp include/*.h
+./bin/macOS/main: src/*.cpp include/*.h third_party/imgui/*.cpp third_party/imgui/backends/*.cpp
 	mkdir -p bin/macOS
-	g++ -std=c++11 -Wall -Wno-deprecated-declarations -Wno-unused-function -g -I ./include/ -o ./bin/macOS/main src/main.cpp src/autotest.cpp src/correcao.cpp src/collisions.cpp src/bezier.cpp src/track.cpp src/game.cpp src/camera.cpp src/scenery.cpp src/particles.cpp src/glad.c src/textrendering.cpp src/tiny_obj_loader.cpp src/stb_image.cpp -framework OpenGL -L/usr/local/lib -L/opt/homebrew/Cellar -lglfw -lm -ldl -lpthread
+	g++ -std=c++11 -Wall -Wno-deprecated-declarations -Wno-unused-function -g -I ./include/ -I ./third_party/imgui -I ./third_party/imgui/backends -o ./bin/macOS/main src/main.cpp src/autotest.cpp src/correcao.cpp src/collisions.cpp src/bezier.cpp src/track.cpp src/game.cpp src/camera.cpp src/scenery.cpp src/particles.cpp src/glad.c src/textrendering.cpp src/tiny_obj_loader.cpp src/stb_image.cpp third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_glfw.cpp third_party/imgui/backends/imgui_impl_opengl3.cpp -framework OpenGL -L/usr/local/lib -L/opt/homebrew/Cellar -lglfw -lm -ldl -lpthread
 
 .PHONY: clean run
 clean:

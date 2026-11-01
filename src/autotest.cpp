@@ -11,8 +11,10 @@
 //      nome, duração (s simulados), a lista de AutotestStep {tempo, tecla,
 //      ação, rótulo do screenshot ou NULL} e o final_check (ou NULL).
 //      Opcionais: 'setup' (configura g_Game antes do 1º quadro, ex.: SetupNoSpawn
-//      para uma corrida que não pode terminar em colisão) e 'frame_hook'
-//      (chamado a cada quadro, para registrar estados intermediários).
+//      para uma corrida que não pode terminar em colisão), 'frame_hook'
+//      (chamado a cada quadro, para registrar estados intermediários) e
+//      'start_in_menu' (começa no MENU em vez de PLAYING). Botões da GUI são
+//      clicados pelo rótulo: AutotestStep{t, 0, 0, NULL, 0, 0, "Jogar"}.
 //   3. Nada mais: tests/run_e2e.sh obtém a lista por "main --autotest-list".
 // As teclas são entregues à mesma função HandleKey() usada pelo KeyCallback
 // real (nunca ao Correcao_KeyCallback, pois Shift+0..9 encerra o processo).
@@ -46,6 +48,8 @@
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
 // Deslocamento do mouse em pixels (câmera livre), também definido em main.cpp.
 void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
+// Clique no botão da GUI com esse rótulo (main.cpp; false se não está na tela).
+bool Gui_ClickButton(const char* label);
 
 // Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
 extern Game g_Game;
@@ -1232,6 +1236,229 @@ static bool Check_free_camera(std::string* why)
     return true;
 }
 
+// GUI (Tarefa 6.2): menu, pausa e game over feitos com ImGui. Os botões são
+// clicados pelo rótulo (AutotestStep.click), com um clique real na fila de
+// eventos do ImGui. Hook_Gui registra por quantos quadros o jogo ficou em
+// MENU/PAUSED e se algo andou durante a pausa (jogador, relógio, porco e
+// partículas devem ficar congelados).
+static int       g_GuiMenuFrames      = 0;     // quadros observados em MENU
+static int       g_GuiPausedFrames    = 0;     // quadros observados em PAUSED
+static int       g_GuiPauseEntries    = 0;     // vezes que entrou em PAUSED
+static float     g_GuiMenuMaxS        = 0.0f;  // maior |s| do jogador no MENU (deve ser 0)
+static float     g_GuiPauseDrift      = 0.0f;  // maior variação de estado dentro de uma pausa
+static bool      g_GuiPausedWithPig   = false; // alguma pausa pegou o porco voando
+static bool      g_GuiPausedWithParts = false; // alguma pausa pegou partículas vivas
+static bool      g_GuiSawReset        = false; // s voltou a ~0 vindo de uma corrida (Reiniciar)
+static float     g_GuiPrevS           = 0.0f;
+static GameMode  g_GuiPrevMode        = GameMode::PLAYING;
+static float     g_GuiPauseS          = 0.0f;  // estado no 1º quadro da pausa atual
+static float     g_GuiPauseElapsed    = 0.0f;
+static float     g_GuiPausePigT       = 0.0f;
+static size_t    g_GuiPauseParticles  = 0;
+static glm::vec4 g_GuiPauseP0;
+static float     g_GuiPauseLife0      = 0.0f;
+
+static void Hook_Gui()
+{
+    const GameMode m = g_Game.mode;
+    const float s = g_Game.player.s;
+    if (m == GameMode::MENU)
+    {
+        ++g_GuiMenuFrames;
+        g_GuiMenuMaxS = std::max(g_GuiMenuMaxS, std::fabs(s));
+    }
+    if (m == GameMode::PAUSED)
+    {
+        ++g_GuiPausedFrames;
+        const std::vector<Particle>& alive = g_Particles.Alive();
+        if (g_GuiPrevMode != GameMode::PAUSED)
+        {
+            ++g_GuiPauseEntries;
+            g_GuiPauseS         = s;
+            g_GuiPauseElapsed   = g_Game.elapsed;
+            g_GuiPausePigT      = g_Game.pig.t;
+            g_GuiPauseParticles = alive.size();
+            if (!alive.empty())
+            {
+                g_GuiPauseP0    = alive[0].position;
+                g_GuiPauseLife0 = alive[0].life;
+            }
+            g_GuiPausedWithPig   = g_GuiPausedWithPig || g_Game.pig.active;
+            g_GuiPausedWithParts = g_GuiPausedWithParts || !alive.empty();
+        }
+        else
+        {
+            float d = std::fabs(s - g_GuiPauseS);
+            d = std::max(d, std::fabs(g_Game.elapsed - g_GuiPauseElapsed));
+            d = std::max(d, std::fabs(g_Game.pig.t - g_GuiPausePigT));
+            if (alive.size() != g_GuiPauseParticles)
+                d = std::max(d, 1.0f);
+            else if (!alive.empty())
+            {
+                const glm::vec4 dp = alive[0].position - g_GuiPauseP0;
+                d = std::max(d, std::fabs(dp.x) + std::fabs(dp.y) + std::fabs(dp.z));
+                d = std::max(d, std::fabs(alive[0].life - g_GuiPauseLife0));
+            }
+            g_GuiPauseDrift = std::max(g_GuiPauseDrift, d);
+        }
+    }
+    if (g_GuiPrevS > 3.0f && s < 1.0f)
+        g_GuiSawReset = true;
+    g_GuiPrevS    = s;
+    g_GuiPrevMode = m;
+}
+
+// Confere o que vale para todo cenário de GUI: terminou jogando, nada andou
+// durante as pausas e o relógio do jogo só correu fora do MENU/PAUSED
+// (elapsed + quadros parados * dt = tempo simulado, com folga de 6 quadros
+// por causa das transições).
+static bool CheckGuiCommon(float duration, std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        snprintf(buf, sizeof(buf), "esperava PLAYING no fim; modo = %d", (int)g_Game.mode);
+        *why = buf;
+        return false;
+    }
+    if (g_GuiMenuMaxS != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "o jogador andou no MENU (s = %.3f)", g_GuiMenuMaxS);
+        *why = buf;
+        return false;
+    }
+    if (g_GuiPauseDrift > 1e-6f)
+    {
+        snprintf(buf, sizeof(buf), "algo andou durante a pausa (variacao = %g)", g_GuiPauseDrift);
+        *why = buf;
+        return false;
+    }
+    const float dt = Autotest_FixedDt();
+    const float stopped = (g_GuiMenuFrames + g_GuiPausedFrames) * dt;
+    // (Com "Reiniciar" o relógio volta a zero no meio: não dá para comparar.)
+    if (!g_GuiSawReset && std::fabs(g_Game.elapsed + stopped - duration) > 6.0f * dt)
+    {
+        snprintf(buf, sizeof(buf), "relogio do jogo %.2f s + parado %.2f s != %.2f s simulados",
+                 g_Game.elapsed, stopped, duration);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// menu_pause: começa no menu (o jogador parado), abre "Controles", clica em
+// "Jogar"; pausa com P e volta com P; pausa com ESC (que não fecha mais a
+// janela) e volta clicando em "Continuar".
+static const float MENU_PAUSE_DURATION = 5.0f;
+static bool Check_menu_pause(std::string* why)
+{
+    char buf[200];
+    if (!CheckGuiCommon(MENU_PAUSE_DURATION, why))
+        return false;
+    if (g_GuiMenuFrames < 30 || g_GuiPauseEntries != 2 || g_GuiPausedFrames < 70)
+    {
+        snprintf(buf, sizeof(buf), "quadros no menu = %d (>= 30), pausas = %d (2), quadros pausado = %d (>= 70)",
+                 g_GuiMenuFrames, g_GuiPauseEntries, g_GuiPausedFrames);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.player.s < 20.0f)
+    {
+        snprintf(buf, sizeof(buf), "jogador quase nao correu (s = %.1f)", g_Game.player.s);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// pause_freeze: pausa no meio do voo do porco do cofrinho, com partículas de
+// uma moeda recém-coletada e o ímã ativo (barra no HUD). Tudo fica parado
+// durante a pausa e o voo termina depois de continuar.
+static const float PAUSE_FREEZE_DURATION = 7.5f;
+static void SetupPauseFreeze()
+{
+    SetupPiggy();
+    const PowerUp magnet = {PowerUpType::MAGNET, 0, 3.0f, false};
+    g_Game.powerups.push_back(magnet);
+    Coin coin = {0, 16.0f, COIN_HEIGHT, false};
+    g_Game.coins.push_back(coin);
+}
+
+static void Hook_PauseFreeze()
+{
+    Hook_Gui();
+    Hook_Piggy();
+}
+
+static bool Check_pause_freeze(std::string* why)
+{
+    if (!CheckGuiCommon(PAUSE_FREEZE_DURATION, why))
+        return false;
+    if (g_GuiPauseEntries != 1 || !g_GuiPausedWithPig || !g_GuiPausedWithParts)
+    {
+        *why = "a pausa nao pegou o porco voando e particulas vivas";
+        return false;
+    }
+    if (!g_PigSawActive || g_Game.pig.active)
+    {
+        *why = "o voo do porco nao terminou depois da pausa";
+        return false;
+    }
+    return true;
+}
+
+// gui_buttons: ESC pausa -> "Reiniciar" (corrida volta ao início); ESC ->
+// "Menu" -> "Jogar". Sem obstáculos.
+static void Hook_GuiButtons()
+{
+    Hook_Gui();
+}
+
+static bool Check_gui_buttons(std::string* why)
+{
+    char buf[200];
+    if (!CheckGuiCommon(3.2f, why))
+        return false;
+    if (!g_GuiSawReset || g_GuiMenuFrames < 5 || g_GuiPauseEntries != 2 || g_Game.player.s < 5.0f)
+    {
+        snprintf(buf, sizeof(buf), "reiniciou = %d, quadros no menu = %d, pausas = %d (2), s = %.1f",
+                 (int)g_GuiSawReset, g_GuiMenuFrames, g_GuiPauseEntries, g_Game.player.s);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// game_over_gui / game_over_menu: bate no trem móvel (moving_train_hit) e,
+// na janela de fim de jogo, recomeça com Enter ou volta ao menu pelo botão
+// "Menu" e clica em "Jogar".
+static void Hook_GameOverGui()
+{
+    Hook_GameOver();
+    Hook_Gui();
+}
+
+static bool CheckGameOverGui(bool via_menu, std::string* why)
+{
+    char buf[200];
+    if (!g_SawGameOver)
+    {
+        *why = "nao houve game over";
+        return false;
+    }
+    if (g_Game.mode != GameMode::PLAYING || g_Game.player.s > 10.0f || (via_menu && g_GuiMenuFrames < 3))
+    {
+        snprintf(buf, sizeof(buf), "esperava corrida nova em PLAYING: modo = %d, s = %.1f, quadros no menu = %d",
+                 (int)g_Game.mode, g_Game.player.s, g_GuiMenuFrames);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+static bool Check_game_over_gui(std::string* why)  { return CheckGameOverGui(false, why); }
+static bool Check_game_over_menu(std::string* why) { return CheckGameOverGui(true, why); }
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -1589,6 +1816,89 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
+    // menu_pause (Tarefa 6.2): menu -> Controles -> Jogar; P pausa e P volta;
+    // ESC pausa (sem fechar a janela) e o botão "Continuar" volta.
+    {
+        AutotestScenario s;
+        s.name          = "menu_pause";
+        s.duration      = MENU_PAUSE_DURATION;
+        s.final_check   = Check_menu_pause;
+        s.frame_hook    = Hook_Gui;
+        s.start_in_menu = true;
+        s.steps.push_back(AutotestStep{0.3f, 0, 0, "menu"});
+        s.steps.push_back(AutotestStep{0.4f, 0, 0, NULL, 0, 0, "Controles"});
+        s.steps.push_back(AutotestStep{0.6f, 0, 0, "controls"});
+        s.steps.push_back(AutotestStep{0.7f, 0, 0, NULL, 0, 0, "Jogar"});
+        s.steps.push_back(AutotestStep{2.0f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.4f, 0, 0, "paused"});
+        s.steps.push_back(AutotestStep{3.2f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.6f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.8f, 0, 0, NULL, 0, 0, "Continuar"});
+        s.steps.push_back(AutotestStep{4.8f, 0, 0, "playing"});
+        scenarios.push_back(s);
+    }
+
+    // pause_freeze: pausa no meio do voo do porco, com partículas e ímã ativos.
+    {
+        AutotestScenario s;
+        s.name        = "pause_freeze";
+        s.duration    = PAUSE_FREEZE_DURATION;
+        s.final_check = Check_pause_freeze;
+        s.setup       = SetupPauseFreeze;
+        s.frame_hook  = Hook_PauseFreeze;
+        s.steps.push_back(AutotestStep{1.42f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{1.6f, 0, 0, "paused"});
+        s.steps.push_back(AutotestStep{2.5f, 0, 0, "still_paused"});
+        s.steps.push_back(AutotestStep{2.6f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.9f, 0, 0, "resumed"});
+        scenarios.push_back(s);
+    }
+
+    // gui_buttons: botões "Reiniciar", "Menu" e "Jogar" com o mouse.
+    {
+        AutotestScenario s;
+        s.name        = "gui_buttons";
+        s.duration    = 3.2f;
+        s.final_check = Check_gui_buttons;
+        s.setup       = SetupNoSpawn;
+        s.frame_hook  = Hook_GuiButtons;
+        s.steps.push_back(AutotestStep{0.5f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{0.7f, 0, 0, NULL, 0, 0, "Reiniciar"});
+        s.steps.push_back(AutotestStep{1.5f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{1.7f, 0, 0, NULL, 0, 0, "Menu"});
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "menu_again"});
+        s.steps.push_back(AutotestStep{2.1f, 0, 0, NULL, 0, 0, "Jogar"});
+        scenarios.push_back(s);
+    }
+
+    // game_over_gui: bate no trem; janela de fim de jogo; Enter recomeça.
+    {
+        AutotestScenario s;
+        s.name        = "game_over_gui";
+        s.duration    = 7.5f;
+        s.final_check = Check_game_over_gui;
+        s.setup       = SetupMovingTrain;
+        s.frame_hook  = Hook_GameOverGui;
+        s.steps.push_back(AutotestStep{7.0f, 0, 0, "window"});
+        s.steps.push_back(AutotestStep{7.1f, GLFW_KEY_ENTER, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{7.4f, 0, 0, "after"});
+        scenarios.push_back(s);
+    }
+
+    // game_over_menu: idem, mas o botão "Menu" e depois "Jogar".
+    {
+        AutotestScenario s;
+        s.name        = "game_over_menu";
+        s.duration    = 7.7f;
+        s.final_check = Check_game_over_menu;
+        s.setup       = SetupMovingTrain;
+        s.frame_hook  = Hook_GameOverGui;
+        s.steps.push_back(AutotestStep{7.0f, 0, 0, NULL, 0, 0, "Menu"});
+        s.steps.push_back(AutotestStep{7.2f, 0, 0, "menu"});
+        s.steps.push_back(AutotestStep{7.3f, 0, 0, NULL, 0, 0, "Jogar"});
+        scenarios.push_back(s);
+    }
+
     return scenarios;
 }
 
@@ -1611,6 +1921,8 @@ void Autotest_Start()
 {
     if (g_Active && g_Scenario.setup != NULL)
         g_Scenario.setup();
+    if (g_Active && g_Scenario.start_in_menu)
+        g_Game.mode = GameMode::MENU;
 }
 
 // Se a janela foi fechada antes do fim do cenário (ESC, botão de fechar,
@@ -1761,6 +2073,11 @@ void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
             HandleKey(window, step.key, step.action, 0);
         if (step.mouse_dx != 0.0f || step.mouse_dy != 0.0f)
             FreeCameraMouseLook(step.mouse_dx, step.mouse_dy);
+        if (step.click != NULL && !Gui_ClickButton(step.click))
+        {
+            Finish(window, false, std::string("botao \"") + step.click + "\" nao esta na tela");
+            return;
+        }
         if (step.screenshot != NULL && !SaveScreenshot(window, step.screenshot, &why))
         {
             Finish(window, false, why);

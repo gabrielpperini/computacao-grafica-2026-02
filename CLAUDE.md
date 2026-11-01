@@ -140,8 +140,8 @@ implementado** — o base é só um visualizador.
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
 | Rampas para subir nos trens (SPEC) | ✅ Tarefa 4.4: metade dos trens parados ganha uma rampa (8 m, 0 → 3.2 m) colada à frente; o jogador sobe correndo, anda no teto, pula de um teto para outro ou troca de faixa para o teto vizinho, e cai no fim do trem ou ao trocar para uma faixa vazia; a câmera sobe junto com o chão (não com o pulo) (veja "Rampas e tetos") |
 | Trens em movimento (SPEC: velocidade dos trens) | ✅ Tarefa 4.3: ~1 em 3 trens nasce móvel (`MOVING_TRAIN_SPEED` = 8 m/s na direção do jogador), com ≥ 3 s de aviso e sem quebrar a garantia de faixa livre; para ao chegar ao começo da reta onde nasceu ou a 0.5 m de outro obstáculo da faixa; colisão varre também a caixa do obstáculo (veja "Trens móveis") |
-| Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação, game over com reinício e, na Tarefa 5.2, power-ups clássicos (ímã, tênis, multiplicador x2: 10 s cada, renovam sem empilhar; veja "Power-ups"); faltam menu, pausa e o cofrinho/porco voador (5.3) |
-| Funcionalidade extra obrigatória | ⚠️ parcial — Tarefa 6.1: sistema de partículas na coleta (`include/particles.h`, `src/particles.cpp`, sem GL): `Game::events` registra cada moeda/power-up coletado (posição de pista); `main.cpp` converte para o mundo e chama `ParticleSystem::Emit` (30 douradas na moeda, 80 na cor do tipo no power-up); pool fixo de 512 (sem alocação em jogo; cheio = descarta as novas), vida 0.4–0.9 s, gravidade 6 m/s², movimento com `dt` (congela fora de PLAYING); desenho como billboards (matriz de modelo montada à mão com os eixos da câmera), sprite redondo procedural no fragment shader (`object_id == PARTICLE`, uniform `particle_alpha`), blending aditivo com `glDepthMask(GL_FALSE)` depois dos opacos. Falta a GUI com ImGui (Tarefa 6.2) |
+| Objetivo e lógica de controle não-triviais | ✅ corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação, power-ups clássicos (ímã, tênis, multiplicador x2: 10 s cada, renovam sem empilhar; veja "Power-ups"), cofrinho com porco voador (5.3) e, na Tarefa 6.2, menu, pausa e fim de jogo com reinício (veja "GUI") |
+| Funcionalidade extra obrigatória | ✅ (1) Tarefa 6.1: sistema de partículas na coleta (`include/particles.h`, `src/particles.cpp`, sem GL): `Game::events` registra cada moeda/power-up coletado (posição de pista); `main.cpp` converte para o mundo e chama `ParticleSystem::Emit` (30 douradas na moeda, 80 na cor do tipo no power-up); pool fixo de 512 (sem alocação em jogo; cheio = descarta as novas), vida 0.4–0.9 s, gravidade 6 m/s², movimento com `dt` (congela fora de PLAYING); desenho como billboards (matriz de modelo montada à mão com os eixos da câmera), sprite redondo procedural no fragment shader (`object_id == PARTICLE`, uniform `particle_alpha`), blending aditivo com `glDepthMask(GL_FALSE)` depois dos opacos. (2) Tarefa 6.2: GUI com Dear ImGui v1.92.9b (`third_party/imgui/`, MIT): menu, pausa, game over e HUD (veja "GUI") |
 
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
 movimentação travada ou com flickering, e qualquer crash durante a demonstração.
@@ -211,7 +211,11 @@ comportamento visível deve acrescentar um cenário. As teclas do harness passam
 do jogo pelo global `g_Game` (semente fixa 12345 no autotest). Um cenário falha também com
 passos além da duração ou se a janela fechar antes do fim. Opcionais por cenário: `setup`
 (configura `g_Game` antes do 1º quadro — `SetupNoSpawn` desliga o spawn de obstáculos para
-cenários que não podem terminar em colisão) e `frame_hook` (registra estados intermediários).
+cenários que não podem terminar em colisão), `frame_hook` (registra estados intermediários) e
+`start_in_menu` (o jogo começa no MENU; sem ela o autotest pula o menu e começa em PLAYING).
+Botões da GUI são clicados pelo rótulo: `AutotestStep{t, 0, 0, NULL, 0, 0, "Jogar"}` agenda um
+clique real na fila de eventos do ImGui (aperta no quadro seguinte, solta no outro: a ação
+acontece 2 quadros depois; botão fora da tela = falha).
 Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn), `long_run`
 (60 s de corrida; sem spawn), `obstacle_types` (close-up de cada obstáculo e das moedas),
 `coins` (fileira de boas-vindas coletada), `lighting` (Blinn-Phong com spawn), `showcase`
@@ -226,7 +230,12 @@ antes da 1ª curva, troca de faixa dentro dela; fotos de entrada, meio e saída)
 ao lado / não desvia e bate no instante previsto pela cinemática), `tunnel`
 (atravessa o 1º túnel com um trem parado na faixa -1 e troca de faixa lá dentro; confere altura
 da câmera antes/dentro/depois, transições sem salto, folga até o teto e o escurecimento) e
-`tunnel_side` (portal visto de longe, saindo da curva anterior). **Não fixe valores de s ligados
+`tunnel_side` (portal visto de longe, saindo da curva anterior), e os da GUI (Tarefa 6.2):
+`menu_pause` (menu → "Controles" → "Jogar"; P pausa/continua; ESC pausa sem fechar a janela e
+"Continuar" volta; confere que o relógio do jogo só anda em PLAYING), `pause_freeze` (pausa no
+meio do voo do porco com partículas e ímã ativos: nada se mexe), `gui_buttons` ("Reiniciar",
+"Menu", "Jogar"), `game_over_gui` (janela de fim de jogo; Enter recomeça) e `game_over_menu`
+(botão "Menu" do fim de jogo e "Jogar"). **Não fixe valores de s ligados
 à semente**: os cenários de curva/túnel acham o segmento com `FindFirstSegment()` (no `setup`, ou
 numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do comprimento).
 
@@ -239,13 +248,16 @@ numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do
 2. a linha do `g++` em `Makefile.macOS` (ela lista os fontes explicitamente).
 
 `Makefile.macOS` já lista `src/correcao.cpp` (onde `Correcao_KeyCallback()` está definida).
+Os fontes do Dear ImGui (`third_party/imgui/`) ficam numa lista separada, `IMGUI_SOURCES`, só do
+executável `main` (não do `logic_tests`); no `Makefile.macOS` estão na mesma linha do `g++`, com
+`-I ./third_party/imgui -I ./third_party/imgui/backends`.
 (Não verificado por build local no macOS.)
 
 ---
 
 ## Arquitetura
 
-`src/main.cpp` (~1800 linhas) cuida de janela, shaders, texturas, VAOs, desenho e callbacks. A
+`src/main.cpp` (~3100 linhas) cuida de janela, shaders, texturas, VAOs, desenho, callbacks e GUI. A
 lógica sem OpenGL fica em módulos testados por `tests/logic_tests.cpp`: `track.cpp` (pista e
 referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras, spawn de obstáculos/moedas por
 chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp` (todos os testes
@@ -254,7 +266,7 @@ de intersecção),
 `scenery.cpp` (faixas de chão/dormentes/trilhos, prédios, postes e peças/lâmpadas dos túneis do
 trecho visível `[s-20, s+150]`, sem prédios/postes junto aos túneis; as faixas começam na grade de 1 m em s para o chão facetado das curvas não
 "deslizar" entre quadros). Os demais
-`.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
+`.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto de depuração da tecla H via `include/dejavufont.h`),
 `tiny_obj_loader.cpp`, `stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs,
 `autotest.cpp` é o harness E2E e `correcao.cpp` é infraestrutura de correção automatizada.
 
@@ -408,7 +420,7 @@ antes da boca, vale com folga `TUNNEL_APPROACH_SLOPE` por metro de distância
 (`TunnelApproachCeiling`, `Track::TunnelDistanceAhead`): um pulo alto que entra no túnel no ar
 é achatado aos poucos, sem tranco (`Test_SneakersTunnelEntryNoPop`). Desenho: `DrawPowerUp()`
 (modelo flutuando e girando, `g_PowerUpSpin/Bob` acumulam `dt`; material com leve emissivo por
-tipo). HUD (`TextRendering_ShowRunInfo`): uma linha "IMA/TENIS/x2 [====] Ns" por efeito ativo.
+tipo). HUD (`Gui_Hud()`, ImGui): uma linha "Ímã/Tênis/Pontos x2 [barra] N s" por efeito ativo.
 
 **Cofrinho e porco voador (Tarefa 5.3)**: `include/bezier.h`/`src/bezier.cpp` (sem GL) têm
 `CubicBezier()` (forma de Bernstein, implementação própria) e `CubicBezierTangent()` (derivada).
@@ -492,13 +504,35 @@ túnel usa a posição da câmera livre (`PointInsideTunnel`, em `collisions.cpp
 
 Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW (o estado
 do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição): `←`/`→` ou
-`A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; no GAME OVER, `Enter`
-(ou `Espaço`) reinicia a corrida; `H` liga e desliga o texto informativo (velocidade, faixa,
-FPS — o placar de pontos/moedas/distância e os tempos dos power-ups ativos ficam sempre visíveis); `C` liga/desliga a câmera livre
-(jogo pausado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe, `Shift` desce,
-`C` volta ao jogo); `R` recarrega shaders; `ESC` fecha. Fora da câmera livre o mouse não faz
-nada. Todo atalho precisa acabar documentado no manual dentro
-do `README.md`.
+`A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; `P` ou `ESC` pausam e
+continuam (**`ESC` não fecha mais o programa**: sair é pelo botão "Sair" do menu); no MENU,
+`Enter` (ou `Espaço`) equivale a "Jogar"; no GAME OVER, `Enter` (ou `Espaço`) equivale a "Jogar
+de novo"; `H` liga e desliga o texto de depuração (velocidade, faixa, FPS — o HUD de
+pontos/moedas/distância e os tempos dos power-ups ativos fica sempre visível); `C` liga/desliga a
+câmera livre (jogo congelado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe,
+`Shift` desce, `C` volta ao jogo, `P`/`ESC` sai dela direto para a pausa); `R` recarrega shaders.
+Fora da câmera livre o mouse só clica nos botões da GUI. Todo atalho precisa acabar documentado
+no manual dentro do `README.md`.
+
+**GUI (Tarefa 6.2, Dear ImGui v1.92.9b em `third_party/imgui/`, licença MIT, cada arquivo com
+`// FONTE:` no topo).** Tudo em `main.cpp`: `Gui_Init()` (chamado depois dos `glfwSet*Callback`,
+com `ImGui_ImplGlfw_InitForOpenGL(window, true)`: o backend encadeia os nossos callbacks e os
+chama primeiro, então o `KeyCallback` com o `Correcao_KeyCallback` segue valendo;
+`io.IniFilename = NULL`, fonte vetorial embutida `AddFontDefaultVector()` a 18 px, estilo escuro
+com botões laranja) e `Gui_Frame()` (a cada quadro, depois da cena 3D: escala estilo e fonte pela
+altura da janela, 600 px = 1x até 2x, e desenha conforme `g_Game.mode`: `MENU` → título "RAIL
+RUSH", "Jogar", "Controles" (abre a lista de controles na mesma janela), "Sair"; `PLAYING` → HUD
+transparente no canto superior esquerdo; `PAUSED` → HUD + "Continuar", "Reiniciar", "Menu";
+`FREE_CAMERA` → aviso no topo; `GAME_OVER` → pontos, moedas, distância, "Jogar de novo", "Menu").
+A cena continua sendo desenhada atrás (escurecida) e congelada. O jogo abre em `MENU` (`main()`
+põe `g_Game.mode = MENU` fora do autotest; `Game()`/`Reset()` continuam deixando `PLAYING`).
+As ações dos botões são funções compartilhadas com os atalhos: `StartRunFromMenu()`,
+`PauseRun()`, `ResumeRun()`, `GoToMenu()` (corrida nova ao fundo), `RestartRun()`,
+`EnterFreeCamera()/LeaveFreeCamera()`. Na pausa ficam parados jogador, relógio, trens, porco,
+partículas, giro das moedas/power-ups e a câmera de 3ª pessoa. `HandleKey()` ignora a tecla nas
+telas de GUI se `io.WantCaptureKeyboard` (hoje nunca: não há campos de texto) e
+`CursorPosCallback()` ignora o mouse se `io.WantCaptureMouse`. Botões são criados por
+`GuiButton()`, que guarda o retângulo de cada um (por rótulo) para o clique do E2E.
 
 `Correcao_KeyCallback()` (`src/correcao.cpp`) deve continuar sendo o primeiro comando de
 `KeyCallback()`: `Shift+0..9` encerra o processo com código `100+N` para a correção automatizada.
@@ -512,6 +546,9 @@ em seguida pelo `KeyCallback()`), que o harness E2E também usa; novos atalhos e
 - `include/glm/`, `include/glad/`, `include/GLFW/`, `include/KHR/`, `include/stb_image.h`,
   `include/tiny_obj_loader.h`, `include/dejavufont.h` — dependências vendorizadas.
 - `lib-*/` — binários pré-compilados da GLFW por toolchain.
+- `third_party/imgui/` — Dear ImGui v1.92.9b vendorizado sem alterações (só o comentário
+  `// FONTE:` na 1ª linha de cada arquivo). Para atualizar, troque todos os arquivos pela mesma
+  release e ajuste a versão no `CMakeLists.txt` e aqui.
 - `src/correcao.cpp` e sua chamada em `KeyCallback()` — correção automatizada.
 - `src/buildtriangles.cpp` — resquício de laboratório anterior; não é compilado por nenhum build.
 

@@ -16,7 +16,11 @@
 // quadro atual em e2e/<cenario>_<screenshot>.png. Use key = 0 para só tirar foto.
 // Opcionalmente (campos finais, zero quando omitidos) injeta um deslocamento do
 // mouse de (mouse_dx, mouse_dy) pixels, como o callback do cursor faria (só tem
-// efeito na câmera livre).
+// efeito na câmera livre), e/ou clica com o botão esquerdo no botão da GUI
+// (ImGui) cujo rótulo é 'click' (ex.: "Jogar"). O clique entra na fila de
+// eventos do ImGui como um clique real: aperta no quadro seguinte e solta no
+// outro, então a ação do botão acontece 2 quadros depois. Se o botão não
+// estiver na tela, o cenário falha.
 struct AutotestStep
 {
     float       time;
@@ -25,6 +29,7 @@ struct AutotestStep
     const char* screenshot;
     float       mouse_dx;
     float       mouse_dy;
+    const char* click;
 };
 
 struct AutotestScenario
@@ -39,6 +44,9 @@ struct AutotestScenario
     // Opcional: chamado a cada quadro (antes das teclas do quadro), para
     // registrar estados intermediários que o final_check confere no fim.
     void (*frame_hook)() = NULL;
+    // Opcional: o jogo começa no MENU, como fora do autotest (por padrão os
+    // cenários pulam o menu e já começam em PLAYING).
+    bool start_in_menu = false;
 };
 
 // Procura "--autotest <nome>" em argv. Retorna true se o cenário existe.
@@ -50,7 +58,7 @@ bool  Autotest_Active();
 float Autotest_FixedDt();   // 1/60 s: no autotest o dt é fixo (execução determinística)
 
 // Chamar uma vez, depois de criar/configurar o jogo e antes do 1º quadro:
-// roda o 'setup' do cenário (se houver).
+// roda o 'setup' do cenário (se houver) e, com start_in_menu, põe o jogo no MENU.
 void  Autotest_Start();
 
 // Chamar uma vez por quadro, DEPOIS de desenhar e ANTES de glfwSwapBuffers().
