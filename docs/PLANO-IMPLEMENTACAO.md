@@ -128,7 +128,7 @@ const float PIGGY_COIN_INTERVAL = 0.15f;  // s entre moedas soltas
 
 | Fase | Entrega | Prazo-alvo |
 |---|---|---|
-| 0 — Fundação | Δt, IDs, texturas por objeto, alvo de testes, limpeza do lab | 02/11 |
+| 0 — Fundação | Δt, IDs, texturas por objeto, testes unitários e E2E, limpeza do lab | 02/11 |
 | 1 — Corrida jogável | Pista infinita reta, jogador com faixas/pulo/rolamento, câmera 3ª pessoa | **03/11 (avaliação parcial 04/11)** |
 | 2 — Regras do jogo | `collisions.cpp`, obstáculos, moedas instanciadas, pontuação, game over | 09/11 |
 | 3 — Iluminação e texturas | Blinn-Phong, Gouraud nas moedas, luzes pontuais, assets finais | **10/11 (avaliação parcial 11/11)** |
@@ -199,6 +199,45 @@ ligada antes de cada desenho, e um uniform `uv_mode` que diz como gerar UV.
 - [ ] **Passo 3:** atualizar a seção "Texturas" do `CLAUDE.md` (o mapeamento por ordem de carga
   deixou de existir).
 - [ ] **Passo 4:** commit `IA: textura por objeto, uv_mode e ids compartilhados`.
+
+### Tarefa 0.3: Harness E2E (`--autotest`)
+
+Testes ponta a ponta rodando o executável real: ele abre a janela, injeta uma sequência de teclas
+com tempo simulado, salva screenshots e sai com código de status. Todas as fases seguintes
+acrescentam cenários aqui.
+
+**Arquivos:**
+- Criar: `include/autotest.h`, `src/autotest.cpp` (builds), `include/stb_image_write.h`
+  (FONTE: https://github.com/nothings/stb — domínio público/MIT; comentário `FONTE` no topo),
+  `tests/run_e2e.sh` (roda cada cenário a partir de `bin/<plataforma>/` e falha se algum sair ≠ 0).
+- Modificar: `src/main.cpp` (parse de `--autotest <cenário>`; o laço consulta o harness),
+  `src/stb_image.cpp` ou novo wrapper para `STB_IMAGE_WRITE_IMPLEMENTATION`.
+
+**Interfaces:**
+- Produz:
+  ```cpp
+  struct AutotestStep { float time; int key; int action; const char* screenshot; };  // key/action no formato GLFW; screenshot pode ser NULL
+  struct AutotestScenario { const char* name; float duration; std::vector<AutotestStep> steps;
+                            bool (*final_check)(std::string* why); };          // NULL = só "não crashou, sem erro de GL"
+  bool  Autotest_Begin(int argc, char* argv[]);   // true se --autotest <nome> válido
+  bool  Autotest_Active();
+  float Autotest_FixedDt();                        // 1/60 — no autotest o dt é fixo
+  void  Autotest_AfterFrame(GLFWwindow* w, float sim_time);  // injeta teclas via a mesma função que KeyCallback usa, tira screenshots, checa glGetError
+  ```
+  Screenshots em `bin/<plataforma>/e2e/<cenário>_<rótulo>.png` (`glReadPixels` do back buffer
+  antes do swap, invertido verticalmente). Ao fim imprime `E2E <nome> OK` e sai com `0`; falha
+  imprime `E2E <nome> FAIL: <motivo>` e sai com `1`. **Nunca** usar códigos 100–109 (correção
+  automatizada). A janela continua visível (ler o framebuffer de janela oculta é indefinido).
+- Cenário inicial `smoke`: 3 s de simulação, screenshot em 1 s, sem erro de GL.
+
+- [ ] **Passo 1:** implementar; `tests/run_e2e.sh` roda `smoke`.
+- [ ] **Passo 2:** rodar; esperado: `E2E smoke OK`, exit 0, PNG legível mostrando a cena.
+- [ ] **Passo 3:** commit `IA: harness E2E com cenários scriptados e screenshots`.
+
+**A partir daqui, toda tarefa que muda comportamento visível acrescenta pelo menos um cenário E2E**
+(por exemplo, `lane_jump_roll` na 1.3, `game_over` na 2.2, `curve` na 4.1, `free_camera` na 5.1,
+`piggy` na 5.3, `menu_pause` na 6.2) com `final_check` sobre o estado do `Game` e screenshots
+para inspeção visual.
 
 ---
 
@@ -438,8 +477,10 @@ bool  LandsOnTop(const AABB& player_prev, const AABB& player_now, const AABB& ob
 
 ### Tarefa 3.2: Assets finais (modelos e texturas)
 
-Tarefa majoritariamente **humana**: escolher assets cuja licença permita redistribuição
-(CC0 / CC-BY). Fontes sugeridas: Poly Haven (texturas CC0), Kenney e Quaternius (modelos CC0),
+Escolher assets cuja licença permita redistribuição (CC0 / CC-BY). Na execução automatizada, a
+IA pode baixar assets **CC0** (preferência) com link direto e registrá-los em `data/FONTES.txt`;
+o que não for obtenível assim vira malha procedural gerada por script versionado
+(`tools/gen_models.py`, commit `IA:`), com UVs próprias. A dupla pode trocar qualquer asset depois. Fontes sugeridas: Poly Haven (texturas CC0), Kenney e Quaternius (modelos CC0),
 Poly Pizza (filtrar por CC0/CC-BY). Modelos e texturas devem ser **originais da fonte**, nada
 extraído do jogo de referência.
 

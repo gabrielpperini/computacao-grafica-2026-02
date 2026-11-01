@@ -49,3 +49,24 @@ seção de entrega final.
 
 **Gerado:** `docs/PLANO-IMPLEMENTACAO.md` (plano em 8 fases, com arquitetura, interfaces, testes e
 cronograma alinhado às avaliações parciais) e a seção "Plano de implementação" do `CLAUDE.md`.
+
+---
+
+## 2026-11-01 — Execução do plano por subagentes
+
+**Ferramenta:** Claude Code (Claude Opus 5.5 como coordenador; subagentes Claude implementam e
+revisam cada tarefa)
+
+**Prompt:**
+
+> por subagentes, vou te deixar a noite ligado, nao para por nada, vai comitando tudo na main, sem
+> pr, se precisar adiciona testes unitarios e E2E pra garantir eficacia
+
+**Como os commits seguintes foram gerados:** cada commit `IA: ...` a partir daqui implementa uma
+tarefa de `docs/PLANO-IMPLEMENTACAO.md`. O coordenador extrai o texto da tarefa do plano e o
+entrega a um subagente implementador junto com as restrições globais; um subagente revisor
+confere o diff. O "prompt" de cada commit é, portanto, este prompt acima mais o texto da tarefa
+correspondente no plano (citada no corpo do commit como `Tarefa X.Y`).
+
+**Primeiro ajuste (este commit):** plano ganhou a Tarefa 0.3 (harness E2E com `--autotest`) e a
+regra de obtenção de assets CC0/procedurais na Tarefa 3.2.
