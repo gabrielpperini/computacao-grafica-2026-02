@@ -19,13 +19,16 @@ float StripStart(float player_s)
 
 // Acrescenta uma faixa [x0,x1] na altura y ao lote, cobrindo o trecho visível.
 // tile = metros por repetição da textura nas duas direções (sem esticar).
+// uv_mode: STRIP_UV_WORLD_XZ no chão (brita/terreno não têm direção: mesma
+// densidade em todo x, também nas curvas) e STRIP_UV_ALONG_TRACK nos trilhos
+// (v = comprimento de arco do próprio trilho; veja StripUvMode em track.h).
 void AppendStrip(const Track& track, float player_s, float x0, float x1, float y, float tile,
-                 StripBatch* out)
+                 StripUvMode uv_mode, StripBatch* out)
 {
     const int first = (int)out->VertexCount();
     track.BuildStrip(StripStart(player_s), player_s + SPAWN_AHEAD, SCENERY_STEP,
                      x0, x1, y, (x1 - x0) / tile, tile,
-                     &out->positions, &out->normals, &out->uvs);
+                     &out->positions, &out->normals, &out->uvs, uv_mode);
     const int count = (int)out->VertexCount() - first;
     if (count > 0) {
         out->first.push_back(first);
@@ -35,7 +38,9 @@ void AppendStrip(const Track& track, float player_s, float x0, float x1, float y
 
 // Acrescenta uma faixa VERTICAL (parede) na lateral x, de y0 a y1, cobrindo o
 // trecho visível, com a normal para +right (outward_right) ou -right. Mesmos
-// passos de Track::BuildStrip (mesmo número de vértices). UV em metros/tile.
+// passos de Track::BuildStrip (mesmo número de vértices). UV em metros/tile:
+// u na altura e v no comprimento de arco da parede (s + x * heading, como
+// STRIP_UV_ALONG_TRACK), sem esticar nas curvas.
 void AppendWallStrip(const Track& track, float player_s, float x, float y0, float y1,
                      bool outward_right, float tile, StripBatch* out)
 {
@@ -47,9 +52,11 @@ void AppendWallStrip(const Track& track, float player_s, float x, float y0, floa
     // topo). Assim os triângulos da faixa ficam anti-horários vistos de fora.
     const float ys[2] = {outward_right ? y1 : y0, outward_right ? y0 : y1};
     const float sign = outward_right ? 1.0f : -1.0f;
+    const float v_origin = std::floor(s0 / tile) * tile; // múltiplo de tile: v pequeno
     for (int i = 0; i <= n; ++i) {
         const float s = std::min(s0 + i * SCENERY_STEP, s1);
         const TrackFrame f = track.FrameAt(s);
+        const float v = ((s - v_origin) + x * f.heading) / tile;
         for (int k = 0; k < 2; ++k) {
             const glm::vec4 p = f.position + f.right * x + glm::vec4(0.0f, ys[k], 0.0f, 0.0f);
             out->positions.push_back(p.x);
@@ -61,7 +68,7 @@ void AppendWallStrip(const Track& track, float player_s, float x, float y0, floa
             out->normals.push_back(sign * f.right.z);
             out->normals.push_back(0.0f);
             out->uvs.push_back((ys[k] - y0) / tile);
-            out->uvs.push_back(s / tile);
+            out->uvs.push_back(v);
         }
     }
     out->first.push_back(first);
@@ -125,11 +132,11 @@ void BuildGroundStrips(const Track& track, float player_s, StripBatch* out)
     // Leito da pista e terreno: as bordas coincidem exatamente (mesmo cálculo),
     // então não há frestas; as larguras são múltiplas dos ladrilhos.
     AppendStrip(track, player_s, -TRACK_BED_HALF_WIDTH, TRACK_BED_HALF_WIDTH, 0.0f,
-                BED_TEXTURE_TILE, out);
+                BED_TEXTURE_TILE, STRIP_UV_WORLD_XZ, out);
     AppendStrip(track, player_s, -TERRAIN_HALF_WIDTH, -TRACK_BED_HALF_WIDTH, 0.0f,
-                GROUND_TEXTURE_TILE, out);
+                GROUND_TEXTURE_TILE, STRIP_UV_WORLD_XZ, out);
     AppendStrip(track, player_s, TRACK_BED_HALF_WIDTH, TERRAIN_HALF_WIDTH, 0.0f,
-                GROUND_TEXTURE_TILE, out);
+                GROUND_TEXTURE_TILE, STRIP_UV_WORLD_XZ, out);
 }
 
 void BuildRailStrips(const Track& track, float player_s, StripBatch* out)
@@ -140,7 +147,7 @@ void BuildRailStrips(const Track& track, float player_s, StripBatch* out)
             const float center = lane * LANE_WIDTH + side * 0.5f * RAIL_GAUGE;
             const float x0 = center - 0.5f * RAIL_WIDTH;
             const float x1 = center + 0.5f * RAIL_WIDTH;
-            AppendStrip(track, player_s, x0, x1, RAIL_HEIGHT, RAIL_TEXTURE_TILE, out);
+            AppendStrip(track, player_s, x0, x1, RAIL_HEIGHT, RAIL_TEXTURE_TILE, STRIP_UV_ALONG_TRACK, out);
             AppendWallStrip(track, player_s, x0, SLEEPER_HEIGHT, RAIL_HEIGHT, false,
                             RAIL_TEXTURE_TILE, out);
             AppendWallStrip(track, player_s, x1, SLEEPER_HEIGHT, RAIL_HEIGHT, true,

@@ -282,7 +282,10 @@ gera os vértices em coordenadas de mundo e `UpdateDynamicStripMesh()` os reenvi
 único `glMultiDrawArrays` (os dormentes são ~3.4k faixas de 4 vértices, uma por face). O chão tem
 2 texturas: a faixa 0 (leito, brita) e as faixas 1–2 (terreno) são desenhadas separadas
 (`first_strip`/`strip_count`). Trilhos = topo + 2 laterais (`AppendWallStrip`) sobre os dormentes
-(`RAIL_HEIGHT` 0.18 m, `SLEEPER_HEIGHT` 0.06 m).
+(`RAIL_HEIGHT` 0.18 m, `SLEEPER_HEIGHT` 0.06 m). UV sem esticar nas curvas (Tarefa 7.1b,
+`StripUvMode` em `track.h`): o chão usa `STRIP_UV_WORLD_XZ` (UV = mundo/tile, mesma densidade em
+todo x) e os trilhos `STRIP_UV_ALONG_TRACK` (v = comprimento de arco do próprio trilho,
+`s + x·heading`); as UV têm a origem num múltiplo do ladrilho (pequenas, sem perder precisão).
 
 ### Pipeline de carga de geometria
 

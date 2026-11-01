@@ -232,7 +232,7 @@ TrackFrame Track::FrameAt(float s) const
 void Track::BuildStrip(float s0, float s1, float step, float x0, float x1, float y,
                        float u_repeat, float v_tile,
                        std::vector<float>* positions, std::vector<float>* normals,
-                       std::vector<float>* uvs) const
+                       std::vector<float>* uvs, StripUvMode uv_mode) const
 {
     if (step <= 0.0f || s1 < s0 || v_tile == 0.0f || x1 == x0)
         return;
@@ -244,10 +244,24 @@ void Track::BuildStrip(float s0, float s1, float step, float x0, float x1, float
     normals->reserve(normals->size() + pairs * 2 * 4);
     uvs->reserve(uvs->size() + pairs * 2 * 2);
 
+    // Origens das UV, múltiplas de v_tile (a diferença para a UV "absoluta" é
+    // um número inteiro de repetições): UV pequenas, sem perder precisão de
+    // float com s ou coordenadas de mundo grandes.
+    const float v_origin = std::floor(s0 / v_tile) * v_tile;
+    const TrackFrame f0 = FrameAt(s0);
+    const float wx_origin = std::floor(f0.position.x / v_tile) * v_tile;
+    const float wz_origin = std::floor(f0.position.z / v_tile) * v_tile;
+    const float xc = 0.5f * (x0 + x1);
+
     const float xs[2] = {x0, x1};
     for (int i = 0; i <= n; ++i) {
         const float s = std::min(s0 + i * step, s1);
         const TrackFrame f = FrameAt(s);
+        // Comprimento de arco da paralela à pista em x = xc: o ponto é
+        // centro(s) + right(s) * xc e d(right)/ds = curvatura * forward, então
+        // |dp/ds| = 1 + curvatura * xc, cuja integral é s + xc * heading(s)
+        // (a menos de uma constante): o lado de fora da curva é mais longo.
+        const float v_along = ((s - v_origin) + xc * f.heading) / v_tile;
         for (int k = 0; k < 2; ++k) {
             const float x = xs[k];
             const glm::vec4 p = f.position + f.right * x + glm::vec4(0.0f, y, 0.0f, 0.0f);
@@ -259,8 +273,13 @@ void Track::BuildStrip(float s0, float s1, float step, float x0, float x1, float
             normals->push_back(1.0f);
             normals->push_back(0.0f);
             normals->push_back(0.0f);
-            uvs->push_back((x - x0) / (x1 - x0) * u_repeat);
-            uvs->push_back(s / v_tile);
+            if (uv_mode == STRIP_UV_WORLD_XZ) {
+                uvs->push_back((p.x - wx_origin) / v_tile);
+                uvs->push_back((p.z - wz_origin) / v_tile);
+            } else {
+                uvs->push_back((x - x0) / (x1 - x0) * u_repeat);
+                uvs->push_back(v_along);
+            }
         }
     }
 }

@@ -45,6 +45,24 @@ struct TrackSegment {
     float start_heading;    // heading no início do segmento
 };
 
+// Como Track::BuildStrip gera as coordenadas de textura (Tarefa 7.1b; nas
+// curvas o lado de fora é mais longo que o de dentro, então v = s/tile para
+// todo x esticaria a textura de um lado e a comprimiria do outro):
+//  - STRIP_UV_ALONG_TRACK: u = (x - x0)/(x1 - x0) * u_repeat (atravessa a faixa)
+//    e v = comprimento de arco da LINHA CENTRAL da faixa (x_c = (x0+x1)/2) /
+//    v_tile = (s + x_c * heading(s)) / v_tile, menos um múltiplo inteiro de
+//    repetições (precisão de float com s grande). Exato para faixas estreitas
+//    (trilhos), com o veio da textura seguindo a pista.
+//  - STRIP_UV_WORLD_XZ: (u, v) = (x, z) de mundo / v_tile, menos uma origem
+//    múltipla de v_tile (u_repeat é ignorado). A densidade é a mesma em toda
+//    direção e em todo x, na reta e na curva: para texturas sem direção (chão).
+// Nos dois casos o mesmo ponto da pista recebe as mesmas UV (a menos de um
+// número inteiro de repetições, invisível com GL_REPEAT) em todo quadro.
+enum StripUvMode {
+    STRIP_UV_ALONG_TRACK = 0,
+    STRIP_UV_WORLD_XZ    = 1
+};
+
 struct TrackFrame {
     glm::vec4 position;  // w = 1
     glm::vec4 forward;   // w = 0
@@ -110,12 +128,14 @@ public:
     // Faixa de malha entre lateral [x0,x1] na altura y, de s0 a s1 em passos de
     // step. Gera 2 vértices por passo (ordem de triangle strip: x0 depois x1),
     // cada um com 4 floats em positions/normals (vec4) e 2 em uvs.
-    // UV: u = (x - x0)/(x1 - x0) * u_repeat, v = s / v_tile.
+    // UV conforme uv_mode (veja StripUvMode): ao longo da pista,
+    // u = (x - x0)/(x1 - x0) * u_repeat e v = comprimento de arco da linha
+    // central / v_tile; ou em coordenadas de mundo / v_tile.
     // Os vetores são acrescentados (append), não limpos.
     void BuildStrip(float s0, float s1, float step, float x0, float x1, float y,
                     float u_repeat, float v_tile,
                     std::vector<float>* positions, std::vector<float>* normals,
-                    std::vector<float>* uvs) const;
+                    std::vector<float>* uvs, StripUvMode uv_mode = STRIP_UV_ALONG_TRACK) const;
 
 private:
     static TrackFrame FrameInSegment(const TrackSegment& seg, float s);

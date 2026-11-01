@@ -83,6 +83,93 @@ void Test_StripVertexCount() // 0..10 com passo 1 -> 11 pares
     assert(nearf(n[1], 1) && nearf(n[3], 0));
 }
 
+// Pista com reta, curva à esquerda, curva à direita e reta (Tarefa 7.1b).
+static Track CurvyTrack(float* curve_start)
+{
+    Track t(1);
+    *curve_start = t.Segments().back().s_start + t.Segments().back().length;
+    t.AppendSegment(60.0f, 1.0f / TRACK_CURVE_RADIUS, false);
+    t.AppendSegment(60.0f, -1.0f / TRACK_CURVE_RADIUS, false);
+    t.AppendSegment(200.0f, 0.0f, false);
+    return t;
+}
+
+// Razão (distância em UV * tile) / (distância no mundo) entre os vértices a e b
+// de um lote (vec4 / vec2). 1 = a textura tem a densidade certa nessa direção.
+static float UvDensity(const std::vector<float>& pos, const std::vector<float>& uv, size_t a, size_t b,
+                       float tile)
+{
+    const float dx = pos[4 * b] - pos[4 * a], dy = pos[4 * b + 1] - pos[4 * a + 1];
+    const float dz = pos[4 * b + 2] - pos[4 * a + 2];
+    const float du = uv[2 * b] - uv[2 * a], dv = uv[2 * b + 1] - uv[2 * a + 1];
+    return std::sqrt(du * du + dv * dv) * tile / std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Textura sem esticar nas curvas (Tarefa 7.1b). Com v = s/tile para todo x, o
+// lado de fora da curva (mais longo) esticava a textura e o de dentro a
+// comprimia (até ±50% na borda do terreno). Agora:
+//  - STRIP_UV_WORLD_XZ (chão): UV = posição de mundo / tile, densidade
+//    exatamente igual em toda direção e em todo x;
+//  - STRIP_UV_ALONG_TRACK (faixas estreitas: trilhos): v é o comprimento de
+//    arco da linha central da faixa (s + x_c * heading), sem esticar.
+void Test_StripUvNotStretchedInCurves()
+{
+    float c0;
+    Track t = CurvyTrack(&c0);
+    // Chão largo (terreno à esquerda) em mundo: isotrópico em todas as arestas.
+    std::vector<float> p, n, uv;
+    const float tile = GROUND_TEXTURE_TILE;
+    t.BuildStrip(c0 - 10.0f, c0 + 130.0f, SCENERY_STEP, -TERRAIN_HALF_WIDTH, -TRACK_BED_HALF_WIDTH, 0.0f,
+                 (TERRAIN_HALF_WIDTH - TRACK_BED_HALF_WIDTH) / tile, tile, &p, &n, &uv, STRIP_UV_WORLD_XZ);
+    const size_t pairs = p.size() / 8;
+    assert(pairs > 100);
+    for (size_t i = 0; i + 1 < pairs; ++i) {
+        assert(nearf(UvDensity(p, uv, 2 * i, 2 * i + 2, tile), 1.0f, 1e-2f));     // borda x0
+        assert(nearf(UvDensity(p, uv, 2 * i + 1, 2 * i + 3, tile), 1.0f, 1e-2f)); // borda x1
+        assert(nearf(UvDensity(p, uv, 2 * i, 2 * i + 1, tile), 1.0f, 1e-2f));     // transversal
+        assert(nearf(UvDensity(p, uv, 2 * i, 2 * i + 3, tile), 1.0f, 1e-2f));     // diagonal
+        assert(std::fabs(uv[4 * i]) < 1e3f && std::fabs(uv[4 * i + 1]) < 1e3f);  // UV pequenas (precisão)
+    }
+    // Faixa estreita ao longo da pista (trilho em x = 3.5): v acompanha o
+    // comprimento de arco dela, nas retas e nas duas curvas.
+    p.clear(); n.clear(); uv.clear();
+    t.BuildStrip(c0 - 10.0f, c0 + 130.0f, SCENERY_STEP, 3.45f, 3.55f, RAIL_HEIGHT, 0.1f, RAIL_TEXTURE_TILE,
+                 &p, &n, &uv, STRIP_UV_ALONG_TRACK);
+    for (size_t i = 0; i + 1 < p.size() / 8; ++i) {
+        assert(nearf(UvDensity(p, uv, 2 * i, 2 * i + 2, RAIL_TEXTURE_TILE), 1.0f, 1e-2f));
+        assert(nearf(UvDensity(p, uv, 2 * i + 1, 2 * i + 3, RAIL_TEXTURE_TILE), 1.0f, 1e-2f));
+    }
+    // O mesmo s gera o mesmo v de um quadro para o outro (início diferente na
+    // grade): sem "deslizar" a textura. Diferença inteira = mesma imagem (GL_REPEAT).
+    std::vector<float> p2, n2, uv2;
+    t.BuildStrip(c0 - 7.0f, c0 + 130.0f, SCENERY_STEP, 3.45f, 3.55f, RAIL_HEIGHT, 0.1f, RAIL_TEXTURE_TILE,
+                 &p2, &n2, &uv2, STRIP_UV_ALONG_TRACK);
+    for (size_t i = 0; i < 20; ++i) {
+        const float d = uv2[2 * i + 1] - uv[2 * (i + 6) + 1];
+        assert(nearf(d, std::round(d), 1e-3f) && nearf(uv2[2 * i], uv[2 * (i + 6)]));
+    }
+
+    // As faixas do cenário usam esses modos: chão (3 faixas) isotrópico e os
+    // trilhos (topo e laterais) sem esticar ao longo da pista, numa curva.
+    StripBatch ground, rails;
+    BuildGroundStrips(t, c0 + 20.0f, &ground);
+    const float tiles[GROUND_STRIP_COUNT] = {BED_TEXTURE_TILE, GROUND_TEXTURE_TILE, GROUND_TEXTURE_TILE};
+    for (int k = 0; k < GROUND_STRIP_COUNT; ++k)
+        for (int v = ground.first[k]; v + 3 < ground.first[k] + ground.count[k]; v += 2) {
+            assert(nearf(UvDensity(ground.positions, ground.uvs, v, v + 2, tiles[k]), 1.0f, 1e-2f));
+            assert(nearf(UvDensity(ground.positions, ground.uvs, v + 1, v + 3, tiles[k]), 1.0f, 1e-2f));
+            assert(nearf(UvDensity(ground.positions, ground.uvs, v, v + 1, tiles[k]), 1.0f, 1e-2f));
+        }
+    BuildRailStrips(t, c0 + 20.0f, &rails);
+    for (size_t k = 0; k < rails.first.size(); ++k)
+        for (int v = rails.first[k]; v + 3 < rails.first[k] + rails.count[k]; v += 2) {
+            const float dz = rails.positions[4 * (v + 2) + 2] - rails.positions[4 * v + 2];
+            const float dx = rails.positions[4 * (v + 2)] - rails.positions[4 * v];
+            const float dv = rails.uvs[2 * (v + 2) + 1] - rails.uvs[2 * v + 1];
+            assert(nearf(std::fabs(dv) * RAIL_TEXTURE_TILE / std::sqrt(dx * dx + dz * dz), 1.0f, 1e-2f));
+        }
+}
+
 void Test_TrackFrameOutOfRange()
 {
     Track t(1);
@@ -3939,6 +4026,7 @@ int main()
     Test_TrackStraightFrame();
     Test_TrackDiscardKeepsFrames();
     Test_StripVertexCount();
+    Test_StripUvNotStretchedInCurves();
     Test_TrackFrameOutOfRange();
     Test_TrackDeterministicSeed();
     Test_TrackCurveContinuity();
