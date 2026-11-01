@@ -29,6 +29,14 @@ bool IsBarrier(ObstacleType t)
 
 } // namespace
 
+float ClampFrameDt(float dt)
+{
+    // !(dt > 0) pega NaN e negativos (comparações com NaN são falsas).
+    if (!(dt > 0.0f))
+        return 0.0f;
+    return std::min(dt, MAX_DT);
+}
+
 int ObstacleParts(const Obstacle& o, AABB parts[3])
 {
     parts[0] = o.box;
@@ -153,7 +161,7 @@ void Game::Update(float dt)
     if (mode != GameMode::PLAYING)
         return;
 
-    dt = std::min(std::max(dt, 0.0f), MAX_DT);
+    dt = ClampFrameDt(dt);
     elapsed += dt;
     StepPowerUpTimers(dt);
 
@@ -751,6 +759,8 @@ float Game::MovingRandom01()
 
 void Game::GenerateChunksUntil(float s)
 {
+    if (!std::isfinite(s)) // sem isto, +infinito geraria chunks para sempre
+        return;
     while ((next_chunk_ + 1) * CHUNK_LENGTH <= s)
         GenerateChunk(next_chunk_++);
 }

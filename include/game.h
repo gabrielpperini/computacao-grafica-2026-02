@@ -166,6 +166,11 @@ const int   WELCOME_COIN_COUNT      = 8;     // fileira de moedas do 1º chunk (
 // segmentos mantidos extrapolaria o primeiro deles (errado numa curva).
 const float TRACK_KEEP_MARGIN       = 5.0f;  // m
 
+// dt de um quadro, sanitizado (Tarefa 7.1a): NaN, zero e negativo viram 0 (a
+// simulação não anda nem recua); o resto é limitado a MAX_DT. Usado pelo laço
+// principal e pelo Game::Update.
+float ClampFrameDt(float dt);
+
 // Partes sólidas de um obstáculo (caixas em coordenadas de pista), usadas tanto
 // na colisão quanto no desenho: a mesma geometria nos dois. A barreira alta tem
 // 3 partes (viga = o.box e dois postes até o chão nas bordas); as demais, 1

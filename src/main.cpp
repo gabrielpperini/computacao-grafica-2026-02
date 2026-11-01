@@ -975,13 +975,13 @@ int main(int argc, char* argv[])
     return autotest ? Autotest_ExitCode() : 0;
 }
 
-// Retorna o tempo (s) decorrido desde o quadro anterior, limitado a MAX_DT, e
+// Retorna o tempo (s) decorrido desde o quadro anterior, limitado a [0, MAX_DT], e
 // guarda o instante atual em *last para o próximo quadro.
 float ComputeFrameDt(double now, double* last)
 {
     float dt = (float)(now - *last);
     *last = now;
-    return std::min(dt, MAX_DT);
+    return ClampFrameDt(dt); // NaN/negativo (relógio que recua) viram 0
 }
 
 // Função que carrega uma imagem para ser utilizada como textura

@@ -91,6 +91,10 @@ void Track::AppendSegment(float length, float curvature, bool tunnel)
 
 void Track::EnsureGeneratedUntil(float s)
 {
+    // NaN não entra no laço (comparação falsa), mas +infinito o tornaria
+    // infinito (e esgotaria a memória): s não finito é ignorado.
+    if (!std::isfinite(s))
+        return;
     while (segments_.back().s_start + segments_.back().length <= s)
         AppendGeneratedSegment();
 }

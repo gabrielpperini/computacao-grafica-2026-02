@@ -403,6 +403,58 @@ void Test_DtClamped() // dt gigante vale no máximo MAX_DT
     assert(a.player.s == b.player.s);
 }
 
+// dt inválido (Tarefa 7.1a): NaN, infinito e negativo nunca contaminam o estado.
+void Test_DtSanitized()
+{
+    const float nan = std::nanf("");
+    const float inf = INFINITY;
+    assert(ClampFrameDt(nan) == 0.0f);
+    assert(ClampFrameDt(-1.0f) == 0.0f);
+    assert(ClampFrameDt(-inf) == 0.0f);
+    assert(ClampFrameDt(0.0f) == 0.0f);
+    assert(ClampFrameDt(0.01f) == 0.01f);
+    assert(ClampFrameDt(5.0f) == MAX_DT);
+    assert(ClampFrameDt(inf) == MAX_DT);
+
+    Game g(1);
+    g.spawn_enabled = false;
+    g.Update(0.016f);
+    const Player p = g.player;
+    const float elapsed = g.elapsed, score = g.score;
+    g.Update(nan);
+    g.Update(-inf);
+    g.Update(-0.5f);
+    assert(g.player.s == p.s && g.player.x == p.x && g.player.y == p.y && g.player.speed == p.speed);
+    assert(g.elapsed == elapsed && g.score == score);
+    assert(std::isfinite(g.player.s) && std::isfinite(g.elapsed));
+    g.Update(inf); // infinito vale MAX_DT
+    assert(std::isfinite(g.player.s) && g.player.s > p.s && g.player.s - p.s < PLAYER_MAX_SPEED * MAX_DT + 1e-3f);
+
+    // Com NaN no meio de uma corrida com spawn, a pista e o resto continuam finitos.
+    Game h(3);
+    for (int i = 0; i < 120; ++i)
+        h.Update(i % 7 == 0 ? nan : 0.016f);
+    assert(std::isfinite(h.player.s) && std::isfinite(h.score) && std::isfinite(h.player.y));
+}
+
+void Test_TrackIgnoresNonFiniteS()
+{
+    Track t(1);
+    t.EnsureGeneratedUntil(100);
+    const size_t n = t.Segments().size();
+    t.EnsureGeneratedUntil(std::nanf(""));  // não gera nada (nem trava)
+    t.EnsureGeneratedUntil(INFINITY);       // idem: sem laço infinito
+    assert(t.Segments().size() == n);
+    t.EnsureGeneratedUntil(300);            // continua funcionando depois
+    assert(t.Segments().size() > n);
+
+    // Game: um s não finito do jogador também não trava o gerador do spawn.
+    Game g(1);
+    g.GenerateChunksUntil(std::nanf(""));
+    g.GenerateChunksUntil(INFINITY);
+    assert(g.obstacles.empty());
+}
+
 void Test_RollTimerExpires()
 {
     Game g(1);
