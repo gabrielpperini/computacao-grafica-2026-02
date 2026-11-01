@@ -14,6 +14,17 @@
 // Com h = 0 o jogador corre para -Z do mundo. curvature = 1/R; positivo =
 // curva à esquerda (h aumenta com a distância percorrida).
 
+// Gerador da pista (Tarefa 4.1): alterna retas e curvas. A 1ª reta (largada)
+// é mais longa, para não haver curva logo no começo da corrida. Os ângulos
+// estão em radianos (45° e 90°). Trens, rampas e túneis só ficam em retas
+// (o spawn de Game confere com IsStraightRange).
+const float TRACK_CURVE_RADIUS              = 40.0f;  // m (|curvature| = 1/40)
+const float TRACK_CURVE_MIN_ANGLE           = 0.78539816f; // rad (45°)
+const float TRACK_CURVE_MAX_ANGLE           = 1.57079633f; // rad (90°)
+const float TRACK_STRAIGHT_MIN_LENGTH       = 60.0f;  // m
+const float TRACK_STRAIGHT_MAX_LENGTH       = 150.0f; // m
+const float TRACK_FIRST_STRAIGHT_MIN_LENGTH = 100.0f; // m (reta da largada)
+
 struct TrackSegment {
     float s_start;          // distância (ao longo da pista) em que o segmento começa
     float length;           // m
@@ -34,7 +45,10 @@ class Track {
 public:
     explicit Track(unsigned seed);
 
-    // Anexa segmentos até cobrir s (o fim do último segmento passa de s).
+    // Anexa segmentos sorteados até cobrir s (o fim do último segmento passa
+    // de s). Alterna reta (TRACK_STRAIGHT_*_LENGTH) e curva (raio
+    // TRACK_CURVE_RADIUS, ângulo total entre TRACK_CURVE_MIN/MAX_ANGLE, para a
+    // esquerda ou a direita), sempre na mesma sequência para a mesma semente.
     void EnsureGeneratedUntil(float s);
 
     // Descarta segmentos que terminam antes de s. Sempre mantém ao menos o
@@ -54,6 +68,14 @@ public:
 
     bool IsTunnelAt(float s) const;
 
+    // true se todo o intervalo [s0, s1] está em segmentos mantidos e retos
+    // (curvature == 0); pode atravessar a emenda entre duas retas. Usado para
+    // só pôr trens/rampas/túneis em retas.
+    bool IsStraightRange(float s0, float s1) const;
+
+    // Segmentos mantidos, em ordem de s (para testes e depuração).
+    const std::vector<TrackSegment>& Segments() const { return segments_; }
+
     // Segmento que contém s; nullptr se s está fora dos segmentos mantidos.
     const TrackSegment* SegmentAt(float s) const;
 
@@ -69,6 +91,10 @@ public:
 
 private:
     static TrackFrame FrameInSegment(const TrackSegment& seg, float s);
+
+    // Sorteia e anexa o próximo segmento (reta depois de curva e vice-versa).
+    void AppendGeneratedSegment();
+    float Random01(); // [0, 1), portável (só usa a saída do mt19937)
 
     std::vector<TrackSegment> segments_;
     std::mt19937 rng_;

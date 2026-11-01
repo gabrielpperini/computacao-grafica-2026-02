@@ -135,6 +135,7 @@ implementado** — o base é só um visualizador.
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes, atenuação quadrática); **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 9 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
+| Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
 | Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
@@ -214,7 +215,9 @@ Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn),
 (arranjo fixo com um exemplar de cada obstáculo, 2 trens e moedas, + foto do pulo — imagem para
 o README/vídeo), `showcase_props` (power-ups e porco voador em exposição: `show_props = true`
 faz `main.cpp` chamar `DrawShowcaseProps()`), `game_over` (bate sem entrada) e `restart` /
-`restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo).
+`restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo), `curve` (atravessa a 1ª curva
+da semente 12345, s = 146.5–205.9, trocando de faixa no meio; fotos de entrada, meio e saída) e
+`curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte).
 
 ### Ao adicionar um novo arquivo `.cpp`
 
@@ -238,7 +241,8 @@ chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp`
 de intersecção),
 `camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
 `scenery.cpp` (faixas de chão/dormentes/trilhos, prédios e postes do trecho visível
-`[s-20, s+150]`). Os demais
+`[s-20, s+150]`; as faixas começam na grade de 1 m em s para o chão facetado das curvas não
+"deslizar" entre quadros). Os demais
 `.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
 `tiny_obj_loader.cpp`, `stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs,
 `autotest.cpp` é o harness E2E e `correcao.cpp` é infraestrutura de correção automatizada.
@@ -353,10 +357,11 @@ câmera (`nearplane = -0.3f`, `farplane = -250.0f`; o near maior dá precisão a
 dormentes/trilhos rentes ao chão), e que as matrizes de `matrices.h` são escritas em row-major no código mas
 armazenadas column-major.
 
-A câmera é a `ThirdPersonCamera` (`include/camera.h`): `Snap()` no início da corrida e
-`Update(frame, x, in_tunnel, dt)` a cada quadro; `Pose()` dá posição/view/up para
-`Matrix_Camera_View()`. Fica 6 m atrás e 3.5 m acima (4 m e 2.2 m no túnel), olha para
-jogador + forward·4 + up·1, segue 1/3 do deslocamento lateral e suaviza com
+A câmera é a `ThirdPersonCamera` (`include/camera.h`): `Snap(track, s, x, in_tunnel)` no início
+da corrida e `Update(track, s, x, in_tunnel, dt)` a cada quadro; `Pose()` dá posição/view/up para
+`Matrix_Camera_View()`. Fica sobre a pista 6 m atrás (em s − 6) e 3.5 m acima (4 m e 2.2 m no
+túnel), olha para o ponto da pista em s + 4 (+ up·1) — nas curvas o view vector é a corda entre
+os dois pontos e gira sem tranco nas junções —, segue 1/3 do deslocamento lateral e suaviza com
 `1 - exp(-6·dt)` no referencial da pista. Objetos na pista usam a matriz
 `T(frame.position + right·x + up·y) · R_y(heading) · <modelo>`; `Matrix_OnGround()` encaixa a
 AABB de um OBJ com a base em y = 0. `PushMatrix()`/`PopMatrix()` implementam uma pilha de

@@ -7,13 +7,23 @@
 
 namespace {
 
+// Início das faixas do trecho visível: player_s - DESPAWN_BEHIND arredondado
+// para baixo na grade de SCENERY_STEP. Com o início preso à grade, os vértices
+// ficam sempre nos mesmos s (k * SCENERY_STEP): na curva o chão é facetado
+// (segmentos de reta entre vértices do arco) e, se os vértices andassem junto
+// com o jogador, as facetas "deslizariam" ao longo do arco a cada quadro.
+float StripStart(float player_s)
+{
+    return std::floor((player_s - DESPAWN_BEHIND) / SCENERY_STEP) * SCENERY_STEP;
+}
+
 // Acrescenta uma faixa [x0,x1] na altura y ao lote, cobrindo o trecho visível.
 // tile = metros por repetição da textura nas duas direções (sem esticar).
 void AppendStrip(const Track& track, float player_s, float x0, float x1, float y, float tile,
                  StripBatch* out)
 {
     const int first = (int)out->VertexCount();
-    track.BuildStrip(player_s - DESPAWN_BEHIND, player_s + SPAWN_AHEAD, SCENERY_STEP,
+    track.BuildStrip(StripStart(player_s), player_s + SPAWN_AHEAD, SCENERY_STEP,
                      x0, x1, y, (x1 - x0) / tile, tile,
                      &out->positions, &out->normals, &out->uvs);
     const int count = (int)out->VertexCount() - first;
@@ -29,7 +39,7 @@ void AppendStrip(const Track& track, float player_s, float x0, float x1, float y
 void AppendWallStrip(const Track& track, float player_s, float x, float y0, float y1,
                      bool outward_right, float tile, StripBatch* out)
 {
-    const float s0 = player_s - DESPAWN_BEHIND;
+    const float s0 = StripStart(player_s);
     const float s1 = player_s + SPAWN_AHEAD;
     const int n = std::max(1, (int)std::ceil((s1 - s0) / SCENERY_STEP - 1e-4f));
     const int first = (int)out->VertexCount();
@@ -100,9 +110,11 @@ void StripBatch::Clear()
 
 size_t MaxVerticesPerStrip()
 {
-    // BuildStrip gera ceil(L/step) + 1 pares; +2 pares de folga para erros de
-    // arredondamento de float com s grande.
-    const float length = DESPAWN_BEHIND + SPAWN_AHEAD;
+    // BuildStrip gera ceil(L/step) + 1 pares. Com o início preso à grade
+    // (StripStart), L vai até DESPAWN_BEHIND + SPAWN_AHEAD + SCENERY_STEP:
+    // +1 par por isso e +2 de folga para erros de arredondamento de float
+    // com s grande.
+    const float length = DESPAWN_BEHIND + SPAWN_AHEAD + SCENERY_STEP;
     const size_t pairs = (size_t)std::ceil(length / SCENERY_STEP) + 3;
     return 2 * pairs;
 }

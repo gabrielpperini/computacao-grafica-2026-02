@@ -19,21 +19,20 @@ void Target(float player_x, bool in_tunnel, float* lateral, float* height, float
 ThirdPersonCamera::ThirdPersonCamera()
     : lateral_(0.0f), height_(CAMERA_HEIGHT), back_(CAMERA_BACK)
 {
-    frame_.position = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    frame_.forward = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
-    frame_.right = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
-    frame_.heading = 0.0f;
-    ComputePose();
+    // Pose de uma pista reta a partir da origem (até o primeiro Snap/Update).
+    pose_.position = glm::vec4(0.0f, CAMERA_HEIGHT, CAMERA_BACK, 1.0f);
+    pose_.view_vector = glm::vec4(0.0f, CAMERA_LOOK_HEIGHT - CAMERA_HEIGHT,
+                                  -CAMERA_LOOK_AHEAD - CAMERA_BACK, 0.0f);
+    pose_.up = kUp;
 }
 
-void ThirdPersonCamera::Snap(const TrackFrame& player_frame, float player_x, bool in_tunnel)
+void ThirdPersonCamera::Snap(const Track& track, float player_s, float player_x, bool in_tunnel)
 {
-    frame_ = player_frame;
     Target(player_x, in_tunnel, &lateral_, &height_, &back_);
-    ComputePose();
+    ComputePose(track, player_s);
 }
 
-void ThirdPersonCamera::Update(const TrackFrame& player_frame, float player_x, bool in_tunnel,
+void ThirdPersonCamera::Update(const Track& track, float player_s, float player_x, bool in_tunnel,
                                float dt)
 {
     if (dt < 0.0f)
@@ -49,8 +48,7 @@ void ThirdPersonCamera::Update(const TrackFrame& player_frame, float player_x, b
     height_ += (height - height_) * a;
     back_ += (back - back_) * a;
 
-    frame_ = player_frame;
-    ComputePose();
+    ComputePose(track, player_s);
 }
 
 CameraPose ThirdPersonCamera::Pose() const
@@ -58,13 +56,16 @@ CameraPose ThirdPersonCamera::Pose() const
     return pose_;
 }
 
-void ThirdPersonCamera::ComputePose()
+void ThirdPersonCamera::ComputePose(const Track& track, float player_s)
 {
-    // Ponto do chão da pista atrás do qual a câmera fica (com 1/3 do lateral).
-    const glm::vec4 base = frame_.position + frame_.right * lateral_;
+    // Câmera sobre a pista, back_ atrás do jogador, e alvo sobre a pista,
+    // CAMERA_LOOK_AHEAD à frente; os dois com o mesmo deslocamento lateral
+    // (1/3 do do jogador), cada um no referencial do seu próprio ponto.
+    const TrackFrame behind = track.FrameAt(player_s - back_);
+    const TrackFrame ahead = track.FrameAt(player_s + CAMERA_LOOK_AHEAD);
 
-    const glm::vec4 position = base - frame_.forward * back_ + kUp * height_;
-    const glm::vec4 look_at = base + frame_.forward * CAMERA_LOOK_AHEAD + kUp * CAMERA_LOOK_HEIGHT;
+    const glm::vec4 position = behind.position + behind.right * lateral_ + kUp * height_;
+    const glm::vec4 look_at = ahead.position + ahead.right * lateral_ + kUp * CAMERA_LOOK_HEIGHT;
 
     pose_.position = position;
     pose_.view_vector = look_at - position;

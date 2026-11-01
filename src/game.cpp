@@ -183,7 +183,7 @@ void Game::Update(float dt)
     // Mantém a pista e o conteúdo gerados à frente e descarta o que ficou
     // para trás.
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
-    track.DiscardBefore(player.s - DESPAWN_BEHIND);
+    track.DiscardBefore(player.s - DESPAWN_BEHIND - TRACK_KEEP_MARGIN);
     if (spawn_enabled)
         GenerateChunksUntil(player.s + SPAWN_AHEAD);
 
@@ -264,11 +264,16 @@ int Game::RandomInt(int lo, int hi)
 //    aparecer na faixa segura; nunca uma baixa e uma alta a menos de
 //    LOW_HIGH_MIN_GAP na mesma faixa;
 //  - nada antes de OBSTACLE_FREE_START; o 1º chunk só tem a fileira de moedas
-//    de boas-vindas na faixa inicial.
+//    de boas-vindas na faixa inicial;
+//  - trens/rampas só inteiros dentro de retas da pista (nas curvas viram
+//    placas); barreiras, placas e moedas podem ficar nas curvas.
 void Game::GenerateChunk(int index)
 {
     float start = index * CHUNK_LENGTH;
     float end = start + CHUNK_LENGTH;
+
+    // A pista precisa existir no chunk para saber onde há curvas.
+    track.EnsureGeneratedUntil(end);
 
     if (index == 0) {
         // Fileira de boas-vindas: faixa 0, termina bem antes de OBSTACLE_FREE_START.
@@ -312,6 +317,16 @@ void Game::GenerateChunk(int index)
         if (hi < lo)
             continue; // não cabe no miolo (só se o chunk for curto demais)
         float s = lo + (hi - lo) * u;
+
+        // Trens (e rampas, Tarefa 4.4) só em retas: um trem de 13 m numa curva
+        // de raio 40 sairia dos trilhos nas pontas e a caixa de colisão (reta
+        // em coordenadas de pista) não bateria com os carros desenhados. Se o
+        // trem não cabe inteiro numa reta, vira placa no mesmo lugar: continua
+        // bloqueando só esta faixa (a garantia da faixa segura não muda) e a
+        // sequência sorteada é a mesma.
+        if ((type == ObstacleType::TRAIN || type == ObstacleType::RAMP) &&
+            !track.IsStraightRange(s - hz, s + hz))
+            type = ObstacleType::SIGN;
 
         // Barreira baixa perto de uma alta (ou vice-versa) na mesma faixa seria
         // intransponível (não dá para pular e rolar ao mesmo tempo). Com um

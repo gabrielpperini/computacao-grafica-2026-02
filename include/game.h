@@ -36,6 +36,7 @@ struct Player {
 // Regras de passagem: BARRIER_LOW (até 0.9 m) só pulando; BARRIER_HIGH (viga
 // acima de um vão livre de BARRIER_HIGH_CLEARANCE) só rolando; SIGN e TRAIN só
 // desviando de faixa. RAMP fica para a Tarefa 4.4 (não é gerada ainda).
+// TRAIN e RAMP só são gerados inteiros em retas da pista (Tarefa 4.1).
 enum class ObstacleType { BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP };
 const int OBSTACLE_TYPE_COUNT = 5;
 
@@ -77,6 +78,10 @@ const float BARRIER_HIGH_CLEARANCE  = 1.1f;  // vão livre (m) sob a barreira al
 const float BARRIER_POST_HALF_WIDTH = 0.06f; // postes da barreira alta (m)
 const float COIN_SPACING            = 2.0f;  // m entre moedas de uma fileira
 const int   WELCOME_COIN_COUNT      = 8;     // fileira de moedas do 1º chunk (faixa 0)
+// A pista é mantida um pouco além de DESPAWN_BEHIND para trás: o cenário
+// começa as faixas na grade de 1 m (até 1 m antes) e FrameAt fora dos
+// segmentos mantidos extrapolaria o primeiro deles (errado numa curva).
+const float TRACK_KEEP_MARGIN       = 5.0f;  // m
 
 // Partes sólidas de um obstáculo (caixas em coordenadas de pista), usadas tanto
 // na colisão quanto no desenho: a mesma geometria nos dois. A barreira alta tem
@@ -102,7 +107,7 @@ public:
     // PLAYING. Ordem: movimento do jogador; colisões com a caixa varrida do
     // jogador (obstáculo -> GAME_OVER; moeda -> coletada); pontuação; spawn de
     // chunks até player.s + SPAWN_AHEAD (se spawn_enabled) e descarte do que
-    // ficou mais de DESPAWN_BEHIND para trás.
+    // ficou mais de DESPAWN_BEHIND para trás (a pista: + TRACK_KEEP_MARGIN).
     void Update(float dt);
 
     // Caixa do jogador em coordenadas de pista: altura PLAYER_ROLL_HEIGHT

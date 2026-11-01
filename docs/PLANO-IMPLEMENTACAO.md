@@ -517,14 +517,14 @@ extraído do jogo de referência.
 - Gerador alterna: reta 60–150 m, curva com `|curvature| = 1/40` e ângulo total 45°–90°, sinal
   aleatório. Túneis, trens e rampas **só** em retas (garantia do gerador); em curvas só barreiras,
   placas e moedas.
-- [ ] **Passo 1: testes** — `Test_CurveContinuity` (para cada junção de segmentos,
+- [x] **Passo 1: testes** — `Test_CurveContinuity` (para cada junção de segmentos,
   `FrameAt(s_fim - 1e-3)` ≈ `FrameAt(s_fim + 1e-3)` em posição e heading),
   `Test_Curve90EndsPerpendicular` (curva de 90° à esquerda vira `forward` para `-X`),
   `Test_NoTrainOnCurve` (seeds 1..20: todo TRAIN/RAMP está em segmento com `curvature == 0`).
-- [ ] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
-- [ ] **Passo 5:** rodar: chão, trilhos e prédios acompanham a curva sem buracos; dá para trocar
+- [x] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
+- [x] **Passo 5:** rodar: chão, trilhos e prédios acompanham a curva sem buracos; dá para trocar
   de faixa no meio da curva.
-- [ ] **Passo 6:** commit `IA: trechos curvos da pista`.
+- [x] **Passo 6:** commit `IA: trechos curvos da pista`.
 
 ### Tarefa 4.2: Túneis e câmera adaptativa
 

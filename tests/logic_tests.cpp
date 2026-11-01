@@ -47,10 +47,14 @@ void Test_TrackStraightFrame()
 
 void Test_TrackDiscardKeepsFrames()
 {
+    // Com curvas a posição em s = 400 não é mais (0, 0, -400): o que importa é
+    // que descartar o começo da pista não muda o referencial do que ficou.
     Track t(1);
     t.EnsureGeneratedUntil(500);
+    TrackFrame before = t.FrameAt(400);
     t.DiscardBefore(300);
-    assert(near(t.FrameAt(400).position, vec4(0, 0, -400, 1)));
+    TrackFrame after = t.FrameAt(400);
+    assert(near(after.position, before.position) && nearf(after.heading, before.heading));
     assert(t.SegmentAt(400) != nullptr);
 }
 
@@ -120,7 +124,7 @@ void Test_TrackCurveContinuity()
     assert(nearf(c.FrameAt(j2 + 10.0f).position.x, c.FrameAt(j2).position.x - 10.0f, 1e-3f));
 }
 
-void Test_TrackLeftCurveEndsHeadingLeft()
+void Test_Curve90EndsPerpendicular()
 {
     const float R = 40.0f, k = 1.0f / R, L = kHalfPi * R;
     Track d(1);
@@ -152,6 +156,71 @@ void Test_TrackLeftCurveEndsHeadingLeft()
     TrackFrame er = r.FrameAt(s0 + L);
     assert(near(er.forward, vec4(1, 0, 0, 0), 1e-3f));
     assert(nearf(er.heading, -kHalfPi, 1e-3f));
+}
+
+// ------------------------------------------------ Gerador de curvas (4.1)
+
+static const float kPi = 3.14159265f;
+
+// Regras do gerador: 1º segmento reto >= 100 m (nada de curva logo na
+// largada); depois alterna reta (60-150 m) e curva (|k| = 1/40, ângulo total
+// de 45° a 90°, para os dois lados); determinístico pela semente.
+void Test_TrackGeneratorRules()
+{
+    int left = 0, right = 0;
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Track t(seed);
+        t.EnsureGeneratedUntil(20000.0f);
+        const std::vector<TrackSegment>& segs = t.Segments();
+        assert(segs.size() > 100);
+        assert(segs[0].curvature == 0.0f && segs[0].s_start == 0.0f);
+        assert(segs[0].length >= TRACK_FIRST_STRAIGHT_MIN_LENGTH - 1e-3f);
+        assert(segs[0].length <= TRACK_STRAIGHT_MAX_LENGTH + 1e-3f);
+        for (size_t i = 0; i < segs.size(); i++) {
+            const TrackSegment& g = segs[i];
+            assert(!g.tunnel); // túneis só na Tarefa 4.2
+            if (i > 0) {
+                // Alterna: nunca duas retas nem duas curvas seguidas.
+                assert((g.curvature == 0.0f) != (segs[i - 1].curvature == 0.0f));
+                assert(nearf(g.s_start, segs[i - 1].s_start + segs[i - 1].length, 1e-2f));
+            }
+            if (g.curvature == 0.0f) {
+                assert(g.length >= TRACK_STRAIGHT_MIN_LENGTH - 1e-3f);
+                assert(g.length <= TRACK_STRAIGHT_MAX_LENGTH + 1e-3f);
+            } else {
+                assert(nearf(std::fabs(g.curvature), 1.0f / TRACK_CURVE_RADIUS, 1e-6f));
+                float angle = g.length * std::fabs(g.curvature);
+                assert(angle >= kPi / 4.0f - 1e-3f && angle <= kPi / 2.0f + 1e-3f);
+                if (g.curvature > 0.0f) left++; else right++;
+            }
+        }
+        // Mesma semente -> mesma pista.
+        Track u(seed);
+        u.EnsureGeneratedUntil(20000.0f);
+        assert(u.Segments().size() == segs.size());
+        for (size_t i = 0; i < segs.size(); i++)
+            assert(u.Segments()[i].length == segs[i].length &&
+                   u.Segments()[i].curvature == segs[i].curvature);
+    }
+    assert(left > 100 && right > 100); // curvas para os dois lados
+}
+
+// Em toda junção de segmentos da pista gerada, posição e heading são
+// contínuos (sem degrau entre o fim de um segmento e o começo do outro).
+void Test_CurveContinuity()
+{
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Track t(seed);
+        t.EnsureGeneratedUntil(5000.0f);
+        const std::vector<TrackSegment>& segs = t.Segments();
+        for (size_t i = 1; i < segs.size(); i++) {
+            float j = segs[i].s_start;
+            TrackFrame a = t.FrameAt(j - 1e-3f), b = t.FrameAt(j + 1e-3f);
+            assert(near(a.position, b.position, 1e-2f));
+            assert(nearf(a.heading, b.heading, 1e-3f));
+            assert(near(a.forward, b.forward, 1e-3f));
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Game (1.2)
@@ -333,19 +402,21 @@ void Test_GameKeepsTrackAhead()
 
 // ---------------------------------------------------------------- Câmera (1.3)
 
-// Referencial de uma pista reta em s (heading 0: forward = -Z, right = +X).
-static TrackFrame StraightFrame(float s)
+// Pista reta bem longa (heading 0: forward = -Z, right = +X, s = -Z): o 1º
+// segmento gerado já é reto e AppendSegment acrescenta mais 1 km de reta.
+// Sem EnsureGeneratedUntil depois, o gerador não chega a pôr curvas.
+static Track StraightTrack()
 {
     Track t(1);
-    t.EnsureGeneratedUntil(s + 10.0f);
-    return t.FrameAt(s);
+    t.AppendSegment(1000.0f, 0.0f, false);
+    return t;
 }
 
 void Test_CameraSnapEqualsTarget()
 {
     ThirdPersonCamera cam;
-    TrackFrame f = StraightFrame(10.0f); // jogador em (0, 0, -10)
-    cam.Snap(f, LANE_WIDTH, false);
+    Track t = StraightTrack(); // jogador em s = 10: (0, 0, -10)
+    cam.Snap(t, 10.0f, LANE_WIDTH, false);
     CameraPose p = cam.Pose();
     // Só 1/3 do deslocamento lateral; 6 m atrás (+Z) e 3.5 m acima.
     float lat = LANE_WIDTH / 3.0f;
@@ -359,15 +430,15 @@ void Test_CameraSnapEqualsTarget()
 void Test_CameraConverges() // troca de faixa: move aos poucos, sem passar do alvo
 {
     ThirdPersonCamera cam;
-    TrackFrame f = StraightFrame(0.0f);
-    cam.Snap(f, 0.0f, false);
+    Track t = StraightTrack();
+    cam.Snap(t, 0.0f, 0.0f, false);
     float target = LANE_WIDTH / 3.0f;
-    cam.Update(f, LANE_WIDTH, false, 1.0f / 60.0f);
+    cam.Update(t, 0.0f, LANE_WIDTH, false, 1.0f / 60.0f);
     float x1 = cam.Pose().position.x;
     assert(x1 > 0.0f && x1 < 0.5f * target); // suave: não pula para o alvo
     float prev = x1;
     for (int i = 0; i < 120; i++) { // 2 s
-        cam.Update(f, LANE_WIDTH, false, 1.0f / 60.0f);
+        cam.Update(t, 0.0f, LANE_WIDTH, false, 1.0f / 60.0f);
         float x = cam.Pose().position.x;
         assert(x >= prev && x <= target + kEps); // monotônico, sem overshoot
         prev = x;
@@ -377,20 +448,19 @@ void Test_CameraConverges() // troca de faixa: move aos poucos, sem passar do al
 
 void Test_CameraDtIndependent() // 30 Hz e 120 Hz chegam ao mesmo lugar
 {
-    Track t(1);
-    t.EnsureGeneratedUntil(100.0f);
+    Track t = StraightTrack();
     ThirdPersonCamera a, b;
-    a.Snap(t.FrameAt(0.0f), 0.0f, false);
-    b.Snap(t.FrameAt(0.0f), 0.0f, false);
+    a.Snap(t, 0.0f, 0.0f, false);
+    b.Snap(t, 0.0f, 0.0f, false);
     // 0.5 s: jogador anda a 12 m/s, troca para a faixa da direita e entra
     // num túnel (alvo de altura/recuo muda no meio do caminho).
     for (int i = 1; i <= 15; i++) {
         float s = 12.0f * i / 30.0f;
-        a.Update(t.FrameAt(s), LANE_WIDTH, true, 1.0f / 30.0f);
+        a.Update(t, s, LANE_WIDTH, true, 1.0f / 30.0f);
     }
     for (int i = 1; i <= 60; i++) {
         float s = 12.0f * i / 120.0f;
-        b.Update(t.FrameAt(s), LANE_WIDTH, true, 1.0f / 120.0f);
+        b.Update(t, s, LANE_WIDTH, true, 1.0f / 120.0f);
     }
     assert(near(a.Pose().position, b.Pose().position, 1e-3f));
     assert(near(a.Pose().view_vector, b.Pose().view_vector, 1e-3f));
@@ -400,19 +470,64 @@ void Test_CameraDtIndependent() // 30 Hz e 120 Hz chegam ao mesmo lugar
 
 void Test_CameraTunnelLowerCloser()
 {
-    TrackFrame f = StraightFrame(20.0f);
+    Track t = StraightTrack();
+    TrackFrame f = t.FrameAt(20.0f);
     ThirdPersonCamera out, in;
-    out.Snap(f, 0.0f, false);
-    in.Snap(f, 0.0f, true);
+    out.Snap(t, 20.0f, 0.0f, false);
+    in.Snap(t, 20.0f, 0.0f, true);
     vec4 po = out.Pose().position, pi = in.Pose().position;
     assert(pi.y < po.y);                                     // mais baixa
     assert(std::fabs(pi.z - f.position.z) < std::fabs(po.z - f.position.z)); // mais perto
     assert(nearf(pi.y, CAMERA_TUNNEL_HEIGHT));
     assert(nearf(pi.z, f.position.z + CAMERA_TUNNEL_BACK));
     // A transição é suave: um passo de 1/60 s não chega ao alvo do túnel.
-    out.Update(f, 0.0f, true, 1.0f / 60.0f);
+    out.Update(t, 20.0f, 0.0f, true, 1.0f / 60.0f);
     float y = out.Pose().position.y;
     assert(y < po.y && y > CAMERA_TUNNEL_HEIGHT + 0.5f);
+}
+
+// Na curva a câmera acompanha a pista: fica sobre a própria pista CAMERA_BACK
+// atrás do jogador e olha para o ponto da pista CAMERA_LOOK_AHEAD à frente
+// (e não para a tangente), de modo que o enquadramento "entra" na curva.
+// Nas junções reta/curva a pose varia continuamente (sem tranco).
+void Test_CameraFollowsCurve()
+{
+    const float R = TRACK_CURVE_RADIUS;
+    Track t(1);
+    const float s0 = t.Segments()[0].length; // início da curva
+    t.AppendSegment(0.5f * kPi * R, 1.0f / R, false); // 90° à esquerda
+    t.AppendSegment(100.0f, 0.0f, false);
+    const float s_mid = s0 + 0.25f * kPi * R;
+
+    ThirdPersonCamera cam;
+    cam.Snap(t, s_mid, 0.0f, false);
+    CameraPose p = cam.Pose();
+    TrackFrame behind = t.FrameAt(s_mid - CAMERA_BACK);
+    TrackFrame ahead = t.FrameAt(s_mid + CAMERA_LOOK_AHEAD);
+    vec4 up(0, 1, 0, 0);
+    assert(near(p.position, behind.position + up * CAMERA_HEIGHT, 1e-3f));
+    vec4 look = ahead.position + up * CAMERA_LOOK_HEIGHT;
+    assert(near(p.view_vector, look - p.position, 1e-3f));
+
+    // O jogador continua bem enquadrado: no plano horizontal, o ângulo entre
+    // o view vector e a direção câmera->jogador é pequeno (< 5°).
+    vec4 player = t.FrameAt(s_mid).position;
+    vec4 to_player = player - p.position;
+    float a1 = std::atan2(-p.view_vector.x, -p.view_vector.z);
+    float a2 = std::atan2(-to_player.x, -to_player.z);
+    assert(std::fabs(a1 - a2) < 5.0f * kPi / 180.0f);
+
+    // Continuidade ao atravessar as junções (passos de 1 cm): a pose não salta.
+    ThirdPersonCamera c2;
+    c2.Snap(t, s0 - 20.0f, 0.0f, false);
+    CameraPose prev = c2.Pose();
+    for (float s = s0 - 20.0f; s < s0 + 0.5f * kPi * R + 20.0f; s += 0.01f) {
+        c2.Update(t, s, 0.0f, false, 1.0f / 60.0f);
+        CameraPose q = c2.Pose();
+        assert(near(q.position, prev.position, 0.02f));
+        assert(near(q.view_vector, prev.view_vector, 0.02f));
+        prev = q;
+    }
 }
 
 // ---------------------------------------------------------------- Cenário (1.3)
@@ -421,7 +536,9 @@ void Test_SceneryFitsCapacity() // nunca passa da capacidade dos buffers da GPU
 {
     Game g(1);
     StripBatch ground, rails;
-    const float ss[] = {0.0f, 7.3f, 1234.567f, 98765.4f};
+    // Valores fracionários de s: com o início das faixas preso à grade de
+    // SCENERY_STEP, o número de pares varia com a parte fracionária.
+    const float ss[] = {0.0f, 7.3f, 20.999f, 1234.567f, 5000.5f, 98765.4f, 98765.99f};
     for (float s : ss) {
         g.track.EnsureGeneratedUntil(s + SPAWN_AHEAD);
         BuildGroundStrips(g.track, s, &ground);
@@ -441,8 +558,7 @@ void Test_SceneryFitsCapacity() // nunca passa da capacidade dos buffers da GPU
 
 void Test_RailsAboveGroundAndInsideBed()
 {
-    Track t(1);
-    t.EnsureGeneratedUntil(200);
+    Track t = StraightTrack(); // reta: x de mundo = lateral
     StripBatch rails;
     BuildRailStrips(t, 50.0f, &rails);
     int top = 0;
@@ -482,8 +598,7 @@ void Test_SleepersUnderRailsFitCapacity()
     }
     // Pista reta (s = -Z): o dormente cobre os dois trilhos da faixa e não
     // invade a faixa vizinha.
-    Track t(1);
-    t.EnsureGeneratedUntil(100);
+    Track t = StraightTrack();
     BuildSleeperStrips(t, 30.0f, &sleepers);
     float max_x = 0.0f;
     for (size_t v = 0; v < sleepers.VertexCount(); v++)
@@ -520,6 +635,89 @@ void Test_BuildingsCoverVisibleRange()
     // Variedade: todos os modelos aparecem no trecho visível.
     for (int v = 0; v < BUILDING_VARIANT_COUNT; v++)
         assert(seen[v] > 0);
+}
+
+// ------------------------------------------- Cenário em curvas (4.1)
+
+// As faixas começam num múltiplo de SCENERY_STEP (grade fixa em s): na curva
+// os vértices não "deslizam" ao longo do arco de um quadro para o outro (o
+// chão facetado ficaria tremendo). Só o último par (no horizonte) acompanha
+// o jogador.
+void Test_StripsSnapToGrid()
+{
+    Track t(2);
+    t.EnsureGeneratedUntil(3000.0f);
+    StripBatch a, b;
+    BuildGroundStrips(t, 1000.3f, &a);
+    BuildGroundStrips(t, 1000.75f, &b);
+    // Mesmo início de grade (980) nos dois quadros: os pares coincidem.
+    TrackFrame f = t.FrameAt(980.0f);
+    vec4 p0 = f.position - f.right * TRACK_BED_HALF_WIDTH;
+    assert(nearf(a.positions[0], p0.x, 1e-3f) && nearf(a.positions[2], p0.z, 1e-3f));
+    for (int v = 0; v < 2 * 100; v++)
+        for (int c = 0; c < 4; c++)
+            assert(a.positions[4 * v + c] == b.positions[4 * v + c]);
+    // O trecho visível inteiro continua coberto: começa até player_s - DESPAWN_BEHIND.
+    StripBatch r;
+    BuildRailStrips(t, 1000.3f, &r);
+    vec4 q = t.FrameAt(980.0f).position;
+    float dx = r.positions[0] - q.x, dz = r.positions[2] - q.z;
+    assert(std::sqrt(dx * dx + dz * dz) < LANE_WIDTH + RAIL_GAUGE); // 1º vértice perto de s = 980
+}
+
+// Raio mínimo: a borda interna do terreno (TERRAIN_HALF_WIDTH) não pode
+// passar do centro da curva (a faixa se dobraria sobre si mesma), com folga.
+void Test_CurveRadiusClearsTerrain()
+{
+    assert(TRACK_CURVE_RADIUS > TERRAIN_HALF_WIDTH + 10.0f);
+    // E na pista gerada: no meio de qualquer curva, a borda interna do
+    // terreno fica a R - TERRAIN_HALF_WIDTH do centro, do lado de dentro.
+    Track t(4);
+    t.EnsureGeneratedUntil(3000.0f);
+    const std::vector<TrackSegment>& segs = t.Segments();
+    int curves = 0;
+    for (size_t i = 0; i < segs.size(); i++) {
+        const TrackSegment& g = segs[i];
+        if (g.curvature == 0.0f)
+            continue;
+        curves++;
+        float R = 1.0f / std::fabs(g.curvature);
+        float side = g.curvature > 0.0f ? -1.0f : 1.0f; // lado de dentro (centro)
+        TrackFrame st = t.FrameAt(g.s_start);
+        vec4 center = st.position + st.right * (side * R);
+        TrackFrame mid = t.FrameAt(g.s_start + 0.5f * g.length);
+        vec4 inner = mid.position + mid.right * (side * TERRAIN_HALF_WIDTH);
+        vec4 d = inner - center;
+        assert(nearf(std::sqrt(d.x * d.x + d.z * d.z), R - TERRAIN_HALF_WIDTH, 1e-2f));
+    }
+    assert(curves > 5);
+}
+
+// Prédios do lado de dentro da curva ficam mais juntos (raio menor); mesmo
+// assim dois prédios vizinhos do mesmo lado não se encostam: centros a mais
+// que a diagonal do quadrado BUILDING_WIDTH x BUILDING_WIDTH (condição
+// suficiente para dois quadrados quaisquer não se cruzarem).
+void Test_InnerCurveBuildingsDontOverlap()
+{
+    Track t(6);
+    t.EnsureGeneratedUntil(3000.0f);
+    std::vector<BuildingInstance> bs;
+    float min_dist = 1e9f;
+    for (float ps = 0.0f; ps < 2800.0f; ps += 150.0f) {
+        ComputeBuildings(ps, &bs);
+        for (size_t i = 0; i < bs.size(); i++)
+            for (size_t j = i + 1; j < bs.size(); j++) {
+                if (bs[i].x != bs[j].x)
+                    continue;
+                TrackFrame fi = t.FrameAt(bs[i].s), fj = t.FrameAt(bs[j].s);
+                vec4 ci = fi.position + fi.right * bs[i].x;
+                vec4 cj = fj.position + fj.right * bs[j].x;
+                vec4 d = ci - cj;
+                min_dist = std::min(min_dist, std::sqrt(d.x * d.x + d.z * d.z));
+            }
+    }
+    assert(min_dist > BUILDING_WIDTH * std::sqrt(2.0f));
+    assert(min_dist < BUILDING_SPACING - 0.5f); // houve prédio do lado de dentro de curva
 }
 
 // ------------------------------------------------- Luzes pontuais (3.1)
@@ -1114,6 +1312,84 @@ void Test_ResetClearsRunAndRespawnsSame()
     }
 }
 
+// ------------------------------------------- Obstáculos e curvas (4.1)
+
+// Seeds 1..20: todo TRAIN/RAMP está inteiro (de box.min.z a box.max.z) em
+// segmentos retos. Barreiras, placas e moedas podem cair nas curvas (e caem).
+void Test_NoTrainOnCurve()
+{
+    int trains = 0, in_curve = 0;
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Game g(seed);
+        g.GenerateChunksUntil(300 * CHUNK_LENGTH);
+        const std::vector<TrackSegment>& segs = g.track.Segments();
+        for (size_t k = 0; k < g.obstacles.size(); k++) {
+            const Obstacle& o = g.obstacles[k];
+            const TrackSegment* a = g.track.SegmentAt(o.box.min.z);
+            const TrackSegment* b = g.track.SegmentAt(o.box.max.z);
+            assert(a != nullptr && b != nullptr);
+            if (o.type == ObstacleType::TRAIN || o.type == ObstacleType::RAMP) {
+                trains++;
+                // Todos os segmentos de a até b (inclusive) são retos.
+                for (const TrackSegment* q = a; q <= b; q++)
+                    assert(q->curvature == 0.0f);
+                assert(a >= &segs.front() && b <= &segs.back());
+            } else if (a->curvature != 0.0f) {
+                in_curve++;
+            }
+        }
+    }
+    assert(trains > 500);   // ainda há muitos trens (nas retas)
+    assert(in_curve > 100); // e há obstáculos nas curvas
+}
+
+// Trocando de faixa no meio de uma curva, o jogador anda em arcos
+// concêntricos: a distância ao centro da curva é R + x (curva à esquerda, o
+// centro fica do lado -right) ou R - x (à direita), com x sempre em
+// [-LANE_WIDTH, LANE_WIDTH].
+void Test_LanesConcentricInCurve()
+{
+    for (int dir = -1; dir <= 1; dir += 2) {
+        Game g(1);
+        g.spawn_enabled = false;
+        g.Reset();
+        // Pista feita à mão: reta inicial + curva de 90° + reta.
+        g.track = Track(1);
+        const float s0 = g.track.Segments()[0].length;
+        const float k = dir / TRACK_CURVE_RADIUS;
+        const float L = 0.5f * kPi * TRACK_CURVE_RADIUS;
+        g.track.AppendSegment(L, k, false);
+        g.track.AppendSegment(200.0f, 0.0f, false);
+        TrackFrame st = g.track.FrameAt(s0);
+        vec4 center = st.position - st.right * (1.0f / k);
+
+        // Corre até entrar na curva.
+        while (g.player.s < s0 + 5.0f) g.Update(1.0f / 60.0f);
+        g.HandleInput(Input::RIGHT);
+        int steps_in_curve = 0;
+        bool changed_back = false;
+        while (g.player.s < s0 + L - 1.0f) {
+            g.Update(1.0f / 60.0f);
+            if (!changed_back && g.player.s > s0 + 0.5f * L) {
+                g.HandleInput(Input::LEFT);
+                g.HandleInput(Input::LEFT);
+                changed_back = true;
+            }
+            const Player& p = g.player;
+            assert(g.mode == GameMode::PLAYING);
+            assert(p.x >= -LANE_WIDTH - 1e-4f && p.x <= LANE_WIDTH + 1e-4f);
+            TrackFrame f = g.track.FrameAt(p.s);
+            vec4 w = f.position + f.right * p.x;
+            vec4 d = w - center;
+            float expected = 1.0f / std::fabs(k) + (k > 0.0f ? p.x : -p.x);
+            assert(nearf(std::sqrt(d.x * d.x + d.z * d.z), expected, 2e-2f));
+            steps_in_curve++;
+        }
+        assert(steps_in_curve > 60);
+        assert(g.player.lane == -1 && nearf(g.player.x, -LANE_WIDTH)); // trocou mesmo
+    }
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -1122,7 +1398,9 @@ int main()
     Test_TrackFrameOutOfRange();
     Test_TrackDeterministicSeed();
     Test_TrackCurveContinuity();
-    Test_TrackLeftCurveEndsHeadingLeft();
+    Test_Curve90EndsPerpendicular();
+    Test_TrackGeneratorRules();
+    Test_CurveContinuity();
     Test_LaneClamp();
     Test_LaneMoveTime();
     Test_LaneNoOvershoot();
@@ -1142,10 +1420,14 @@ int main()
     Test_CameraConverges();
     Test_CameraDtIndependent();
     Test_CameraTunnelLowerCloser();
+    Test_CameraFollowsCurve();
     Test_SceneryFitsCapacity();
     Test_RailsAboveGroundAndInsideBed();
     Test_BuildingsCoverVisibleRange();
     Test_SleepersUnderRailsFitCapacity();
+    Test_StripsSnapToGrid();
+    Test_CurveRadiusClearsTerrain();
+    Test_InnerCurveBuildingsDontOverlap();
     // Luzes pontuais (3.1)
     Test_LampsCoverVisibleRange();
     Test_PickNearestPoints();
@@ -1185,6 +1467,8 @@ int main()
     Test_DespawnBehind();
     Test_WelcomeCoins();
     Test_ResetClearsRunAndRespawnsSame();
+    Test_NoTrainOnCurve();
+    Test_LanesConcentricInCurve();
     printf("OK\n");
     return 0;
 }

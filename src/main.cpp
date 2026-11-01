@@ -525,7 +525,7 @@ int main(int argc, char* argv[])
     if (autotest)
         Autotest_Start();
 
-    g_Camera.Snap(g_Game.track.FrameAt(g_Game.player.s), g_Game.player.x,
+    g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s));
 
     // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
@@ -566,7 +566,7 @@ int main(int argc, char* argv[])
 
         const Player& player = g_Game.player;
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
-        g_Camera.Update(player_frame, player.x, g_Game.track.IsTunnelAt(player.s), dt);
+        g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt);
 
         // Aqui executamos as operações de renderização
 
@@ -1078,7 +1078,7 @@ void DrawShowcaseProps()
 void RestartRun()
 {
     g_Game.Reset();
-    g_Camera.Snap(g_Game.track.FrameAt(g_Game.player.s), g_Game.player.x,
+    g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s));
 }
 

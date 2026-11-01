@@ -83,7 +83,11 @@ const int RAIL_STRIP_COUNT   = 18; // 3 faixas x 2 trilhos x (topo + 2 laterais)
 
 // Limpa *out e gera as faixas de chão / de trilhos em torno de player_s. Em
 // BuildGroundStrips a faixa 0 é o leito da pista (brita) e as 1 e 2 o
-// terreno (desenhados com texturas diferentes).
+// terreno (desenhados com texturas diferentes). As faixas começam em
+// player_s - DESPAWN_BEHIND arredondado para baixo na grade de SCENERY_STEP
+// (vértices em s = k * SCENERY_STEP, fixos na pista: nas curvas o chão
+// facetado não "desliza" de um quadro para o outro) e vão até
+// player_s + SPAWN_AHEAD.
 void BuildGroundStrips(const Track& track, float player_s, StripBatch* out);
 void BuildRailStrips(const Track& track, float player_s, StripBatch* out);
 

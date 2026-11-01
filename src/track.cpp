@@ -5,9 +5,6 @@
 
 namespace {
 
-// Comprimento dos segmentos gerados nesta fase (só retas).
-const float kStraightLength = 60.0f;
-
 // Abaixo disso a curvatura é tratada como zero (reta).
 const float kMinCurvature = 1e-6f;
 
@@ -15,8 +12,36 @@ const float kMinCurvature = 1e-6f;
 
 Track::Track(unsigned seed) : rng_(seed)
 {
-    // A pista nunca fica vazia: já nasce com o primeiro segmento (s = 0).
-    AppendSegment(kStraightLength, 0.0f, false);
+    // A pista nunca fica vazia: já nasce com a reta da largada (s = 0), mais
+    // longa que as demais para a corrida não começar numa curva.
+    const float len = TRACK_FIRST_STRAIGHT_MIN_LENGTH +
+                      (TRACK_STRAIGHT_MAX_LENGTH - TRACK_FIRST_STRAIGHT_MIN_LENGTH) * Random01();
+    AppendSegment(len, 0.0f, false);
+}
+
+float Track::Random01()
+{
+    // 24 bits da saída do mt19937 (sequência fixada pelo padrão), em vez de
+    // std::uniform_real_distribution, cujo resultado varia entre bibliotecas:
+    // a mesma semente gera a mesma pista em qualquer compilador.
+    return (float)(rng_() >> 8) * (1.0f / 16777216.0f);
+}
+
+void Track::AppendGeneratedSegment()
+{
+    if (std::fabs(segments_.back().curvature) < kMinCurvature) {
+        // Depois de uma reta, uma curva: ângulo total sorteado em [45°, 90°]
+        // e lado sorteado; comprimento = ângulo * raio.
+        const float angle = TRACK_CURVE_MIN_ANGLE +
+                            (TRACK_CURVE_MAX_ANGLE - TRACK_CURVE_MIN_ANGLE) * Random01();
+        const float sign = (Random01() < 0.5f) ? 1.0f : -1.0f;
+        AppendSegment(angle * TRACK_CURVE_RADIUS, sign / TRACK_CURVE_RADIUS, false);
+    } else {
+        // Depois de uma curva, uma reta.
+        const float len = TRACK_STRAIGHT_MIN_LENGTH +
+                          (TRACK_STRAIGHT_MAX_LENGTH - TRACK_STRAIGHT_MIN_LENGTH) * Random01();
+        AppendSegment(len, 0.0f, false);
+    }
 }
 
 void Track::AppendSegment(float length, float curvature, bool tunnel)
@@ -42,9 +67,8 @@ void Track::AppendSegment(float length, float curvature, bool tunnel)
 
 void Track::EnsureGeneratedUntil(float s)
 {
-    // Por enquanto só retas; rng_ será usado quando a Fase 4 sortear curvas/túneis.
     while (segments_.back().s_start + segments_.back().length <= s)
-        AppendSegment(kStraightLength, 0.0f, false);
+        AppendGeneratedSegment();
 }
 
 void Track::DiscardBefore(float s)
@@ -81,6 +105,26 @@ bool Track::IsTunnelAt(float s) const
 {
     const TrackSegment* seg = SegmentAt(s);
     return seg != nullptr && seg->tunnel;
+}
+
+bool Track::IsStraightRange(float s0, float s1) const
+{
+    if (s1 < s0)
+        return false;
+    const TrackSegment* seg = SegmentAt(s0);
+    if (seg == nullptr)
+        return false;
+    // Percorre os segmentos de s0 até o que contém s1; todos têm de ser retos.
+    const TrackSegment* last = &segments_.back();
+    while (true) {
+        if (std::fabs(seg->curvature) >= kMinCurvature)
+            return false;
+        if (s1 < seg->s_start + seg->length)
+            return true;
+        if (seg == last)
+            return false; // s1 além do que está gerado
+        ++seg;
+    }
 }
 
 TrackFrame Track::FrameInSegment(const TrackSegment& seg, float s)

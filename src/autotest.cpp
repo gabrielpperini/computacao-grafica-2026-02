@@ -310,6 +310,80 @@ static bool Check_restart(std::string* why)
     return true;
 }
 
+// curve: sem spawn, a semente fixa (12345) põe a 1ª curva (85°, à esquerda)
+// em s = 146.5..205.9 (t = 11.4..15.6 s). Fotos na entrada, no meio (logo
+// depois de trocar de faixa dentro da curva) e na saída. O frame_hook registra
+// se o jogador esteve num segmento curvo e se a troca de faixa terminou
+// dentro dele.
+static bool  g_SawCurve        = false; // jogador num segmento com curvature != 0
+static bool  g_LaneChangeInCurve = false; // chegou na faixa 1 (x = LANE_WIDTH) dentro da curva
+static float g_MaxHeadingChange  = 0.0f;  // |heading| máximo do referencial do jogador (rad)
+
+static void Hook_Curve()
+{
+    const Player& p = g_Game.player;
+    const TrackSegment* seg = g_Game.track.SegmentAt(p.s);
+    bool in_curve = seg != NULL && seg->curvature != 0.0f;
+    if (in_curve)
+    {
+        g_SawCurve = true;
+        if (std::fabs(p.x - LANE_WIDTH) < 1e-3f)
+            g_LaneChangeInCurve = true;
+    }
+    g_MaxHeadingChange = std::max(g_MaxHeadingChange,
+                                  std::fabs(g_Game.track.FrameAt(p.s).heading));
+}
+
+static bool Check_curve(std::string* why)
+{
+    char buf[200];
+    const Player& p = g_Game.player;
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "modo de jogo diferente de PLAYING";
+        return false;
+    }
+    if (!g_SawCurve || g_MaxHeadingChange < 0.785398f) // 45°
+    {
+        snprintf(buf, sizeof(buf), "nao passou por curva: viu curva = %d, heading max = %.1f graus",
+                 (int)g_SawCurve, g_MaxHeadingChange * 57.29578f);
+        *why = buf;
+        return false;
+    }
+    if (!g_LaneChangeInCurve || p.lane != 1)
+    {
+        snprintf(buf, sizeof(buf), "troca de faixa na curva falhou: faixa = %d, x = %.3f", p.lane, p.x);
+        *why = buf;
+        return false;
+    }
+    const TrackSegment* seg = g_Game.track.SegmentAt(p.s);
+    if (seg == NULL || seg->curvature != 0.0f)
+    {
+        *why = "no fim o jogador deveria estar na reta depois da curva";
+        return false;
+    }
+    return true;
+}
+
+// curve_obstacles: sem spawn, jogador colocado pouco antes da 1ª curva
+// (s = 136), com barreiras, placa e moedas posicionadas DENTRO da curva e um
+// trem na reta seguinte: todos devem acompanhar a direção local da pista.
+static void SetupCurveObstacles()
+{
+    SetupNoSpawn();
+    g_Game.player.s = 136.0f;
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 152.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 156.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 164.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, 1, 172.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 0, 222.0f));
+    for (int i = 0; i < 8; ++i)
+    {
+        Coin c = {0, 142.0f + i * COIN_SPACING, COIN_HEIGHT, false};
+        g_Game.coins.push_back(c);
+    }
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -452,6 +526,32 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = Check_restart;
         s.frame_hook  = Hook_GameOver;
         s.steps.push_back(AutotestStep{39.5f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
+        scenarios.push_back(s);
+    }
+
+    // curve: atravessa a 1ª curva da pista trocando de faixa no meio dela.
+    {
+        AutotestScenario s;
+        s.name        = "curve";
+        s.duration    = 16.5f;
+        s.final_check = Check_curve;
+        s.setup       = SetupNoSpawn;
+        s.frame_hook  = Hook_Curve;
+        s.steps.push_back(AutotestStep{10.6f, 0, 0, "entering"});
+        s.steps.push_back(AutotestStep{12.5f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{13.4f, 0, 0, "mid"});
+        s.steps.push_back(AutotestStep{16.2f, 0, 0, "exiting"});
+        scenarios.push_back(s);
+    }
+
+    // curve_obstacles: obstáculos e moedas dentro da curva, vistos de perto.
+    {
+        AutotestScenario s;
+        s.name        = "curve_obstacles";
+        s.duration    = 0.4f;
+        s.final_check = NULL;
+        s.setup       = SetupCurveObstacles;
+        s.steps.push_back(AutotestStep{0.1f, 0, 0, "scene"});
         scenarios.push_back(s);
     }
 
