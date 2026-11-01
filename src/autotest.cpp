@@ -1802,6 +1802,79 @@ static bool Check_gui_small_window(std::string* why)
 }
 
 
+// perf_heavy (Tarefa 7.1b): cenário pesado para medir o desempenho (quadros
+// por segundo de relógio, sem vsync): o jogador entra num túnel (abóbada,
+// portais e luminárias), com trens nas faixas vizinhas, uma fileira de moedas
+// na faixa dele (explosões de partículas), ímã ativo, o porco voador do
+// cofrinho no céu e, a cada quadro, mais uma explosão de 80 partículas (o pool
+// de 512 fica cheio). O hook mede o tempo de relógio de cada quadro (depois
+// dos 30 primeiros) e o final_check imprime média, pior quadro e o 1% mais
+// lento; só falha se o cenário não ficou pesado (porco, pool cheio, túnel).
+static double g_PerfLast      = 0.0;
+static int    g_PerfFrame     = 0;
+static std::vector<float> g_PerfFrameMs;
+static bool   g_PerfSawPig    = false;
+static bool   g_PerfSawTunnel = false;
+static int    g_PerfMaxAlive  = 0;
+
+static void SetupPerfHeavy()
+{
+    SetupNoSpawn();
+    const TrackSegment t = FindFirstSegment(&g_Game.track, true);
+    const float s0 = t.s_start;
+    g_Game.player.s = s0 - 50.0f;
+    const float train_s[4] = {s0 - 20.0f, s0 + 12.0f, s0 + 30.0f, s0 + 52.0f};
+    for (int i = 0; i < 4; ++i)
+    {
+        g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1, train_s[i]));
+        g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 1, train_s[i] + 6.0f));
+    }
+    for (float s = g_Game.player.s + 6.0f; s < s0 + 40.0f; s += COIN_SPACING)
+    {
+        Coin coin = {0, s, COIN_HEIGHT, false};
+        g_Game.coins.push_back(coin);
+    }
+    g_Game.powerup_timer[(int)PowerUpType::MAGNET] = POWERUP_DURATION;
+    g_Game.piggy_pickups = 1;
+}
+
+static void Hook_PerfHeavy()
+{
+    const double now = glfwGetTime();
+    if (g_PerfFrame++ > 30 && g_PerfFrame * Autotest_FixedDt() < 5.8f) // a foto (5.9 s) fica fora
+        g_PerfFrameMs.push_back((float)(1000.0 * (now - g_PerfLast)));
+    g_PerfLast = now;
+    const TrackFrame f = g_Game.track.FrameAt(g_Game.player.s);
+    g_Particles.Emit(f.position + glm::vec4(0.0f, 1.5f, 0.0f, 0.0f), 80, glm::vec3(1.0f, 0.6f, 0.2f),
+                     1000u + (unsigned)g_PerfFrame, f.position.y);
+    g_PerfMaxAlive = std::max(g_PerfMaxAlive, (int)g_Particles.Alive().size());
+    g_PerfSawPig = g_PerfSawPig || g_Game.pig.active;
+    g_PerfSawTunnel = g_PerfSawTunnel || g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back());
+}
+
+static bool Check_perf_heavy(std::string* why)
+{
+    char buf[200];
+    if (g_PerfFrameMs.size() < 60 || !g_PerfSawPig || !g_PerfSawTunnel || g_PerfMaxAlive < 500)
+    {
+        snprintf(buf, sizeof(buf), "cenario leve demais: quadros = %d, porco = %d, tunel = %d, particulas max = %d",
+                 (int)g_PerfFrameMs.size(), (int)g_PerfSawPig, (int)g_PerfSawTunnel, g_PerfMaxAlive);
+        *why = buf;
+        return false;
+    }
+    std::vector<float> ms = g_PerfFrameMs;
+    std::sort(ms.begin(), ms.end());
+    double total = 0.0;
+    for (size_t i = 0; i < ms.size(); ++i)
+        total += ms[i];
+    const float avg = (float)(total / ms.size());
+    const float p99 = ms[(size_t)(0.99 * (ms.size() - 1))];
+    printf("E2E perf_heavy: %d quadros, media %.2f ms (%.0f fps), 1%% mais lento %.2f ms (%.0f fps), "
+           "pior %.2f ms, particulas max %d\n",
+           (int)ms.size(), avg, 1000.0f / avg, p99, 1000.0f / p99, ms.back(), g_PerfMaxAlive);
+    return true;
+}
+
 // visual_audit (Tarefa 7.1b): varredura de Z-fighting e texturas esticadas.
 // Sem spawn, com rampa + trem na faixa 0, barreiras e placa; C liga a câmera
 // livre e o hook a posiciona (StartAt) em poses fixas, uma a cada
@@ -2452,6 +2525,19 @@ static std::vector<AutotestScenario> BuildScenarios()
         for (int k = 0; k < AUDIT_POSE_COUNT; ++k)
             s.steps.push_back(AutotestStep{AUDIT_START + (k + 0.85f) * AUDIT_POSE_TIME, 0, 0,
                                            AUDIT_POSES[k].label});
+        scenarios.push_back(s);
+    }
+
+    // perf_heavy: túnel + trens + partículas (pool cheio) + porco + ímã; mede
+    // o tempo de relógio por quadro (veja Hook_PerfHeavy). Uma foto no túnel.
+    {
+        AutotestScenario s;
+        s.name        = "perf_heavy";
+        s.duration    = 6.0f;
+        s.final_check = Check_perf_heavy;
+        s.setup       = SetupPerfHeavy;
+        s.frame_hook  = Hook_PerfHeavy;
+        s.steps.push_back(AutotestStep{5.9f, 0, 0, "tunnel"});
         scenarios.push_back(s);
     }
 
