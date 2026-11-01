@@ -124,6 +124,12 @@ void Game::Reset()
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
 }
 
+void Game::Reseed(unsigned seed)
+{
+    seed_ = seed;
+    Reset(); // não mexe em spawn_enabled/ramps_enabled/powerups_enabled nem em extents_
+}
+
 void Game::HandleInput(Input in)
 {
     if (mode != GameMode::PLAYING)

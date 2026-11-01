@@ -1972,6 +1972,53 @@ void Test_ResetClearsRunAndRespawnsSame()
     }
 }
 
+// Revisão final, item 1: Reseed(semente) recomeça como um Game novo com
+// aquela semente (pista e obstáculos), preservando as flags de configuração;
+// outra semente dá outra corrida. Reset() continua repetindo a mesma.
+void Test_ReseedNewRunKeepsFlags()
+{
+    Game g(5);
+    g.spawn_enabled = false;
+    g.ramps_enabled = false;
+    g.powerups_enabled = false;
+    Run(g, 2.0f);
+    g.Reseed(77);
+    assert(g.mode == GameMode::PLAYING && g.player.s == 0.0f && g.score == 0.0f);
+    assert(!g.spawn_enabled && !g.ramps_enabled && !g.powerups_enabled);
+    assert(g.Seed() == 77u);
+
+    // Mesma semente que um Game novo: mesma pista e mesmos obstáculos.
+    Game a(5), b(5), fresh77(77);
+    b.Reseed(77);
+    a.GenerateChunksUntil(40 * CHUNK_LENGTH);
+    b.GenerateChunksUntil(40 * CHUNK_LENGTH);
+    fresh77.GenerateChunksUntil(40 * CHUNK_LENGTH);
+    assert(b.obstacles.size() == fresh77.obstacles.size());
+    for (size_t k = 0; k < b.obstacles.size(); k++) {
+        assert(b.obstacles[k].type == fresh77.obstacles[k].type);
+        assert(b.obstacles[k].lane == fresh77.obstacles[k].lane);
+        assert(b.obstacles[k].s == fresh77.obstacles[k].s);
+    }
+    assert(b.track.Segments().size() == fresh77.track.Segments().size());
+    for (size_t k = 0; k < b.track.Segments().size(); k++)
+        assert(b.track.Segments()[k].length == fresh77.track.Segments()[k].length);
+
+    // Semente diferente: corrida diferente (obstáculos ou pista).
+    bool differs = a.obstacles.size() != b.obstacles.size() ||
+                   a.track.Segments().size() != b.track.Segments().size();
+    for (size_t k = 0; !differs && k < a.obstacles.size(); k++)
+        differs = a.obstacles[k].s != b.obstacles[k].s || a.obstacles[k].lane != b.obstacles[k].lane ||
+                  a.obstacles[k].type != b.obstacles[k].type;
+    assert(differs);
+
+    // Reset depois de Reseed repete a corrida da semente nova.
+    b.Reset();
+    b.GenerateChunksUntil(40 * CHUNK_LENGTH);
+    assert(b.obstacles.size() == fresh77.obstacles.size());
+    for (size_t k = 0; k < b.obstacles.size(); k++)
+        assert(b.obstacles[k].s == fresh77.obstacles[k].s);
+}
+
 // ------------------------------------------- Obstáculos e curvas (4.1)
 
 // Seeds 1..20: todo TRAIN/RAMP está inteiro (de box.min.z a box.max.z) em
@@ -4143,6 +4190,7 @@ int main()
     Test_DespawnBehind();
     Test_WelcomeCoins();
     Test_ResetClearsRunAndRespawnsSame();
+    Test_ReseedNewRunKeepsFlags();
     Test_NoTrainOnCurve();
     Test_LanesConcentricInCurve();
     // Trens em movimento (4.3)

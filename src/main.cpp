@@ -414,6 +414,8 @@ void DrawParticles(const glm::mat4& view);
 
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
+// Semente nova para cada corrida fora do autotest.
+static unsigned NextRunSeed();
 
 // Interface gráfica com Dear ImGui (Tarefa 6.2): tela de menu, pausa, fim de
 // jogo e o HUD da corrida. A cena 3D continua sendo desenhada (congelada)
@@ -693,7 +695,7 @@ int main(int argc, char* argv[])
     // As medidas dos obstáculos vêm de OBSTACLE_SIZE (game.h), a mesma tabela
     // em que os modelos são escalados no desenho.
     if (!autotest)
-        g_Game = Game((unsigned)time(NULL));
+        g_Game = Game(NextRunSeed());
 
     // O jogo abre no menu. No autotest a corrida já começa em PLAYING (o
     // cenário que quer o menu pede start_in_menu; veja Autotest_Start()).
@@ -1616,11 +1618,28 @@ void DrawParticles(const glm::mat4& view)
     glDisable(GL_BLEND);
 }
 
+// Semente de uma corrida nova (Revisão final, item 1): relógio do sistema,
+// relógio de alta resolução da GLFW e um contador, misturados. Duas corridas
+// seguidas nunca repetem a pista/os obstáculos, mesmo no mesmo segundo.
+static unsigned NextRunSeed()
+{
+    static unsigned counter = 0;
+    unsigned h = (unsigned)time(NULL) ^ ((unsigned)(glfwGetTime() * 1000003.0) * 2654435761u);
+    h ^= (++counter) * 0x9E3779B9u;
+    h ^= h >> 16;
+    return h;
+}
+
 // Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a
-// transição suave, que faria a câmera "voar" de volta pela pista).
+// transição suave, que faria a câmera "voar" de volta pela pista). Fora do
+// autotest a corrida nova tem semente nova (Jogar de novo / Reiniciar / Menu
+// não repetem a mesma pista); no autotest a semente fixa é mantida (Reset()).
 void RestartRun()
 {
-    g_Game.Reset();
+    if (Autotest_Active())
+        g_Game.Reset();
+    else
+        g_Game.Reseed(NextRunSeed());
     g_Particles.Clear();
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());

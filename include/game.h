@@ -207,6 +207,15 @@ public:
     // dos obstáculos são configuração e são mantidos.
     void Reset();
 
+    // Corrida NOVA com outra semente (Revisão final, item 1): troca a semente
+    // e chama Reset(), então pista, obstáculos, moedas e power-ups saem como
+    // os de um Game(seed) novo. As flags de configuração (spawn_enabled,
+    // ramps_enabled, powerups_enabled) e as dimensões dos obstáculos são
+    // mantidas. Usado pelo jogo para "Jogar de novo" não repetir a corrida
+    // (o autotest continua com Reset(), semente fixa).
+    void Reseed(unsigned seed);
+    unsigned Seed() const { return seed_; }
+
     // Ignorado fora de PLAYING.
     void HandleInput(Input in);
 
