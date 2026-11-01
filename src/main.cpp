@@ -275,7 +275,14 @@ void DrawPlayer(const Player& player, const TrackFrame& frame);
 // única OBSTACLE_SIZE (game.h). O trem são TRAIN_CARS carros em fila.
 const int TRAIN_CARS = 3;
 const char* const TRAIN_CAR_MODELS[TRAIN_CARS] = {"train_front", "train_middle", "train_rear"};
+// Altura do teto plano dos carros do Train Kit, em coordenadas do modelo. O
+// topo da AABB (1.571196) é o de nervuras pequenas (0.1 x 0.4) sobre o teto;
+// escalando pela AABB, o jogador em pé no topo da caixa de colisão flutuaria
+// 0.2 m acima do teto desenhado.
+const float TRAIN_MODEL_ROOF_Y = 1.471196f;
 const int OBSTACLE_OBJECT_ID[OBSTACLE_TYPE_COUNT] = {BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP};
+// Tom das tábuas da rampa sobre rough_wood (madeira envelhecida, como os dormentes).
+const glm::vec3 RAMP_DECK_TINT(0.85f, 0.70f, 0.55f);
 void DrawObstacle(const Obstacle& o);
 
 // Moedas: modelo de moeda (data/procedural/coin.obj) em pé, girando em torno
@@ -511,6 +518,7 @@ int main(int argc, char* argv[])
     // Túnel: módulo de abóbada (4 m) e portal, com UV em metros (tijolos).
     LoadObjToScene("../../data/procedural/tunnel_section.obj");
     LoadObjToScene("../../data/procedural/tunnel_portal.obj");
+    LoadObjToScene("../../data/procedural/ramp.obj"); // ramp_frame + ramp_deck (Tarefa 4.4)
     // Cubo: cabeça emissiva dos postes e a rampa (Tarefa 4.4, ainda sem modelo).
     LoadObjToScene("../../data/cube.obj");
 
@@ -564,7 +572,7 @@ int main(int argc, char* argv[])
         Autotest_Start();
 
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                  g_Game.track.IsTunnelAt(g_Game.player.s));
+                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 
     // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
@@ -605,8 +613,10 @@ int main(int argc, char* argv[])
 
         const Player& player = g_Game.player;
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
-        // Câmera: recua/abaixa (suavemente) enquanto o JOGADOR está no túnel.
-        g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt);
+        // Câmera: recua/abaixa (suavemente) enquanto o JOGADOR está no túnel,
+        // e sobe junto com o chão sob ele (rampa/teto de trem, não o pulo).
+        g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
+                        g_Game.GroundHeight());
         // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
         // CÂMERA (em s - recuo) está dentro do túnel.
         g_TunnelDimming = StepTunnelDimming(
@@ -1033,7 +1043,8 @@ void DrawPlayer(const Player& player, const TrackFrame& frame)
 }
 
 // Desenha um obstáculo: o modelo do tipo escalado para a união das partes
-// sólidas (ObstacleParts), isto é, a própria caixa de colisão. Os modelos
+// sólidas (ObstacleParts), isto é, a própria caixa de colisão (no trem, até o
+// teto plano dos carros; veja TRAIN_MODEL_ROOF_Y). Os modelos
 // procedurais já têm as medidas de OBSTACLE_SIZE (escala ~1). O trem são
 // TRAIN_CARS carros em fila, cada um com o referencial da pista no seu centro
 // (seguem a pista), com a cabine da frente voltada para o jogador.
@@ -1053,10 +1064,14 @@ void DrawObstacle(const Obstacle& o)
 
     if (o.type == ObstacleType::TRAIN)
     {
-        // Largura/altura pela AABB do carro do meio (a das cabines inclui os
-        // retrovisores, que ficam um pouco para fora da caixa).
+        // Largura pela AABB do carro do meio (a das cabines inclui os
+        // retrovisores, que ficam um pouco para fora da caixa). Altura: o
+        // teto PLANO do carro (TRAIN_MODEL_ROOF_Y) vai para o topo da caixa
+        // de colisão, que é onde o jogador anda e onde a rampa termina
+        // (Tarefa 4.4); só as nervuras do teto passam dele.
         const SceneObject& mid = FindSceneObject("train_middle");
-        const glm::vec3 msize = mid.bbox_max - mid.bbox_min;
+        glm::vec3 msize = mid.bbox_max - mid.bbox_min;
+        msize.y = TRAIN_MODEL_ROOF_Y - mid.bbox_min.y;
         const float car_len = size.z / TRAIN_CARS;
         for (int i = 0; i < TRAIN_CARS; ++i)
         {
@@ -1071,18 +1086,31 @@ void DrawObstacle(const Obstacle& o)
         return;
     }
 
+    const float cs = 0.5f * (box.min.z + box.max.z);
+
+    if (o.type == ObstacleType::RAMP)
+    {
+        // Rampa (Tarefa 4.4): dois objetos do mesmo OBJ, cada um com a sua
+        // textura, escalados pela AABB de "ramp_frame" (a da rampa inteira),
+        // para que as tábuas fiquem no lugar certo sobre a estrutura. O piso
+        // do modelo é a mesma reta de RampHeightAt: os pés do jogador ficam
+        // exatamente sobre as tábuas.
+        const glm::vec3 msize = ObjectSize("ramp_frame");
+        glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(cs), cx, box.min.y, 0.0f)
+                        * Matrix_OnGround("ramp_frame", size.x / msize.x, size.y / msize.y, size.z / msize.z);
+        DrawObject("ramp_frame", model, id, g_Tex.metal, UV_OBJ);
+        DrawObject("ramp_deck", model, id, g_Tex.wood, UV_OBJ, 1.0f, RAMP_DECK_TINT);
+        return;
+    }
+
     const char* name = "the_cube";
     if (o.type == ObstacleType::BARRIER_LOW)       name = "barrier_low";
     else if (o.type == ObstacleType::BARRIER_HIGH) name = "barrier_high";
     else if (o.type == ObstacleType::SIGN)         name = "sign_board";
     const glm::vec3 msize = ObjectSize(name);
-    const float cs = 0.5f * (box.min.z + box.max.z);
     glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(cs), cx, box.min.y, 0.0f)
                     * Matrix_OnGround(name, size.x / msize.x, size.y / msize.y, size.z / msize.z);
-    if (o.type == ObstacleType::RAMP) // sem modelo ainda (Tarefa 4.4)
-        DrawObject(name, model, id, g_Tex.metal, UV_BOX, 0.5f);
-    else
-        DrawObject(name, model, id, g_Tex.atlas, UV_OBJ);
+    DrawObject(name, model, id, g_Tex.atlas, UV_OBJ);
 }
 
 // Moeda de pé, centrada na altura c.y, girando em torno do eixo vertical.
@@ -1205,7 +1233,7 @@ void RestartRun()
 {
     g_Game.Reset();
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                  g_Game.track.IsTunnelAt(g_Game.player.s));
+                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 }
 

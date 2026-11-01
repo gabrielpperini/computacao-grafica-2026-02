@@ -664,6 +664,127 @@ static bool Check_moving_train_hit(std::string* why)
     return true;
 }
 
+// ---- Rampas e andar sobre os trens (Tarefa 4.4) ----
+//
+// ramp_train: sem spawn, rampa + trem parado na faixa do jogador (faixa 0,
+// trem centrado em RAMP_TRAIN_S: rampa em [25.5, 33.5], trem em [33.5, 46.5]),
+// sem nenhuma entrada: o jogador sobe a rampa, corre no teto, cai no fim e
+// continua jogando. Fotos na rampa, no teto e depois da queda.
+// roof_hop: o mesmo trem e outro na faixa 1 (sem rampa, [35.5, 48.5]); em
+// cima do primeiro troca para o teto do vizinho, e no fim troca duas faixas
+// para a esquerda (faixa -1, sem trem) e cai.
+static const float RAMP_TRAIN_S     = 40.0f;
+static const float HOP_TRAIN_S      = 42.0f;
+static float g_RoofMaxY             = 0.0f;  // maior altura do jogador
+static bool  g_SawOnRoof            = false; // em pé no teto (faixa 0) em algum quadro
+static bool  g_SawOnNeighborRoof    = false; // em pé no teto do trem da faixa 1
+static float g_MaxFootGap           = 0.0f;  // maior |pés - superfície da rampa| em pé na rampa
+
+static float TrainRoof()
+{
+    return OBSTACLE_SIZE[(int)ObstacleType::TRAIN][1];
+}
+
+static void SetupRampTrain()
+{
+    SetupNoSpawn();
+    Obstacle t = g_Game.MakeObstacle(ObstacleType::TRAIN, 0, RAMP_TRAIN_S);
+    g_Game.obstacles.push_back(g_Game.MakeRampFor(t));
+    g_Game.obstacles.push_back(t);
+}
+
+static void SetupRoofHop()
+{
+    SetupRampTrain();
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 1, HOP_TRAIN_S));
+}
+
+static void Hook_Roof()
+{
+    const Player& p = g_Game.player;
+    g_RoofMaxY = std::max(g_RoofMaxY, p.y);
+    const bool on_roof = p.grounded && std::fabs(p.y - TrainRoof()) < 1e-3f;
+    if (on_roof && std::fabs(p.x) < 1e-3f)
+        g_SawOnRoof = true;
+    if (on_roof && std::fabs(p.x - LANE_WIDTH) < 1e-3f)
+        g_SawOnNeighborRoof = true;
+    // Em pé sobre a rampa (frente do jogador antes do trem): pés na superfície.
+    const AABB box = g_Game.PlayerBox();
+    float h;
+    if (p.grounded && !g_Game.obstacles.empty() && g_Game.obstacles[0].type == ObstacleType::RAMP &&
+        box.max.z < g_Game.obstacles[0].box.max.z &&
+        RampHeightUnder(g_Game.obstacles[0].box, box, &h))
+        g_MaxFootGap = std::max(g_MaxFootGap, std::fabs(p.y - h));
+}
+
+// Comum aos dois: chegou ao teto (altura máxima = teto, sem pular), andou em
+// cima dele, os pés seguiram a rampa, e no fim está no chão, ainda jogando.
+static bool CheckRoofRun(std::string* why)
+{
+    char buf[200];
+    const Player& p = g_Game.player;
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "o jogo acabou (bateu no trem/rampa?)";
+        return false;
+    }
+    if (std::fabs(g_RoofMaxY - TrainRoof()) > 0.01f)
+    {
+        snprintf(buf, sizeof(buf), "altura maxima %.3f m, esperava o teto do trem (%.2f m)", g_RoofMaxY,
+                 TrainRoof());
+        *why = buf;
+        return false;
+    }
+    if (!g_SawOnRoof)
+    {
+        *why = "o jogador nunca ficou em pe no teto do trem";
+        return false;
+    }
+    if (g_MaxFootGap > 1e-3f)
+    {
+        snprintf(buf, sizeof(buf), "pes fora da superficie da rampa: %.4f m", g_MaxFootGap);
+        *why = buf;
+        return false;
+    }
+    if (!p.grounded || p.y != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "no fim, esperava o jogador no chao: y = %.3f", p.y);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+static bool Check_ramp_train(std::string* why)
+{
+    if (!CheckRoofRun(why))
+        return false;
+    if (g_Game.player.s < RAMP_TRAIN_S + 15.0f)
+    {
+        *why = "o jogador nao passou do fim do trem";
+        return false;
+    }
+    return true;
+}
+
+static bool Check_roof_hop(std::string* why)
+{
+    if (!CheckRoofRun(why))
+        return false;
+    if (!g_SawOnNeighborRoof)
+    {
+        *why = "o jogador nunca ficou em pe no teto do trem da faixa 1";
+        return false;
+    }
+    const Player& p = g_Game.player;
+    if (p.lane != -1 || std::fabs(p.x + LANE_WIDTH) > 1e-3f)
+    {
+        *why = "esperava o jogador na faixa -1 (sem trem) no fim";
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -898,6 +1019,41 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = NULL;
         s.setup       = SetupTunnelSide;
         s.steps.push_back(AutotestStep{0.1f, 0, 0, "view"});
+        scenarios.push_back(s);
+    }
+
+    // ramp_train: sobe a rampa, corre no teto do trem e cai no fim (sem entrada).
+    {
+        AutotestScenario s;
+        s.name        = "ramp_train";
+        s.final_check = Check_ramp_train;
+        s.setup       = SetupRampTrain;
+        s.frame_hook  = Hook_Roof;
+        s.steps.push_back(AutotestStep{TimeToRun(12.0f), 0, 0, "approach"});
+        s.steps.push_back(AutotestStep{TimeToRun(29.0f), 0, 0, "ramp"});
+        s.steps.push_back(AutotestStep{TimeToRun(40.0f), 0, 0, "roof"});
+        s.steps.push_back(AutotestStep{TimeToRun(48.5f), 0, 0, "falling"});
+        s.steps.push_back(AutotestStep{TimeToRun(60.0f), 0, 0, "landed"});
+        s.duration = TimeToRun(62.0f);
+        scenarios.push_back(s);
+    }
+
+    // roof_hop: do teto do trem da faixa 0 para o do vizinho (faixa 1); no fim
+    // troca duas faixas para a esquerda (faixa -1, vazia) e cai.
+    {
+        AutotestScenario s;
+        s.name        = "roof_hop";
+        s.final_check = Check_roof_hop;
+        s.setup       = SetupRoofHop;
+        s.frame_hook  = Hook_Roof;
+        s.steps.push_back(AutotestStep{TimeToRun(36.0f), GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{TimeToRun(37.3f), 0, 0, "hop"});
+        s.steps.push_back(AutotestStep{TimeToRun(42.0f), 0, 0, "neighbor_roof"});
+        s.steps.push_back(AutotestStep{TimeToRun(44.0f), GLFW_KEY_LEFT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{TimeToRun(44.0f), GLFW_KEY_A, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{TimeToRun(47.5f), 0, 0, "drop"});
+        s.steps.push_back(AutotestStep{TimeToRun(58.0f), 0, 0, "landed"});
+        s.duration = TimeToRun(60.0f);
         scenarios.push_back(s);
     }
 

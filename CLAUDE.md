@@ -126,18 +126,19 @@ implementado** — o base é só um visualizador.
 | Requisito | Estado |
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
-| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k) e túnel (módulo de abóbada e portal com moldura) |
+| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k), túnel (módulo de abóbada e portal com moldura) e rampa (estrutura metálica + tábuas) |
 | Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC ✅ (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); falta a câmera livre |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
-| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta. Rampa/pouso no trem (`RampHeightAt`/`LandsOnTop`) entram na 4.4 |
+| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`) → a cabeça não atravessa a abóbada |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
 | Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (~1 em 3) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
+| Rampas para subir nos trens (SPEC) | ✅ Tarefa 4.4: metade dos trens parados ganha uma rampa (8 m, 0 → 3.2 m) colada à frente; o jogador sobe correndo, anda no teto, pula de um teto para outro ou troca de faixa para o teto vizinho, e cai no fim do trem ou ao trocar para uma faixa vazia; a câmera sobe junto com o chão (não com o pulo) (veja "Rampas e tetos") |
 | Trens em movimento (SPEC: velocidade dos trens) | ✅ Tarefa 4.3: ~1 em 3 trens nasce móvel (`MOVING_TRAIN_SPEED` = 8 m/s na direção do jogador), com ≥ 3 s de aviso e sem quebrar a garantia de faixa livre; para ao chegar ao começo da reta onde nasceu ou a 0.5 m de outro obstáculo da faixa; colisão varre também a caixa do obstáculo (veja "Trens móveis") |
 | Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
@@ -340,7 +341,8 @@ usada **tanto na colisão quanto no desenho**. As medidas vêm de **uma única t
 `OBSTACLE_SIZE` em `game.h` (extensões padrão do `Game`); `DrawObstacle()` escala o modelo do tipo
 para a união das partes, então a AABB do modelo desenhado **coincide** com a caixa de colisão (os
 modelos procedurais já são feitos nessas medidas; o trem são 3 carros em fila, escala
-≈ 2.0 × 2.0 × 1.7). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
+≈ 2.0 × 2.2 × 1.7, com o **teto plano** dos carros — `TRAIN_MODEL_ROOF_Y`, abaixo de pequenas
+nervuras que passam 0.2 m da caixa — no topo da caixa, onde o jogador anda). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
 `tools/gen_models.py`). A colisão usa a caixa varrida do jogador (antes ∪ depois do passo) contra
 tunneling. `spawn_enabled = false` desliga a geração (testes de física).
 
@@ -359,6 +361,26 @@ de `[ponta mais baixa que ele alcança antes do jogador − 16 m, s + metade do 
 ele entre em chunks anteriores. Se alguma condição falha, o trem nasce parado. Garantias testadas
 em `logic_tests` (`Test_MovingTrainsSpawnAndStayPassable`: piloto que segue a faixa segura em 30
 sementes × 5 km nunca bate em placa/trem).
+
+**Rampas e tetos (Tarefa 4.4)**: `RAMP` (mesma largura/altura do trem em `OBSTACLE_SIZE`) fica
+sempre colada à frente (lado de s menor) de um `TRAIN` **parado** da mesma faixa
+(`Game::MakeRampFor`). Spawn: cada trem parado sorteia `RampRandom01() < RAMP_CHANCE` (gerador
+próprio `ramp_rng_`, sorteio sempre feito: o resto do spawn não muda — `ramps_enabled = false` só
+para o teste que confere isso) e só ganha rampa se ela cabe no chunk do trem (entra na emenda livre
+do começo dele; ela nunca mata, então a troca de faixa ali continua possível), fora de túnel e sem
+túnel até `RAMP_TUNNEL_CLEARANCE` (20 m) depois do fim do trem — quem está no teto nunca entra num
+túnel. Física (`Game::MoveVertically`): o "chão" é o apoio mais alto sob a pegada do jogador entre
+leito (0), rampas (`RampHeightUnder`: altura na frente da pegada, então os pés chegam a 3.2 m
+exatamente na emenda com o trem) e tetos em que ele pousou (`LandsOnTop`, tolerância
+`ROOF_TOLERANCE`; no ar só com `vy <= 0`). Em pé, segue o apoio (sobe a rampa); sem apoio (fim do
+trem, faixa vazia), cai. A rampa nunca mata (entrando de lado, o jogador é posto na superfície). No
+teste de morte o trem em cujo teto ele está é ignorado e os demais trens só matam abaixo de
+`teto - ROOF_TOLERANCE` (senão a caixa varrida de quem sai pela lateral do teto encostaria nele).
+No túnel a cabeça é limitada pela abóbada (`TunnelCeilingHeight` + `CeilingPenetration`).
+`Game::GroundHeight()` (apoio sob os pés, ignorando o arco do pulo) ergue a câmera
+(`ThirdPersonCamera::Update(..., ground_y)`, suavizada). Modelo: `data/procedural/ramp.obj` com
+`ramp_frame` (metal_plate) e `ramp_deck` (tábuas, rough_wood), desenhados com a AABB de
+`ramp_frame`; o topo das tábuas é a mesma reta de `RampHeightAt`. E2E: `ramp_train`, `roof_hop`.
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler

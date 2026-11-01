@@ -853,6 +853,111 @@ def model_tunnel_portal():
 
 
 # ---------------------------------------------------------------------------
+# Rampa (Tarefa 4.4)
+# ---------------------------------------------------------------------------
+# Mesmas medidas de OBSTACLE_SIZE[RAMP] em include/game.h (= largura e altura
+# do trem): alterar lá e aqui juntos.
+RAMP_HALF_WIDTH = 1.1    # m
+RAMP_HEIGHT = 3.2        # m (teto do trem)
+RAMP_LENGTH = 8.0        # m ao longo da pista
+RAMP_CURB = 0.15         # m: largura das guias metálicas nas bordas do piso
+RAMP_LIP = 0.4           # m: chapa metálica da ponta baixa (antes das tábuas)
+RAMP_PLANK = 0.5         # m (em z) de cada tábua
+RAMP_GAP = 0.06          # m (em z) entre tábuas: mostra a chapa de baixo
+RAMP_PLANK_DEPTH = 0.03  # m: tábuas acima da chapa de baixo
+RAMP_METAL_TILE = 2.0    # m por repetição de metal_plate_diff_1k.jpg
+RAMP_WOOD_TILE = 1.5     # m por repetição de rough_wood_diff_1k.jpg
+
+
+def ramp_surface_y(z):
+    """Altura do piso (caminho do jogador) em z: 0 na ponta baixa (+Z, de onde
+    o jogador vem) até RAMP_HEIGHT na alta (-Z, colada à frente do trem). É a
+    mesma reta de RampHeightAt (src/collisions.cpp)."""
+    h = 0.5 * RAMP_LENGTH
+    return RAMP_HEIGHT * (h - z) / RAMP_LENGTH
+
+
+def ramp_quad(m, pts, n, uvs):
+    ids = [m.vertex(p, n, uv) for p, uv in zip(pts, uvs)]
+    m.quad(*ids)
+
+
+def model_ramp():
+    """Rampa (2.2 x 3.2 x 8 m): cunha que sobe do chão (z = +4) ao teto do trem
+    (z = -4). Dois objetos, cada um com a sua textura (UV em metros, sem
+    esticar): 'ramp_frame' (metal_plate: laterais, guias das bordas, chapa da
+    ponta baixa, chapa sob as tábuas e o fundo) e 'ramp_deck' (rough_wood:
+    tábuas transversais). O topo das tábuas, das guias e da chapa da ponta é
+    exatamente o piso de colisão; a chapa de baixo fica RAMP_PLANK_DEPTH
+    abaixo (aparece nas frestas, sem faces coplanares sobrepostas)."""
+    hw, hl = RAMP_HALF_WIDTH, 0.5 * RAMP_LENGTH
+    iw = hw - RAMP_CURB
+    slope = RAMP_HEIGHT / RAMP_LENGTH
+    n_up = v_norm((0.0, 1.0, slope))           # normal do piso (para cima e para +Z)
+    k = math.sqrt(1.0 + slope * slope)          # m de piso por m em z
+    mt, wt = RAMP_METAL_TILE, RAMP_WOOD_TILE
+    y = ramp_surface_y
+
+    frame = Mesh("ramp_frame")
+    # Laterais (triângulos), UV planar em (z, y).
+    for sx in (-1.0, 1.0):
+        x = sx * hw
+        pts = [(x, 0.0, hl), (x, 0.0, -hl), (x, RAMP_HEIGHT, -hl)]
+        ids = [frame.vertex(p, (sx, 0.0, 0.0), (p[2] / mt, p[1] / mt)) for p in pts]
+        frame.tri(*ids)
+    # Fundo (encostado na frente do trem).
+    ramp_quad(frame, [(-hw, 0.0, -hl), (hw, 0.0, -hl), (hw, RAMP_HEIGHT, -hl), (-hw, RAMP_HEIGHT, -hl)],
+              (0.0, 0.0, -1.0), [(-hw / mt, 0), (hw / mt, 0), (hw / mt, RAMP_HEIGHT / mt),
+                                 (-hw / mt, RAMP_HEIGHT / mt)])
+
+    def slope_uv(x, z, tile):
+        return (x / tile, (hl - z) * k / tile)
+
+    def slope_quad(m, x0, x1, z0, z1, dy, tile):
+        """Faixa do piso entre x0..x1 e z0..z1 (z0 > z1), deslocada dy em y."""
+        pts = [(x0, y(z0) + dy, z0), (x1, y(z0) + dy, z0), (x1, y(z1) + dy, z1), (x0, y(z1) + dy, z1)]
+        ramp_quad(m, pts, n_up, [slope_uv(p[0], p[2], tile) for p in pts])
+
+    z_lip = hl - RAMP_LIP
+    slope_quad(frame, -hw, hw, hl, z_lip, 0.0, mt)                 # chapa da ponta baixa
+    for x0, x1 in ((-hw, -iw), (iw, hw)):                          # guias das bordas
+        slope_quad(frame, x0, x1, z_lip, -hl, 0.0, mt)
+    slope_quad(frame, -iw, iw, z_lip, -hl, -RAMP_PLANK_DEPTH, mt)  # chapa sob as tábuas
+    # Faces internas das guias (descem do piso até a chapa de baixo).
+    for sx in (-1.0, 1.0):
+        x = sx * iw
+        pts = [(x, y(z_lip), z_lip), (x, y(-hl), -hl),
+               (x, y(-hl) - RAMP_PLANK_DEPTH, -hl), (x, y(z_lip) - RAMP_PLANK_DEPTH, z_lip)]
+        ramp_quad(frame, pts, (-sx, 0.0, 0.0), [(p[2] / mt, p[1] / mt) for p in pts])
+    # Degrau entre a chapa da ponta e a chapa de baixo (voltado para -Z).
+    pts = [(-iw, y(z_lip), z_lip), (iw, y(z_lip), z_lip),
+           (iw, y(z_lip) - RAMP_PLANK_DEPTH, z_lip), (-iw, y(z_lip) - RAMP_PLANK_DEPTH, z_lip)]
+    ramp_quad(frame, pts, (0.0, 0.0, -1.0), [(p[0] / mt, p[1] / mt) for p in pts])
+
+    deck = Mesh("ramp_deck")
+    z = z_lip - RAMP_GAP
+    i = 0
+    while z > -hl + 1e-6:
+        z1 = max(z - RAMP_PLANK, -hl)
+        # Tábua: topo no piso; U ao longo da pista, V ao longo da tábua (veio
+        # como nos dormentes); cada tábua com um trecho diferente da textura.
+        off = (i * 0.37) % 1.0
+        pts = [(-iw, y(z), z), (iw, y(z), z), (iw, y(z1), z1), (-iw, y(z1), z1)]
+        ramp_quad(deck, pts, n_up, [((hl - p[2]) * k / wt + off, p[0] / wt) for p in pts])
+        # Bordas da tábua (frente, para +Z, e trás, para -Z), de RAMP_PLANK_DEPTH.
+        d = RAMP_PLANK_DEPTH
+        for zz, nz in ((z, 1.0), (z1, -1.0)):
+            if nz < 0.0 and zz <= -hl + 1e-6:
+                continue  # a última tábua encosta no fundo
+            pts = [(-iw, y(zz) - d, zz), (iw, y(zz) - d, zz), (iw, y(zz), zz), (-iw, y(zz), zz)]
+            ramp_quad(deck, pts, (0.0, 0.0, nz), [(off, p[0] / wt) if p[1] < y(zz) else
+                                                   (off + d / wt, p[0] / wt) for p in pts])
+        z = z1 - RAMP_GAP
+        i += 1
+    return [frame, deck]
+
+
+# ---------------------------------------------------------------------------
 # Escrita
 # ---------------------------------------------------------------------------
 
@@ -897,6 +1002,9 @@ def main():
          "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
         ("tunnel_portal.obj", [model_tunnel_portal()], "Tunel: portal de entrada/saida",
          "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
+        ("ramp.obj", model_ramp(), "Rampa para subir no trem (2.2 x 3.2 x 8 m)",
+         "ramp_frame: data/metal_plate_diff_1k.jpg (UV em metros / 2); "
+         "ramp_deck: data/rough_wood_diff_1k.jpg (UV em metros / 1.5)"),
     ]
     for entry in models:
         filename, meshes, desc = entry[:3]

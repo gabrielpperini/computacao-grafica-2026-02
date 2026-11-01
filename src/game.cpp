@@ -5,6 +5,8 @@
 
 #include <glm/common.hpp>
 
+#include "scenery.h" // TunnelCeilingHeight (perfil do teto do túnel)
+
 namespace {
 
 // Mistura a semente do jogo para o gerador do spawn, de modo que a sequência
@@ -13,6 +15,8 @@ const unsigned kSpawnSeedMix = 0x9E3779B9u;
 // Idem para o sorteio de quais trens são móveis: gerador separado, para que
 // ele não altere a sequência de tipos/posições dos obstáculos (rng_).
 const unsigned kMovingSeedMix = 0x85EBCA6Bu;
+// Idem para o sorteio de quais trens parados ganham rampa (Tarefa 4.4).
+const unsigned kRampSeedMix = 0xC2B2AE35u;
 
 bool IsBarrier(ObstacleType t)
 {
@@ -37,9 +41,9 @@ int ObstacleParts(const Obstacle& o, AABB parts[3])
 
 Game::Game(unsigned seed)
     : mode(GameMode::PLAYING), track(seed), elapsed(0.0f), coins_collected(0),
-      score(0.0f), multiplier(1), spawn_enabled(true), seed_(seed),
+      score(0.0f), multiplier(1), spawn_enabled(true), ramps_enabled(true), seed_(seed),
       rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0),
-      moving_rng_(seed ^ kMovingSeedMix)
+      moving_rng_(seed ^ kMovingSeedMix), ramp_rng_(seed ^ kRampSeedMix)
 {
     for (int i = 0; i < OBSTACLE_TYPE_COUNT; i++)
         SetObstacleExtents((ObstacleType)i, 0.5f * glm::vec3(OBSTACLE_SIZE[i][0], OBSTACLE_SIZE[i][1],
@@ -73,6 +77,7 @@ void Game::Reset()
 
     rng_.seed(seed_ ^ kSpawnSeedMix);
     moving_rng_.seed(seed_ ^ kMovingSeedMix);
+    ramp_rng_.seed(seed_ ^ kRampSeedMix);
     track = Track(seed_);
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
 }
@@ -135,22 +140,15 @@ void Game::Update(float dt)
     else
         player.x += (diff > 0.0f ? max_step : -max_step);
 
-    // Pulo/queda (cinemática exata para gravidade constante).
-    if (!player.grounded) {
-        player.y += player.vy * dt - 0.5f * GRAVITY * dt * dt;
-        player.vy -= GRAVITY * dt;
-        if (player.y <= 0.0f) {
-            player.y = 0.0f;
-            player.vy = 0.0f;
-            player.grounded = true;
-        }
-    }
-
     // Rolamento
     player.roll_timer = std::max(player.roll_timer - dt, 0.0f);
 
-    // Trens móveis andam neste passo (a caixa deles anda junto).
+    // Trens móveis andam neste passo (a caixa deles anda junto). Antes do
+    // movimento vertical: o teto de um trem móvel é o da posição nova.
     MoveObstacles(dt);
+
+    // Pulo, queda, rampas e tetos dos trens (Tarefa 4.4).
+    MoveVertically(before, dt);
 
     // Colisões com a caixa VARRIDA: a que envolve as caixas do jogador antes
     // e depois do passo. Na velocidade máxima com dt = MAX_DT o jogador anda
@@ -166,9 +164,21 @@ void Game::Update(float dt)
     // andou neste passo também é varrido (união da caixa antes e depois), pelo
     // mesmo motivo: a velocidade de fechamento com um trem móvel chega a
     // 38 m/s (1.9 m por passo de MAX_DT).
+    // Exceções (Tarefa 4.4): a rampa nunca mata; o trem em cujo teto o
+    // jogador está (ou acabou de chegar, vindo de cima) também não; e o trem
+    // só mata abaixo de teto - ROOF_TOLERANCE (batida de frente/de lado),
+    // senão a caixa varrida de quem sai pela lateral do teto, ainda na altura
+    // dele, "encostaria" no trem.
     AABB parts[3];
     for (size_t i = 0; i < obstacles.size() && mode == GameMode::PLAYING; ++i) {
-        int n = ObstacleParts(obstacles[i], parts);
+        const Obstacle& o = obstacles[i];
+        if (o.type == ObstacleType::RAMP)
+            continue;
+        if (o.type == ObstacleType::TRAIN && LandsOnTop(before, now, o.box, ROOF_TOLERANCE))
+            continue;
+        int n = ObstacleParts(o, parts);
+        if (o.type == ObstacleType::TRAIN)
+            parts[0].max.y -= ROOF_TOLERANCE;
         const float dz = obstacle_dz_[i];
         for (int k = 0; k < n; ++k) {
             if (dz < 0.0f)
@@ -223,6 +233,98 @@ AABB Game::PlayerBox() const
     return b;
 }
 
+// Movimento vertical do jogador (Tarefa 4.4). O "chão" é o apoio mais alto
+// sob a pegada: o leito da pista (y = 0), uma rampa (sobe com s) ou o teto de
+// um trem em que ele pousou vindo de cima (LandsOnTop).
+void Game::MoveVertically(const AABB& before, float dt)
+{
+    // 1) Em pé: segue o apoio sob a pegada na posição nova (rampa acima dos
+    //    pés: sobe nela). Se o apoio ficou abaixo dos pés (passou do fim do
+    //    trem ou da rampa, ou trocou de faixa para uma sem trem), a gravidade
+    //    volta, a partir de vy = 0, já neste passo.
+    if (player.grounded) {
+        const float g = SupportHeight(before, PlayerBox(), true);
+        if (g >= player.y - ROOF_TOLERANCE) {
+            player.y = g;
+            player.vy = 0.0f;
+            return;
+        }
+        player.grounded = false;
+        player.vy = 0.0f;
+    }
+
+    // 2) No ar: cinemática exata para gravidade constante.
+    player.y += player.vy * dt - 0.5f * GRAVITY * dt * dt;
+    player.vy -= GRAVITY * dt;
+
+    // 3) Dentro do túnel a cabeça não passa da abóbada (o teto é mais baixo
+    //    nas faixas de fora); ao bater, para de subir.
+    if (track.IsTunnelAt(player.s)) {
+        const AABB box = PlayerBox();
+        const float ceiling = std::min(TunnelCeilingHeight(box.min.x), TunnelCeilingHeight(box.max.x));
+        const float push = CeilingPenetration(box, ceiling);
+        if (push > 0.0f) {
+            player.y -= push;
+            player.vy = std::min(player.vy, 0.0f);
+        }
+    }
+
+    // 4) Pouso. O teto do trem só conta descendo (vy <= 0): quem pula de cima
+    //    dele não é puxado de volta. Já a rampa é sólida: subindo por dentro
+    //    dela (pulo mais lento que a subida da rampa), a superfície empurra o
+    //    jogador para cima sem cancelar o pulo.
+    const float g = SupportHeight(before, PlayerBox(), player.vy <= 0.0f);
+    if (player.y <= g) {
+        player.y = g;
+        if (player.vy <= 0.0f) {
+            player.vy = 0.0f;
+            player.grounded = true;
+        }
+    }
+}
+
+float Game::SupportHeight(const AABB& before, const AABB& now, bool include_roofs) const
+{
+    // Rampas: pegada VARRIDA no passo (antes ∪ agora). A 30 m/s com
+    // dt = MAX_DT o jogador anda 1.5 m, e a pegada (0.8 m) pode sair inteira
+    // do fim da rampa num único passo, com a base anterior ainda abaixo de
+    // teto - ROOF_TOLERANCE: sem isto ele não chegaria ao teto do trem (e
+    // bateria na frente dele). A rampa varrida o leva até a altura em que a
+    // frente da pegada está agora (no fim da rampa: o teto).
+    AABB reach = now;
+    reach.min = glm::min(before.min, now.min);
+    reach.max = glm::max(before.max, now.max);
+
+    float g = 0.0f; // leito da pista
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        const Obstacle& o = obstacles[i];
+        float h;
+        if (o.type == ObstacleType::RAMP && RampHeightUnder(o.box, reach, &h))
+            g = std::max(g, h);
+        else if (o.type == ObstacleType::TRAIN && include_roofs &&
+                 LandsOnTop(before, now, o.box, ROOF_TOLERANCE))
+            g = std::max(g, o.box.max.y);
+    }
+    return g;
+}
+
+float Game::GroundHeight() const
+{
+    const AABB p = PlayerBox();
+    float g = 0.0f; // leito da pista
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        const Obstacle& o = obstacles[i];
+        float h;
+        if (o.type == ObstacleType::RAMP && RampHeightUnder(o.box, p, &h) &&
+            h <= player.y + ROOF_TOLERANCE)
+            g = std::max(g, h);
+        else if (o.type == ObstacleType::TRAIN && FootprintsOverlap(p, o.box) &&
+                 o.box.max.y <= player.y + ROOF_TOLERANCE)
+            g = std::max(g, o.box.max.y);
+    }
+    return g;
+}
+
 void Game::SetObstacleExtents(ObstacleType type, glm::vec3 half_extents)
 {
     glm::vec3 h(std::fabs(half_extents.x), std::fabs(half_extents.y), std::fabs(half_extents.z));
@@ -261,6 +363,40 @@ Obstacle Game::MakeMovingTrain(int lane, float s, float velocity) const
         o.min_s = track.StraightRunStart(s - hz);
     }
     return o;
+}
+
+Obstacle Game::MakeRampFor(const Obstacle& train) const
+{
+    const float len = 2.0f * extents_[(int)ObstacleType::RAMP].z;
+    Obstacle r = MakeObstacle(ObstacleType::RAMP, train.lane, train.box.min.z - 0.5f * len);
+    // Exatamente colada ao trem e na altura do teto dele (sem degrau na emenda).
+    r.box.max.z = train.box.min.z;
+    r.box.min.z = train.box.min.z - len;
+    r.box.max.y = train.box.max.y;
+    r.s = 0.5f * (r.box.min.z + r.box.max.z);
+    return r;
+}
+
+bool Game::CanHaveRamp(const Obstacle& train, float chunk_start)
+{
+    const float r0 = train.box.min.z - 2.0f * extents_[(int)ObstacleType::RAMP].z;
+    // Dentro do chunk do trem (entra só na emenda livre do começo dele: a
+    // rampa nunca mata, então a troca de faixa na emenda continua possível)
+    // e fora do trecho inicial sem obstáculos.
+    if (r0 < chunk_start || r0 < OBSTACLE_FREE_START)
+        return false;
+    if (!track.IsStraightRange(r0, train.box.max.z))
+        return false;
+    // Nem dentro de túnel, nem com túnel logo depois do trem: quem está no
+    // teto nunca entra num túnel (a abóbada é mais baixa nas faixas de fora).
+    const float s1 = train.box.max.z + RAMP_TUNNEL_CLEARANCE;
+    track.EnsureGeneratedUntil(s1);
+    return !track.TunnelOverlaps(r0, s1);
+}
+
+float Game::RampRandom01()
+{
+    return (float)(ramp_rng_() >> 8) * (1.0f / 16777216.0f);
 }
 
 int Game::SafeLaneOfChunk(int chunk) const
@@ -372,7 +508,10 @@ int Game::RandomInt(int lo, int hi)
 //  - nada antes de OBSTACLE_FREE_START; o 1º chunk só tem a fileira de moedas
 //    de boas-vindas na faixa inicial;
 //  - trens/rampas só inteiros dentro de retas da pista (nas curvas viram
-//    placas); barreiras, placas e moedas podem ficar nas curvas.
+//    placas); barreiras, placas e moedas podem ficar nas curvas;
+//  - rampa (Tarefa 4.4) só colada à frente de um trem parado, na faixa dele
+//    (nunca a segura), dentro do chunk: é a única coisa que entra na emenda
+//    livre do começo do chunk, e não bloqueia (nunca mata). Veja CanHaveRamp.
 void Game::GenerateChunk(int index)
 {
     float start = index * CHUNK_LENGTH;
@@ -426,7 +565,7 @@ void Game::GenerateChunk(int index)
             continue; // não cabe no miolo (só se o chunk for curto demais)
         float s = lo + (hi - lo) * u;
 
-        // Trens (e rampas, Tarefa 4.4) só em retas: um trem de 13 m numa curva
+        // Trens (e suas rampas, Tarefa 4.4) só em retas: um trem de 13 m numa curva
         // de raio 40 sairia dos trilhos nas pontas e a caixa de colisão (reta
         // em coordenadas de pista) não bateria com os carros desenhados. Se o
         // trem não cabe inteiro numa reta, vira placa no mesmo lugar: continua
@@ -459,6 +598,15 @@ void Game::GenerateChunk(int index)
                     o.velocity = -MOVING_TRAIN_SPEED;
                     o.min_s = min_s;
                 }
+            }
+            // Parte dos trens parados ganha uma rampa colada à frente (sorteio
+            // com gerador próprio, sempre feito: não altera a sequência dos
+            // demais). Trem móvel nunca tem rampa. A faixa do trem não é a
+            // segura, e a rampa não a bloqueia: a garantia continua valendo.
+            if (type == ObstacleType::TRAIN && o.velocity == 0.0f) {
+                const bool want = RampRandom01() < RAMP_CHANCE;
+                if (want && ramps_enabled && CanHaveRamp(o, start))
+                    obstacles.push_back(MakeRampFor(o)); // antes do trem: ordem de s
             }
             obstacles.push_back(o);
         }

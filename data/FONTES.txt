@@ -32,6 +32,8 @@ procedural/powerup_magnet.obj, powerup_sneaker.obj, powerup_multiplier.obj, pigg
 procedural/flying_pig.obj                                           porco voador (corpo + 2 asas)
 procedural/tunnel_section.obj, tunnel_portal.obj                    tunel: modulo de abobada (4 m) e portal
   (estes dois usam a textura red_brick_diff_1k.jpg acima, nao o atlas)
+procedural/ramp.obj                                                 rampa para subir no trem (ramp_frame + ramp_deck)
+  (usa metal_plate_diff_1k.jpg e rough_wood_diff_1k.jpg acima, nao o atlas)
 Para regerar: python tools/gen_models.py (na raiz do repositorio).
 
 == Codigo base da disciplina ==

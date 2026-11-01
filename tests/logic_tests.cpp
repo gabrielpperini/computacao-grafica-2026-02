@@ -1186,6 +1186,108 @@ void Test_LandsOnTopLaterallyApart()
     assert(!LandsOnTop(prev, now, train, 0.1f));
 }
 
+// ------------------------------------------------ Rampas e tetos de trem (4.4)
+
+// Rampa sob a "pegada" (projeção xz) do jogador: a altura é a do ponto mais
+// alto da rampa sob a pegada, isto é, na frente dela (a rampa sobe com s).
+void Test_RampHeightUnderFootprint()
+{
+    AABB ramp = Box(-1.1f, 0, 10, 1.1f, 3.2f, 18); // sobe 0.4 m por metro
+    float h = -1.0f;
+    // Pegada [13.6, 14.4]: altura na frente (s = 14.4).
+    assert(RampHeightUnder(ramp, Box(-0.4f, 0, 13.6f, 0.4f, 1.8f, 14.4f), &h));
+    assert(nearf(h, 0.4f * 4.4f));
+    // Frente já além do fim da rampa: altura máxima (3.2).
+    assert(RampHeightUnder(ramp, Box(-0.4f, 0, 17.5f, 0.4f, 1.8f, 18.3f), &h));
+    assert(nearf(h, 3.2f));
+    // Só a ponta de trás da pegada antes do começo: conta a frente.
+    assert(RampHeightUnder(ramp, Box(-0.4f, 0, 9.5f, 0.4f, 1.8f, 10.3f), &h));
+    assert(nearf(h, 0.4f * 0.3f));
+    // Pegada só encostando de lado (troca de faixa): ainda está sobre a rampa.
+    assert(RampHeightUnder(ramp, Box(1.1f, 0, 13.6f, 1.9f, 1.8f, 14.4f), &h));
+    // Fora em x ou em s: false e *out_height intacto.
+    h = -7.0f;
+    assert(!RampHeightUnder(ramp, Box(1.2f, 0, 13.6f, 2.0f, 1.8f, 14.4f), &h));
+    assert(!RampHeightUnder(ramp, Box(-0.4f, 0, 18.1f, 0.4f, 1.8f, 18.9f), &h));
+    assert(!RampHeightUnder(ramp, Box(-0.4f, 0, 9.0f, 0.4f, 1.8f, 9.8f), &h));
+    assert(h == -7.0f);
+}
+
+// Queda rápida (dt grande / rolamento no ar): num único quadro a base passa
+// de 0.2 m acima do teto para 0.85 m abaixo dele. Ainda é pouso, não batida.
+void Test_LandsOnTopBigFall()
+{
+    AABB train = Box(-1.1f, 0, 10, 1.1f, 3.2f, 23);
+    AABB prev  = Box(-0.4f, 3.4f, 15, 0.4f, 5.2f, 15.8f);
+    AABB now   = Box(-0.4f, 2.35f, 16.5f, 0.4f, 4.15f, 17.3f);
+    assert(LandsOnTop(prev, now, train, 0.25f));
+}
+
+// Limites da tolerância (intervalos fechados: na fronteira conta).
+void Test_LandsOnTopToleranceBoundary()
+{
+    AABB train = Box(-1.1f, 0, 10, 1.1f, 3.0f, 23); // teto em 3.0 (exato em float)
+    const float tol = 0.25f;
+    // Base anterior exatamente em teto - tol (sobre o trem nos dois quadros).
+    assert(LandsOnTop(Box(-0.4f, 2.75f, 15, 0.4f, 4.55f, 15.8f),
+                      Box(-0.4f, 2.75f, 15.5f, 0.4f, 4.55f, 16.3f), train, tol));
+    // Um pouco abaixo disso: batida (não sobe no teto).
+    assert(!LandsOnTop(Box(-0.4f, 2.7f, 15, 0.4f, 4.5f, 15.8f),
+                       Box(-0.4f, 2.7f, 15.5f, 0.4f, 4.5f, 16.3f), train, tol));
+    // Base atual exatamente em teto + tol: pousou.
+    assert(LandsOnTop(Box(-0.4f, 3.5f, 15, 0.4f, 5.3f, 15.8f),
+                      Box(-0.4f, 3.25f, 15.5f, 0.4f, 5.05f, 16.3f), train, tol));
+    // Ainda acima de teto + tol: ainda no ar.
+    assert(!LandsOnTop(Box(-0.4f, 3.5f, 15, 0.4f, 5.3f, 15.8f),
+                       Box(-0.4f, 3.375f, 15.5f, 0.4f, 5.175f, 16.3f), train, tol));
+}
+
+// Entrando na pegada do trem NESTE quadro, vale a altura da base no instante
+// em que a frente (ou a lateral) do jogador cruza a borda do trem (interpolada
+// entre os dois quadros). Subindo pela rampa colada à frente do trem, a base
+// chega ao teto exatamente ali: é pouso, mesmo que no quadro anterior ela
+// estivesse mais baixa (a rampa sobe 0.6 m por passo a 30 m/s com dt = 0.05).
+void Test_LandsOnTopClimbingIn()
+{
+    AABB train = Box(-1.1f, 0, 20, 1.1f, 3.2f, 33);
+    // Rampa: base 2.9 com a frente 0.75 m antes do trem; agora 3.2 e 0.75 m dentro.
+    AABB prev = Box(-0.4f, 2.9f, 18.45f, 0.4f, 4.7f, 19.25f);
+    AABB now  = Box(-0.4f, 3.2f, 19.95f, 0.4f, 5.0f, 20.75f);
+    assert(LandsOnTop(prev, now, train, 0.25f));
+    // Lateral: troca de faixa de um teto para o teto vizinho (mesma altura).
+    AABB side_prev = Box(-2.9f, 3.2f, 25, -2.1f, 5.0f, 25.8f);
+    AABB side_now  = Box(-1.5f, 3.2f, 25.5f, -0.7f, 5.0f, 26.3f);
+    assert(LandsOnTop(side_prev, side_now, train, 0.25f));
+    // A mesma troca de faixa a partir do chão: batida na lateral.
+    AABB low_prev = Box(-2.9f, 0, 25, -2.1f, 1.8f, 25.8f);
+    AABB low_now  = Box(-1.5f, 0, 25.5f, -0.7f, 1.8f, 26.3f);
+    assert(!LandsOnTop(low_prev, low_now, train, 0.25f));
+}
+
+// Pulando contra a frente do trem: entra na pegada dele com a base abaixo do
+// teto (no quadro anterior e no cruzamento): batida. Já quem vinha de cima
+// (base anterior acima do teto) e cruza a borda da frente caindo pousa,
+// mesmo que no quadro atual a base tenha passado um pouco do teto.
+void Test_LandsOnTopEntryBelowRoof()
+{
+    AABB train = Box(-1.1f, 0, 20, 1.1f, 3.2f, 33);
+    // Base anterior bem abaixo do teto e entrando: batida frontal.
+    assert(!LandsOnTop(Box(-0.4f, 1.0f, 18.5f, 0.4f, 2.8f, 19.3f),
+                       Box(-0.4f, 1.2f, 19.5f, 0.4f, 3.0f, 20.3f), train, 0.25f));
+    // Base anterior acima do teto, entrando um pouco abaixo dele: pousa.
+    assert(LandsOnTop(Box(-0.4f, 3.4f, 18.5f, 0.4f, 5.2f, 19.3f),
+                      Box(-0.4f, 3.0f, 19.5f, 0.4f, 4.8f, 20.3f), train, 0.25f));
+}
+
+// Teto (do túnel): quanto a caixa passou dele.
+void Test_CeilingPenetration()
+{
+    AABB b = Box(-0.4f, 4.0f, 0, 0.4f, 5.8f, 0.8f);
+    assert(nearf(CeilingPenetration(b, 6.0f), 0.0f));
+    assert(nearf(CeilingPenetration(b, 5.8f), 0.0f)); // encostado não penetra
+    assert(nearf(CeilingPenetration(b, 5.5f), 0.3f));
+}
+
 // ------------------------------------------- Obstáculos, moedas e game over (2.2)
 
 // Jogo sem spawn automático (cenário montado à mão pelo teste).
@@ -1257,6 +1359,15 @@ void Test_ChunkBordersAllowLaneChange()
         g.GenerateChunksUntil(200 * CHUNK_LENGTH);
         for (size_t k = 0; k < g.obstacles.size(); k++) {
             const AABB& b = g.obstacles[k].box;
+            if (g.obstacles[k].type == ObstacleType::RAMP) {
+                // Rampa (Tarefa 4.4): colada à frente de um trem, entra na
+                // emenda livre do começo do chunk, mas nunca mata (troca de
+                // faixa por cima dela continua possível) e não sai do chunk.
+                float c = std::floor(b.max.z / CHUNK_LENGTH) * CHUNK_LENGTH;
+                assert(b.min.z >= c - 1e-3f);
+                assert(b.max.z <= c + CHUNK_LENGTH - CHUNK_CLEAR_TAIL + 1e-3f);
+                continue;
+            }
             float c = std::floor(b.min.z / CHUNK_LENGTH) * CHUNK_LENGTH; // início do chunk
             assert(b.min.z >= c + CHUNK_CLEAR_HEAD - 1e-3f);
             assert(b.max.z <= c + CHUNK_LENGTH - CHUNK_CLEAR_TAIL + 1e-3f);
@@ -1291,14 +1402,14 @@ void Test_FirstMetersObstacleFree()
 }
 
 // Obstáculos ficam dentro da própria faixa (não invadem a vizinha), apoiados
-// no chão (ou, na barreira alta, a partir do vão), e sem rampas nesta fase.
+// no chão (ou, na barreira alta, a partir do vão). As regras das rampas estão
+// em Test_RampSpawnRules (4.4).
 void Test_ObstaclesInsideLane()
 {
     Game g(3);
     g.GenerateChunksUntil(300 * CHUNK_LENGTH);
     for (size_t k = 0; k < g.obstacles.size(); k++) {
         const Obstacle& o = g.obstacles[k];
-        assert(o.type != ObstacleType::RAMP);
         float cx = o.lane * LANE_WIDTH;
         assert(o.box.min.x >= cx - 0.5f * LANE_WIDTH + LANE_OBSTACLE_MARGIN - 1e-4f);
         assert(o.box.max.x <= cx + 0.5f * LANE_WIDTH - LANE_OBSTACLE_MARGIN + 1e-4f);
@@ -1904,6 +2015,391 @@ void Test_MovingTrainsDeterministic()
     assert(!a.empty() && a == b);
 }
 
+// --------------------------------------------- Rampas e andar sobre trens (4.4)
+
+static const float kRoof = OBSTACLE_SIZE[(int)ObstacleType::TRAIN][1];
+
+// Trem parado centrado em train_s na faixa, com a rampa colada à frente dele
+// se with_ramp (a rampa entra antes do trem: ordem de s).
+static void AddTrain(Game& g, int lane, float train_s, bool with_ramp)
+{
+    Obstacle t = g.MakeObstacle(ObstacleType::TRAIN, lane, train_s);
+    if (with_ramp)
+        g.obstacles.push_back(g.MakeRampFor(t));
+    g.obstacles.push_back(t);
+}
+
+// Avança em passos de dt até o jogador passar de s (ou o jogo acabar).
+static void RunUntilS(Game& g, float s, float dt = 1.0f / 60.0f)
+{
+    while (g.player.s < s && g.mode == GameMode::PLAYING)
+        g.Update(dt);
+}
+
+// Roda até o jogador voltar ao chão/teto (no máximo 'seconds'); devolve a
+// maior altura no caminho. Falha se o jogo acabar.
+static float RunUntilGrounded(Game& g, float seconds = 5.0f, float dt = 1.0f / 60.0f)
+{
+    float max_y = g.player.y;
+    for (int i = 0; i < (int)(seconds / dt) && !g.player.grounded; i++) {
+        g.Update(dt);
+        assert(g.mode == GameMode::PLAYING);
+        max_y = std::max(max_y, g.player.y);
+    }
+    assert(g.player.grounded);
+    return max_y;
+}
+
+void Test_RampGeometry()
+{
+    // A rampa sobe exatamente até o teto do trem (mesma altura na tabela).
+    assert(OBSTACLE_SIZE[(int)ObstacleType::RAMP][1] == OBSTACLE_SIZE[(int)ObstacleType::TRAIN][1]);
+    Game g = StraightGame();
+    Obstacle t = g.MakeObstacle(ObstacleType::TRAIN, 1, 40.0f);
+    Obstacle r = g.MakeRampFor(t);
+    assert(r.type == ObstacleType::RAMP && r.lane == 1 && r.velocity == 0.0f);
+    assert(nearf(r.box.max.z, t.box.min.z)); // colada à frente do trem
+    assert(nearf(r.box.max.z - r.box.min.z, OBSTACLE_SIZE[(int)ObstacleType::RAMP][2]));
+    assert(nearf(r.box.min.y, 0.0f) && nearf(r.box.max.y, t.box.max.y));
+    assert(nearf(r.s, 0.5f * (r.box.min.z + r.box.max.z)));
+    assert(nearf(0.5f * (r.box.min.x + r.box.max.x), 0.5f * (t.box.min.x + t.box.max.x)));
+    assert(r.box.min.x >= t.box.min.x - kEps && r.box.max.x <= t.box.max.x + kEps);
+}
+
+// Correndo pela faixa da rampa, sem tocar em nada: os pés seguem a superfície
+// da rampa (nem flutuam nem afundam) e o jogador termina em cima do trem.
+void Test_RampLiftsPlayerOntoTrain()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true); // rampa em [25.5, 33.5], trem em [33.5, 46.5]
+    const AABB ramp = g.obstacles[0].box, train = g.obstacles[1].box;
+    bool climbed = false;
+    while (g.player.s < 42.0f) {
+        g.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        AABB p = g.PlayerBox();
+        float h;
+        if (p.max.z < train.min.z && RampHeightUnder(ramp, p, &h)) {
+            assert(g.player.grounded && nearf(g.player.y, h, 1e-3f));
+            climbed = climbed || h > 2.0f;
+        }
+    }
+    assert(climbed);
+    assert(g.player.grounded && nearf(g.player.y, kRoof) && g.player.vy == 0.0f);
+    assert(nearf(g.GroundHeight(), kRoof));
+}
+
+// Pulo a partir do meio da rampa: passa por cima da borda da frente do trem e
+// pousa no meio do teto (não morre, não cai pela rampa).
+void Test_JumpOntoTrainRoof()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true);
+    const AABB train = g.obstacles[1].box;
+    RunUntilS(g, 30.0f);
+    assert(g.mode == GameMode::PLAYING && g.player.grounded && g.player.y > 1.0f);
+    g.HandleInput(Input::JUMP);
+    assert(!g.player.grounded);
+    float max_y = RunUntilGrounded(g);
+    assert(max_y > kRoof + 0.3f);
+    assert(nearf(g.player.y, kRoof) && g.player.vy == 0.0f);
+    assert(g.player.s > train.min.z + 2.0f && g.player.s < train.max.z - 2.0f);
+}
+
+// Passando do fim do trem a gravidade volta: cai, pousa no chão e continua.
+void Test_FallOffTrainEnd()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true);
+    const AABB train = g.obstacles[1].box;
+    RunUntilS(g, train.max.z - 1.0f);
+    assert(g.mode == GameMode::PLAYING && g.player.grounded && nearf(g.player.y, kRoof));
+    RunUntilS(g, train.max.z + PLAYER_HALF_DEPTH + 0.5f); // pegada já fora do trem
+    assert(g.mode == GameMode::PLAYING);
+    assert(!g.player.grounded && g.player.y < kRoof && g.player.y > 0.0f && g.player.vy < 0.0f);
+    Run(g, 1.0f);
+    assert(g.mode == GameMode::PLAYING);
+    assert(g.player.grounded && g.player.y == 0.0f && g.player.vy == 0.0f);
+    assert(g.GroundHeight() == 0.0f);
+}
+
+// Só bater na frente/lateral do trem abaixo do teto mata.
+void Test_FrontalTrainHitIsGameOver()
+{
+    // Trem sem rampa, correndo de frente.
+    {
+        Game g = StraightGame();
+        AddTrain(g, 0, 40.0f, false);
+        Run(g, 5.0f);
+        assert(g.mode == GameMode::GAME_OVER && g.player.s < 33.5f);
+    }
+    // Pulando contra a frente: o pulo (~2 m) não alcança o teto (3.2 m).
+    {
+        Game g = StraightGame();
+        AddTrain(g, 0, 40.0f, false);
+        RunUntilS(g, 29.0f);
+        g.HandleInput(Input::JUMP);
+        Run(g, 2.0f);
+        assert(g.mode == GameMode::GAME_OVER && g.player.s < 33.5f);
+    }
+    // Rampa e trem na faixa vizinha: entrar pelo chão na lateral do trem mata.
+    {
+        Game g = StraightGame();
+        AddTrain(g, 1, 40.0f, true);
+        RunUntilS(g, 37.0f);
+        assert(g.mode == GameMode::PLAYING);
+        g.HandleInput(Input::RIGHT);
+        Run(g, 1.0f);
+        assert(g.mode == GameMode::GAME_OVER && g.player.y == 0.0f);
+    }
+}
+
+// A rampa nunca mata: entrando nela de lado, pelo chão, o jogador é posto na
+// superfície e segue para o teto do trem.
+void Test_RampNeverKills()
+{
+    Game g = StraightGame();
+    AddTrain(g, 1, 40.0f, true);
+    RunUntilS(g, 28.0f);
+    g.HandleInput(Input::RIGHT);
+    float max_y = 0.0f;
+    while (g.player.s < 45.0f) {
+        g.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        max_y = std::max(max_y, g.player.y);
+    }
+    assert(nearf(max_y, kRoof) && nearf(g.player.y, kRoof) && g.player.lane == 1);
+}
+
+// Pular do teto não é cancelado pelo teste de pouso (só vale com vy <= 0).
+void Test_JumpFromRoofNotCancelled()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true);
+    RunUntilS(g, 35.0f);
+    assert(g.player.grounded && nearf(g.player.y, kRoof));
+    g.HandleInput(Input::JUMP);
+    g.Update(1.0f / 60.0f);
+    assert(!g.player.grounded && g.player.y > kRoof && g.player.vy > 0.0f);
+    float max_y = RunUntilGrounded(g);
+    assert(max_y > kRoof + 1.5f);
+    assert(nearf(g.player.y, kRoof)); // pousa de volta no mesmo trem
+    // Pulando no teto, a "altura do chão" (câmera) continua sendo o teto.
+    g.HandleInput(Input::JUMP);
+    for (int i = 0; i < 10; i++) {
+        g.Update(1.0f / 60.0f);
+        assert(nearf(g.GroundHeight(), kRoof));
+    }
+}
+
+// Trocar de faixa em cima do trem para uma faixa sem trem: cai no chão.
+void Test_RoofLaneChangeToEmptyLaneFalls()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true);
+    RunUntilS(g, 36.0f);
+    assert(g.player.grounded && nearf(g.player.y, kRoof));
+    g.HandleInput(Input::LEFT);
+    Run(g, 0.15f); // x = -1.8: pegada [-2.2, -1.4] já fora do trem [-1.1, 1.1]
+    assert(g.mode == GameMode::PLAYING && !g.player.grounded && g.player.y < kRoof);
+    Run(g, 1.0f);
+    assert(g.mode == GameMode::PLAYING && g.player.grounded && g.player.y == 0.0f);
+    assert(g.player.lane == -1 && nearf(g.player.x, -LANE_WIDTH));
+}
+
+// ...e para uma faixa com outro trem ao lado (mesma altura): continua no teto
+// o tempo todo (a pegada sempre toca um dos dois).
+void Test_RoofLaneChangeToAdjacentTrainStays()
+{
+    Game g = StraightGame();
+    AddTrain(g, 0, 40.0f, true);   // [33.5, 46.5]
+    AddTrain(g, 1, 42.0f, false);  // [35.5, 48.5]
+    RunUntilS(g, 36.0f);
+    g.HandleInput(Input::RIGHT);
+    while (g.player.s < 47.0f) {
+        g.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        assert(g.player.grounded && nearf(g.player.y, kRoof));
+    }
+    assert(g.player.lane == 1 && nearf(g.player.x, LANE_WIDTH));
+    Run(g, 1.0f); // e cai no fim do segundo trem
+    assert(g.mode == GameMode::PLAYING && g.player.grounded && g.player.y == 0.0f);
+}
+
+// Na velocidade máxima com o maior dt (1.5 m por passo), em todas as fases do
+// passo (de 1 em 1 cm) em relação à emenda rampa/trem: sobe, percorre o trem
+// inteiro com os pés no teto e cai no fim, sem nunca morrer. (Com 1.5 m por
+// passo a pegada de 0.8 m pode sair inteira da rampa num único passo.)
+void Test_RoofRunMaxSpeedBigDt()
+{
+    for (int k = 0; k < 150; k++) {
+        Game g = StraightGame();
+        g.player.speed = PLAYER_MAX_SPEED;
+        g.player.s = 0.01f * k;
+        AddTrain(g, 0, 60.0f, true);
+        const AABB train = g.obstacles[1].box;
+        float max_y = 0.0f;
+        for (int i = 0; i < 60; i++) { // 3 s, ~90 m
+            g.Update(MAX_DT);
+            assert(g.mode == GameMode::PLAYING);
+            max_y = std::max(max_y, g.player.y);
+            AABB p = g.PlayerBox();
+            if (p.min.z >= train.min.z && p.max.z <= train.max.z)
+                assert(g.player.grounded && nearf(g.player.y, kRoof));
+        }
+        assert(nearf(max_y, kRoof));
+        assert(g.player.grounded && g.player.y == 0.0f);
+    }
+}
+
+// Dentro do túnel a cabeça do jogador nunca passa do teto (abóbada), mesmo
+// com um pulo exagerado (tênis + teto de trem chegariam perto); ao bater, a
+// velocidade vertical deixa de subir. Fora do túnel o mesmo pulo vai além.
+void Test_TunnelCeilingClamp()
+{
+    Game base = QuietGame();
+    base.track = Track(1);
+    const float L0 = base.track.Segments()[0].length;
+    base.track.AppendSegment(200.0f, 0.0f, true);
+    for (int lane = 0; lane <= 1; lane++) {
+        Game g = base;
+        g.player.s = L0 + 40.0f;
+        g.player.lane = lane;
+        g.player.x = lane * LANE_WIDTH;
+        g.player.grounded = false;
+        g.player.vy = 25.0f; // ~10 m de altura sem teto
+        bool hit = false;
+        for (int i = 0; i < 300 && !(i > 0 && g.player.grounded); i++) {
+            g.Update(1.0f / 60.0f);
+            assert(g.mode == GameMode::PLAYING && g.track.IsTunnelAt(g.player.s));
+            AABB p = g.PlayerBox();
+            float ceiling = std::min(TunnelCeilingHeight(p.min.x), TunnelCeilingHeight(p.max.x));
+            assert(p.max.y <= ceiling + 1e-4f);
+            if (p.max.y > ceiling - 1e-3f) {
+                hit = true;
+                assert(g.player.vy <= 0.0f);
+            }
+        }
+        assert(hit && g.player.grounded && g.player.y == 0.0f);
+    }
+    Game out = base;
+    out.player.s = 10.0f; // reta da largada, fora do túnel
+    out.player.grounded = false;
+    out.player.vy = 25.0f;
+    float max_y = RunUntilGrounded(out);
+    assert(max_y + PLAYER_HEIGHT > 8.0f);
+}
+
+// Rampas geradas: sempre coladas à frente de um trem PARADO na mesma faixa
+// (logo, nunca na faixa segura), em reta, fora de túneis e sem túnel até
+// RAMP_TUNNEL_CLEARANCE depois do fim do trem, dentro do chunk do trem.
+void Test_RampSpawnRules()
+{
+    int ramps = 0, static_trains = 0;
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Game g(seed);
+        g.GenerateChunksUntil(500 * CHUNK_LENGTH);
+        const std::vector<Obstacle>& o = g.obstacles;
+        for (size_t i = 0; i < o.size(); i++)
+            if (o[i].type == ObstacleType::TRAIN && o[i].velocity == 0.0f)
+                static_trains++;
+        for (size_t i = 0; i < o.size(); i++) {
+            const Obstacle& r = o[i];
+            if (r.type != ObstacleType::RAMP)
+                continue;
+            ramps++;
+            const Obstacle* t = NULL;
+            for (size_t j = 0; j < o.size(); j++)
+                if (o[j].type == ObstacleType::TRAIN && o[j].lane == r.lane &&
+                    nearf(o[j].box.min.z, r.box.max.z))
+                    t = &o[j];
+            assert(t != NULL && t->velocity == 0.0f);
+            assert(nearf(r.box.max.y, t->box.max.y) && r.box.min.y == 0.0f);
+            assert(nearf(0.5f * (r.box.min.x + r.box.max.x), r.lane * LANE_WIDTH));
+            assert(g.track.IsStraightRange(r.box.min.z, t->box.max.z));
+            assert(!g.track.TunnelOverlaps(r.box.min.z, t->box.max.z + RAMP_TUNNEL_CLEARANCE));
+            const int c = (int)std::floor(t->box.min.z / CHUNK_LENGTH);
+            assert(r.box.min.z >= c * CHUNK_LENGTH && r.box.min.z >= OBSTACLE_FREE_START);
+            assert(g.SafeLaneOfChunk(c) != r.lane);
+        }
+    }
+    printf("  [rampas] %d rampas para %d trens parados\n", ramps, static_trains);
+    assert(ramps >= 100 && ramps < static_trains);
+}
+
+// As rampas têm gerador próprio: com ou sem rampas, os demais obstáculos
+// (tipos, faixas, posições, trens móveis) saem idênticos; e a mesma semente
+// gera as mesmas rampas.
+void Test_RampsDontDisturbSpawn()
+{
+    for (unsigned seed = 1; seed <= 10; seed++) {
+        Game a(seed), b(seed), c(seed);
+        b.ramps_enabled = false;
+        a.GenerateChunksUntil(300 * CHUNK_LENGTH);
+        b.GenerateChunksUntil(300 * CHUNK_LENGTH);
+        c.GenerateChunksUntil(300 * CHUNK_LENGTH);
+        std::vector<const Obstacle*> rest;
+        for (size_t i = 0; i < a.obstacles.size(); i++)
+            if (a.obstacles[i].type != ObstacleType::RAMP)
+                rest.push_back(&a.obstacles[i]);
+        assert(rest.size() == b.obstacles.size() && rest.size() < a.obstacles.size());
+        for (size_t i = 0; i < rest.size(); i++) {
+            const Obstacle& x = *rest[i];
+            const Obstacle& y = b.obstacles[i];
+            assert(x.type == y.type && x.lane == y.lane && x.s == y.s && x.velocity == y.velocity);
+        }
+        assert(a.obstacles.size() == c.obstacles.size());
+        for (size_t i = 0; i < a.obstacles.size(); i++)
+            assert(a.obstacles[i].type == c.obstacles[i].type && a.obstacles[i].s == c.obstacles[i].s);
+    }
+}
+
+// A altura do chão (usada pela câmera) ignora o arco do pulo: do chão é 0
+// durante todo o pulo.
+void Test_GroundHeightIgnoresJumpArc()
+{
+    Game g = StraightGame();
+    g.HandleInput(Input::JUMP);
+    for (int i = 0; i < 30; i++) {
+        g.Update(1.0f / 60.0f);
+        assert(g.player.y > 0.0f && g.GroundHeight() == 0.0f);
+    }
+}
+
+// Câmera em cima do trem: sobe junto com a altura do chão (teto), de forma
+// suave e independente de dt, e olha para o jogador lá em cima.
+void Test_CameraFollowsGroundHeight()
+{
+    Track t = StraightTrack();
+    ThirdPersonCamera cam;
+    cam.Snap(t, 20.0f, 0.0f, false, kRoof);
+    CameraPose p = cam.Pose();
+    assert(nearf(p.position.y, CAMERA_HEIGHT + kRoof));
+    vec4 look(0, CAMERA_LOOK_HEIGHT + kRoof, -20.0f - CAMERA_LOOK_AHEAD, 1);
+    assert(near(p.view_vector, look - p.position));
+
+    ThirdPersonCamera c;
+    c.Snap(t, 20.0f, 0.0f, false, 0.0f);
+    c.Update(t, 20.0f, 0.0f, false, 1.0f / 60.0f, kRoof);
+    float prev = c.Pose().position.y;
+    assert(prev > CAMERA_HEIGHT && prev < CAMERA_HEIGHT + 0.5f * kRoof); // não pula
+    for (int i = 0; i < 180; i++) {
+        c.Update(t, 20.0f, 0.0f, false, 1.0f / 60.0f, kRoof);
+        float y = c.Pose().position.y;
+        assert(y >= prev && y <= CAMERA_HEIGHT + kRoof + kEps);
+        prev = y;
+    }
+    assert(nearf(prev, CAMERA_HEIGHT + kRoof, 1e-3f));
+
+    ThirdPersonCamera a, b;
+    a.Snap(t, 0.0f, 0.0f, false, 0.0f);
+    b.Snap(t, 0.0f, 0.0f, false, 0.0f);
+    for (int i = 1; i <= 15; i++) a.Update(t, 0.0f, 0.0f, false, 1.0f / 30.0f, kRoof);
+    for (int i = 1; i <= 60; i++) b.Update(t, 0.0f, 0.0f, false, 1.0f / 120.0f, kRoof);
+    assert(near(a.Pose().position, b.Pose().position, 1e-3f));
+    assert(near(a.Pose().view_vector, b.Pose().view_vector, 1e-3f));
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -1968,6 +2464,13 @@ int main()
     Test_LandsOnTopFromAbove();
     Test_LandsOnTopFrontalHitIsFalse();
     Test_LandsOnTopLaterallyApart();
+    // Rampas e tetos de trem (4.4)
+    Test_RampHeightUnderFootprint();
+    Test_LandsOnTopBigFall();
+    Test_LandsOnTopToleranceBoundary();
+    Test_LandsOnTopClimbingIn();
+    Test_LandsOnTopEntryBelowRoof();
+    Test_CeilingPenetration();
     // Obstáculos, moedas e game over (2.2)
     Test_EveryChunkHasPassableLane();
     Test_ChunkBordersAllowLaneChange();
@@ -1999,6 +2502,22 @@ int main()
     Test_MovingTrainNoTunneling();
     Test_MovingTrainsSpawnAndStayPassable();
     Test_MovingTrainsDeterministic();
+    // Rampas e andar sobre trens (4.4)
+    Test_RampGeometry();
+    Test_RampLiftsPlayerOntoTrain();
+    Test_JumpOntoTrainRoof();
+    Test_FallOffTrainEnd();
+    Test_FrontalTrainHitIsGameOver();
+    Test_RampNeverKills();
+    Test_JumpFromRoofNotCancelled();
+    Test_RoofLaneChangeToEmptyLaneFalls();
+    Test_RoofLaneChangeToAdjacentTrainStays();
+    Test_RoofRunMaxSpeedBigDt();
+    Test_TunnelCeilingClamp();
+    Test_RampSpawnRules();
+    Test_RampsDontDisturbSpawn();
+    Test_GroundHeightIgnoresJumpArc();
+    Test_CameraFollowsGroundHeight();
     printf("OK\n");
     return 0;
 }

@@ -34,4 +34,12 @@ const float MOVING_TRAIN_CHANCE  = 1.0f / 3.0f; // fração dos trens que nascem
 const float MOVING_TRAIN_WARNING = 3.0f;        // s de aviso visível antes do contato
 const float TRAIN_STOP_GAP       = 0.5f;        // m que o trem deixa de outro obstáculo ao parar
 
+// Rampas e andar sobre os trens (Tarefa 4.4).
+const float RAMP_CHANCE           = 0.5f;  // fração dos trens parados que ganham rampa
+const float RAMP_TUNNEL_CLEARANCE = 20.0f; // m sem túnel depois do fim de um trem com rampa
+// Tolerância (m) de pouso no teto do trem: a base do jogador a até isto
+// abaixo do teto ainda conta como "vindo de cima"; e o trem só mata abaixo de
+// teto - ROOF_TOLERANCE (bater de frente/de lado), nunca quem está em cima.
+const float ROOF_TOLERANCE        = 0.25f;
+
 #endif // _GAME_CONFIG_H

@@ -32,7 +32,10 @@ const float CAMERA_SMOOTHING_RATE  = 6.0f;  // 1/s, em (1 - exp(-rate*dt))
 // atrasado proporcionalmente à velocidade (seriam ~5 m a 30 m/s) e o resultado
 // é exatamente independente do dt para alvos constantes. Trocas de faixa e a
 // entrada/saída do túnel são suaves; a câmera segue só 1/3 do deslocamento
-// lateral do jogador (não "pula" de faixa). A altura do pulo não é seguida.
+// lateral do jogador (não "pula" de faixa). A altura do pulo não é seguida,
+// mas a altura do CHÃO sob o jogador (ground_y: rampa ou teto de trem,
+// Tarefa 4.4) é, também suavizada: em cima do trem a câmera sobe junto e
+// olha para o jogador lá em cima, em vez de para a lateral do trem.
 //
 // Curvas (Tarefa 4.1): a câmera fica SOBRE a pista, no ponto s - recuo, e olha
 // para o ponto da pista em s + CAMERA_LOOK_AHEAD (como um vagão que segue o
@@ -46,10 +49,13 @@ public:
     ThirdPersonCamera();
 
     // Coloca a câmera direto no alvo, sem suavização (início/reinício da corrida).
-    void Snap(const Track& track, float player_s, float player_x, bool in_tunnel);
+    // ground_y: altura do chão sob o jogador (Game::GroundHeight()).
+    void Snap(const Track& track, float player_s, float player_x, bool in_tunnel,
+              float ground_y = 0.0f);
 
     // Aproxima a câmera do alvo de forma suave, proporcional a dt.
-    void Update(const Track& track, float player_s, float player_x, bool in_tunnel, float dt);
+    void Update(const Track& track, float player_s, float player_x, bool in_tunnel, float dt,
+                float ground_y = 0.0f);
 
     CameraPose Pose() const;
 
@@ -65,6 +71,7 @@ private:
     float lateral_;     // deslocamento lateral atual (suavizado)
     float height_;      // altura atual (suavizada)
     float back_;        // recuo atual (suavizado)
+    float ground_;      // altura do chão sob o jogador (suavizada)
     CameraPose pose_;
 };
 

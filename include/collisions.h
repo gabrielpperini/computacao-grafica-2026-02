@@ -31,12 +31,32 @@ bool SphereIntersectsSphere(glm::vec3 c1, float r1, glm::vec3 c2, float r2);
 // (sem tocar em *out_height) se (x, s) está fora da caixa.
 bool RampHeightAt(const AABB& ramp, float x, float s, float* out_height);
 
-// Jogador pousando sobre o teto de um obstáculo (ex.: trem): vindo de cima,
-// ou seja, com a base anterior em ou acima do topo (menos a tolerância) e a
-// base atual no topo ou abaixo dele (mais a tolerância), com sobreposição
-// lateral e em s no quadro atual. Batida frontal (base anterior abaixo do
-// topo) devolve false.
+// Altura da rampa sob a "pegada" (projeção em x e s) da caixa: se a pegada
+// toca a rampa, *out_height = altura do ponto mais alto da rampa sob ela, que
+// é o da frente da pegada (box.max.z, limitado ao fim da rampa), já que a
+// rampa sobe com s. Assim os pés chegam ao topo da rampa (= teto do trem
+// colado nela) no instante em que a frente do jogador chega ao trem. Devolve
+// false (sem tocar em *out_height) se a pegada não toca a rampa.
+bool RampHeightUnder(const AABB& ramp, const AABB& box, float* out_height);
+
+// Sobreposição das pegadas (x e z) de duas caixas, ignorando a altura.
+bool FootprintsOverlap(const AABB& a, const AABB& b);
+
+// Jogador pousando sobre o teto de um obstáculo (ex.: trem): pegada atual
+// sobre o obstáculo, base atual no topo ou abaixo dele (mais a tolerância) e
+// "vindo de cima": a base estava em ou acima do topo (menos a tolerância) no
+// quadro anterior OU no instante em que a pegada do jogador começou a tocar a
+// do obstáculo (interpolado linearmente entre os dois quadros; se já tocava
+// no quadro anterior, é a base anterior). O segundo caso é o de quem sobe
+// pela rampa colada à frente do trem, ou troca de faixa de um teto para o
+// teto vizinho. Batida frontal/lateral (base abaixo do topo ao entrar) devolve
+// false. Sem limite inferior para a base atual: uma queda rápida que atravessa
+// o teto num único quadro ainda é pouso.
 bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
                 const AABB& obstacle, float tolerance);
+
+// Quanto o topo da caixa passou de um teto na altura 'ceiling' (0 se não
+// passou; encostar não conta). Usado para o teto do túnel.
+float CeilingPenetration(const AABB& box, float ceiling);
 
 #endif

@@ -548,10 +548,10 @@ extraído do jogo de referência.
 
 - RAMP sempre colado à frente de um TRAIN estático na mesma faixa. Altura do chão do jogador =
   max(0, `RampHeightAt`, topo de trem se `LandsOnTop`). Cair do fim do trem volta a ter gravidade.
-- [ ] **Passo 1: testes** — `Test_RampLiftsPlayerOntoTrain` (correr pela faixa da rampa: termina
+- [x] **Passo 1: testes** — `Test_RampLiftsPlayerOntoTrain` (correr pela faixa da rampa: termina
   em cima do trem, sem GAME_OVER), `Test_JumpOntoTrainRoof` (pulo a partir da rampa e pouso no
   meio do trem), `Test_FallOffTrainEnd`, `Test_FrontalTrainHitIsGameOver`.
-- [ ] **Passo 2:** implementar; `OK`; rodar; commit `IA: rampas e corrida sobre os trens`.
+- [x] **Passo 2:** implementar; `OK`; rodar; commit `IA: rampas e corrida sobre os trens`.
 
 ---
 
