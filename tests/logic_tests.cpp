@@ -1505,6 +1505,28 @@ void Test_PlayerBoxRollHeight()
     assert(nearf(b.max.y, PLAYER_ROLL_HEIGHT));
 }
 
+// A caixa do jogador acompanha o modelo (Tarefa 7.1a): o personagem tem ~1.07 m
+// de largura com os braços (tronco 0.53 m) e ~0.53 m de profundidade (cabeça)
+// depois da escala para PLAYER_HEIGHT; a caixa não pode morder além disso, ou
+// o jogador morre antes de o modelo encostar no trem.
+void Test_PlayerBoxMatchesModel()
+{
+    assert(PLAYER_HALF_DEPTH >= 0.26f && PLAYER_HALF_DEPTH <= 0.30f);
+    assert(PLAYER_HALF_WIDTH >= 0.26f && PLAYER_HALF_WIDTH <= 0.54f);
+
+    // Trem parado de frente: a morte acontece quando o NARIZ da caixa chega à
+    // frente do trem (no máximo um passo depois), não 13 cm antes.
+    Game g = QuietGame();
+    Obstacle train = g.MakeObstacle(ObstacleType::TRAIN, 0, 26.5f);
+    g.obstacles.push_back(train);
+    const float dt = 1.0f / 240.0f;
+    for (int i = 0; i < 2400 && g.mode == GameMode::PLAYING; ++i)
+        g.Update(dt);
+    assert(g.mode == GameMode::GAME_OVER);
+    const float nose = g.player.s + PLAYER_HALF_DEPTH;
+    assert(nose >= train.box.min.z - 1e-3f && nose <= train.box.min.z + 0.06f);
+}
+
 void Test_HitBarrierGameOver()
 {
     Game g = QuietGame();
@@ -3691,6 +3713,7 @@ int main()
     Test_ObstacleSizeTableIsSourceOfTruth();
     Test_ObstacleExtentsSetter();
     Test_PlayerBoxRollHeight();
+    Test_PlayerBoxMatchesModel();
     Test_HitBarrierGameOver();
     Test_JumpOverLowBarrier();
     Test_RollUnderHighBarrier();

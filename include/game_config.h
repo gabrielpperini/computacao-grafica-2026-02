@@ -14,8 +14,14 @@ const float JUMP_VELOCITY       = 11.0f;  // ~2 m de altura
 const float ROLL_DURATION       = 0.6f;   // s
 const float PLAYER_HEIGHT       = 1.8f;
 const float PLAYER_ROLL_HEIGHT  = 0.8f;
+// Caixa do jogador x modelo (Kenney character-b escalado para PLAYER_HEIGHT):
+// tronco 0.53 m de largura, com os braços 1.07 m, e 0.53 m de profundidade.
+// A meia-largura fica entre o tronco (0.27) e a ponta dos braços (0.53): numa
+// raspada lateral num trem o braço pode entrar ~13 cm na parede antes da morte
+// (aceito: o braço balança). A meia-profundidade casa com o modelo, para a
+// morte ocorrer quando o personagem encosta, não antes.
 const float PLAYER_HALF_WIDTH   = 0.4f;
-const float PLAYER_HALF_DEPTH   = 0.4f;
+const float PLAYER_HALF_DEPTH   = 0.27f;
 const float MAX_DT              = 0.05f;  // s
 const float CHUNK_LENGTH        = 30.0f;  // m por bloco de spawn
 const float SPAWN_AHEAD         = 150.0f; // m gerados à frente do jogador

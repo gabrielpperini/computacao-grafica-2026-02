@@ -191,7 +191,7 @@ void Game::Update(float dt)
 
     // Colisões com a caixa VARRIDA: a que envolve as caixas do jogador antes
     // e depois do passo. Na velocidade máxima com dt = MAX_DT o jogador anda
-    // 1.5 m por passo, mais que a própria profundidade (0.8 m) somada à de uma
+    // 1.5 m por passo, mais que a própria profundidade (0.54 m) somada à de uma
     // barreira (0.3 m); testando só a caixa final ele "atravessaria" a
     // barreira sem colidir (tunneling).
     AABB now = PlayerBox();
@@ -562,7 +562,7 @@ void Game::MoveVertically(const AABB& before, float dt)
 float Game::SupportHeight(const AABB& before, const AABB& now, bool include_roofs) const
 {
     // Rampas: pegada VARRIDA no passo (antes ∪ agora). A 30 m/s com
-    // dt = MAX_DT o jogador anda 1.5 m, e a pegada (0.8 m) pode sair inteira
+    // dt = MAX_DT o jogador anda 1.5 m, e a pegada (0.54 m) pode sair inteira
     // do fim da rampa num único passo, com a base anterior ainda abaixo de
     // teto - ROOF_TOLERANCE: sem isto ele não chegaria ao teto do trem (e
     // bateria na frente dele). A rampa varrida o leva até a altura em que a
