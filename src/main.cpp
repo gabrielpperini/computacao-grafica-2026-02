@@ -443,6 +443,8 @@ GLint g_num_tunnels_uniform;
 GLint g_tunnel_start_uniform;
 GLint g_tunnel_forward_uniform;
 GLint g_tunnel_shape_uniform;
+GLint g_fog_color_uniform;
+GLint g_fog_params_uniform;
 
 // Cena: sol (luz direcional) e luzes pontuais dos postes.
 // SUN_DIRECTION aponta da superfície PARA o sol: de cima, um pouco de lado e
@@ -467,6 +469,12 @@ const int MAX_SHADER_TUNNELS = 4;
 // volume, iluminada pelo sol, sem "piscar" por erro de arredondamento; o vão
 // dos portais (antes um anel claro de 1 m) fica na sombra.
 const float TUNNEL_SHADOW_PORTAL_EXTENSION = TUNNEL_PORTAL_DEPTH - 0.05f; // m
+// Cor do céu: fundo (glClearColor) e cor da névoa, em espaço de exibição.
+const glm::vec3 SKY_COLOR = glm::vec3(0.53f, 0.75f, 0.95f);
+// Névoa por distância da câmera: começa em FOG_START e cobre tudo em FOG_END,
+// antes do fim do cenário gerado (SPAWN_AHEAD = 150 m à frente do jogador).
+const float FOG_START = 90.0f;  // m
+const float FOG_END   = 145.0f; // m
 const glm::vec3 GRAVEL_TINT      = glm::vec3(0.95f, 0.90f, 0.85f); // brita um pouco mais quente
 
 // Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
@@ -761,7 +769,7 @@ int main(int argc, char* argv[])
         // Conversaremos sobre sistemas de cores nas aulas de Modelos de Iluminação.
         //
         //           R     G     B     A
-        glClearColor(0.53f, 0.75f, 0.95f, 1.0f);
+        glClearColor(SKY_COLOR.x, SKY_COLOR.y, SKY_COLOR.z, 1.0f);
 
         // "Pintamos" todos os pixels do framebuffer com a cor definida acima,
         // e também resetamos todos os pixels do Z-buffer (depth buffer).
@@ -874,6 +882,11 @@ int main(int argc, char* argv[])
         glUniform4fv(g_tunnel_start_uniform, MAX_SHADER_TUNNELS, tun_start);
         glUniform4fv(g_tunnel_forward_uniform, MAX_SHADER_TUNNELS, tun_fwd);
         glUniform4f(g_tunnel_shape_uniform, mid_wall, TUNNEL_SPRING_HEIGHT, mid_wall, TUNNEL_INSIDE_AMBIENT);
+
+        // Névoa: cor do céu, de FOG_START a FOG_END m da câmera (com a câmera
+        // no túnel, os pontos dentro dele ficam sem névoa; veja o shader).
+        glUniform3f(g_fog_color_uniform, SKY_COLOR.x, SKY_COLOR.y, SKY_COLOR.z);
+        glUniform3f(g_fog_params_uniform, FOG_START, FOG_END, g_TunnelDimming);
 
         // Túneis: instâncias do módulo de abóbada (a cada 4 m) e dos dois
         // portais, mais as luminárias emissivas do teto. São desenhados ANTES
@@ -2172,6 +2185,8 @@ void LoadShadersFromFiles()
     g_tunnel_start_uniform         = glGetUniformLocation(g_GpuProgramID, "tunnel_start");
     g_tunnel_forward_uniform       = glGetUniformLocation(g_GpuProgramID, "tunnel_forward");
     g_tunnel_shape_uniform         = glGetUniformLocation(g_GpuProgramID, "tunnel_shape");
+    g_fog_color_uniform            = glGetUniformLocation(g_GpuProgramID, "fog_color");
+    g_fog_params_uniform           = glGetUniformLocation(g_GpuProgramID, "fog_params");
 
     // Variável em "shader_fragment.glsl" para acesso da textura do objeto (unidade 0)
     glUseProgram(g_GpuProgramID);

@@ -58,7 +58,8 @@ uniform float material_q;     // expoente especular q do objeto atual
 // um trecho reto: começa em tunnel_start[i].xyz (ponto da pista, no chão, na
 // face de fora do portal de entrada), segue tunnel_forward[i].xyz (unitário,
 // horizontal) por tunnel_start[i].w metros (até a face de fora do portal de
-// saída: o vão dos portais também fica na sombra, Tarefa 7.1b). Seção: tunnel_shape.x = meia largura e
+// saída: o vão dos portais também fica na sombra, Tarefa 7.1b). Seção:
+// tunnel_shape.x = meia largura e
 // tunnel_shape.z = raio da abóbada, ambos medidos até o MEIO da parede (a face
 // interna fica dentro, a externa fora); tunnel_shape.y = altura das paredes
 // retas; tunnel_shape.w = fração do ambiente que resta lá dentro.

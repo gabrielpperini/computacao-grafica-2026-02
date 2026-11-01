@@ -102,7 +102,8 @@ uniform float material_q;     // expoente especular q do objeto atual
 // um trecho reto: começa em tunnel_start[i].xyz (ponto da pista, no chão, na
 // face de fora do portal de entrada), segue tunnel_forward[i].xyz (unitário,
 // horizontal) por tunnel_start[i].w metros (até a face de fora do portal de
-// saída: o vão dos portais também fica na sombra, Tarefa 7.1b). Seção: tunnel_shape.x = meia largura e
+// saída: o vão dos portais também fica na sombra, Tarefa 7.1b). Seção:
+// tunnel_shape.x = meia largura e
 // tunnel_shape.z = raio da abóbada, ambos medidos até o MEIO da parede (a face
 // interna fica dentro, a externa fora); tunnel_shape.y = altura das paredes
 // retas; tunnel_shape.w = fração do ambiente que resta lá dentro.
@@ -179,6 +180,15 @@ out vec4 color;
 // Partículas de coleta (Tarefa 6.1; object_id == PARTICLE): cor (uniform
 // material_kd_tint) e alfa global (particle_alpha = life/max_life da partícula).
 uniform float particle_alpha;
+
+// Névoa por distância (Tarefa 7.1b): o cenário só existe até ~150 m à frente;
+// a névoa leva a cor do objeto para a do céu (fog_color = cor de fundo do
+// glClearColor, já em espaço de exibição) entre fog_params.x e fog_params.y
+// metros da câmera, escondendo o fim do cenário. fog_params.z = rampa da câmera
+// dentro do túnel (g_TunnelDimming): com ela lá dentro, os pontos também dentro
+// do túnel não recebem névoa (o ar entre eles é o do túnel, escuro).
+uniform vec3 fog_color;
+uniform vec3 fog_params;
 
 void main()
 {
@@ -330,5 +340,12 @@ void main()
     // Cor final com correção gamma, considerando monitor sRGB.
     // Veja https://en.wikipedia.org/w/index.php?title=Gamma_correction&oldid=751281772#Windows.2C_Mac.2C_sRGB_and_TV.2Fvideo_standard_gammas
     color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0,1.0,1.0)/2.2);
+
+    // Névoa (depois da correção gamma: fog_color está no mesmo espaço do
+    // glClearColor, então no fim da rampa o objeto some exatamente no céu).
+    float fog = smoothstep(fog_params.x, fog_params.y, vlen);
+    if ( fog > 0.0 && fog_params.z > 0.0 )
+        fog *= mix(1.0, SkyVisibility(p.xyz), fog_params.z);
+    color.rgb = mix(color.rgb, fog_color, fog);
 } 
 
