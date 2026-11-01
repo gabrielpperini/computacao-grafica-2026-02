@@ -1520,6 +1520,50 @@ void Test_RampSideBlocks()
                            Box(-0.2f, 0, 14, 0.6f, 1.8f, 14.8f), 0.4f, &x));
 }
 
+// Revisão final, item 6: testes que estavam escritos dentro de game.cpp.
+// Em pé sobre o teto: pegada sobre a caixa e base no topo (com tolerância).
+void Test_StandsOnTop()
+{
+    AABB train = Box(-1.1f, 0, 10, 1.1f, 3.2f, 23);
+    assert(StandsOnTop(Box(-0.4f, 3.2f, 15, 0.4f, 5.0f, 15.54f), train, 0.25f));  // no teto
+    assert(StandsOnTop(Box(-0.4f, 2.95f, 15, 0.4f, 4.75f, 15.54f), train, 0.25f)); // limite da tolerância
+    assert(!StandsOnTop(Box(-0.4f, 2.9f, 15, 0.4f, 4.7f, 15.54f), train, 0.25f));  // abaixo: batida
+    assert(StandsOnTop(Box(-0.4f, 6.0f, 15, 0.4f, 7.8f, 15.54f), train, 0.25f));   // acima também
+    assert(!StandsOnTop(Box(1.2f, 3.2f, 15, 2.0f, 5.0f, 15.54f), train, 0.25f));   // faixa vizinha
+    assert(!StandsOnTop(Box(-0.4f, 3.2f, 23.1f, 0.4f, 5.0f, 23.6f), train, 0.25f)); // depois do fim
+    assert(StandsOnTop(Box(1.1f, 3.2f, 15, 1.9f, 5.0f, 15.54f), train, 0.25f));    // borda encosta
+}
+
+// Parada do trem móvel (anda para s menor): só obstáculos inteiros à frente
+// dele (no sentido do movimento) e na mesma faixa (pegadas em x se
+// sobrepõem) limitam; o limite é a traseira do outro + a folga.
+void Test_StopBehindAlongZ()
+{
+    AABB train = Box(-1.1f, 0, 100, 1.1f, 3.2f, 113);
+    float z = -1.0f;
+    assert(StopBehindAlongZ(train, Box(-1.0f, 0, 60, 1.0f, 0.9f, 60.3f), 0.5f, &z) && nearf(z, 60.8f));
+    assert(StopBehindAlongZ(train, Box(-1.1f, 0, 92, 1.1f, 3.2f, 100.0f), 0.5f, &z) && nearf(z, 100.5f));
+    assert(!StopBehindAlongZ(train, Box(1.4f, 0, 60, 3.6f, 3.2f, 73), 0.5f, &z));  // outra faixa
+    assert(!StopBehindAlongZ(train, Box(-1.0f, 0, 120, 1.0f, 0.9f, 120.3f), 0.5f, &z)); // atrás dele
+    assert(!StopBehindAlongZ(train, Box(-1.0f, 0, 99, 1.0f, 0.9f, 101), 0.5f, &z)); // já sobreposto
+}
+
+// Sobreposição ao longo de s usada no spawn: intervalo [s0, s1] x caixa com
+// margem (fechado) e ponto x caixa com margem (aberto: encostar na borda
+// da margem não conta).
+void Test_AlongZProximity()
+{
+    AABB b = Box(-1, 0, 10, 1, 3, 20);
+    assert(SpanTouchesBoxAlongZ(8.5f, 9.5f, b, 0.5f));    // encosta na margem
+    assert(!SpanTouchesBoxAlongZ(8.0f, 9.4f, b, 0.5f));
+    assert(SpanTouchesBoxAlongZ(15.0f, 16.0f, b, 0.0f));
+    assert(SpanTouchesBoxAlongZ(20.5f, 21.0f, b, 0.5f));
+    assert(!SpanTouchesBoxAlongZ(20.6f, 21.0f, b, 0.5f));
+    assert(PointNearBoxAlongZ(9.0f, b, 1.5f) && PointNearBoxAlongZ(21.0f, b, 1.5f));
+    assert(!PointNearBoxAlongZ(8.5f, b, 1.5f) && !PointNearBoxAlongZ(21.5f, b, 1.5f)); // na borda: não
+    assert(!PointNearBoxAlongZ(5.0f, b, 1.5f));
+}
+
 // Teto (do túnel): quanto a caixa passou dele.
 void Test_CeilingPenetration()
 {
@@ -4215,6 +4259,9 @@ int main()
     Test_LandsOnTopEntryBelowRoof();
     Test_CeilingPenetration();
     Test_RampSideBlocks();
+    Test_StandsOnTop();
+    Test_StopBehindAlongZ();
+    Test_AlongZProximity();
     // Obstáculos, moedas e game over (2.2)
     Test_EveryChunkHasPassableLane();
     Test_ChunkBordersAllowLaneChange();

@@ -79,6 +79,26 @@ bool FootprintsOverlap(const AABB& a, const AABB& b);
 bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
                 const AABB& obstacle, float tolerance);
 
+// Jogador EM PÉ sobre o teto de um obstáculo (trem): pegada sobre ele e base
+// no topo ou acima (menos a tolerância). Usado (com o jogador apoiado) para o
+// trem não matar quem está em cima dele, qualquer que seja a fase do passo, e
+// para a altura do chão sob o jogador (câmera). Revisão final, item 6.
+bool StandsOnTop(const AABB& player, const AABB& obstacle, float tolerance);
+
+// Parada de uma caixa que anda para s MENOR (trem móvel vindo na direção do
+// jogador): se 'other' está na mesma faixa (as pegadas em x se sobrepõem) e
+// inteiro à frente dela no sentido do movimento (other.max.z <= mover.min.z,
+// com 1 mm de tolerância), devolve true e *stop_z = other.max.z + gap: a ponta
+// dianteira (min.z) do 'mover' não pode passar daí. Revisão final, item 6.
+bool StopBehindAlongZ(const AABB& mover, const AABB& other, float gap, float* stop_z);
+
+// Proximidade ao longo de s (z) usada no spawn (Revisão final, item 6):
+// o intervalo [s0, s1] encosta na caixa estendida de 'margin' para os dois
+// lados em z (fechado) ...
+bool SpanTouchesBoxAlongZ(float s0, float s1, const AABB& box, float margin);
+// ... e o ponto s está estritamente dentro dela (aberto: na borda, não).
+bool PointNearBoxAlongZ(float s, const AABB& box, float margin);
+
 // Quanto o topo da caixa passou de um teto na altura 'ceiling' (0 se não
 // passou; encostar não conta). Usado para o teto do túnel.
 float CeilingPenetration(const AABB& box, float ceiling);

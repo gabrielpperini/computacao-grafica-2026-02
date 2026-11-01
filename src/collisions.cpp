@@ -16,6 +16,13 @@
 //     (PointInsideTunnel), para escurecer o sol/céu só dentro dele;
 //   - ímã: esfera de alcance do jogador x esfera da moeda -> a moeda é atraída
 //     (SphereIntersectsSphere).
+//   - em pé sobre o teto do trem (StandsOnTop): o trem não mata quem está em
+//     cima dele, e o teto vira o chão da câmera;
+//   - trem móvel x obstáculo à frente na mesma faixa (StopBehindAlongZ): onde
+//     ele para;
+//   - spawn: moeda/power-up/moeda do porco x obstáculo ao longo de s
+//     (SpanTouchesBoxAlongZ, PointNearBoxAlongZ), para nada nascer dentro ou
+//     colado num obstáculo.
 // Tudo em coordenadas de pista (x lateral, y altura, z = s), sem OpenGL.
 
 #include "collisions.h"
@@ -166,6 +173,31 @@ bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
     float t = std::min(std::max(std::max(tx, tz), 0.0f), 1.0f);
     float base = player_prev.min.y + t * (player_now.min.y - player_prev.min.y);
     return base >= roof - tolerance;
+}
+
+bool StandsOnTop(const AABB& player, const AABB& obstacle, float tolerance)
+{
+    return FootprintsOverlap(player, obstacle) && player.min.y >= obstacle.max.y - tolerance;
+}
+
+bool StopBehindAlongZ(const AABB& mover, const AABB& other, float gap, float* stop_z)
+{
+    const bool same_lane = mover.min.x <= other.max.x && mover.max.x >= other.min.x;
+    if (!same_lane || other.max.z > mover.min.z + 1e-3f)
+        return false;
+    if (stop_z)
+        *stop_z = other.max.z + gap;
+    return true;
+}
+
+bool SpanTouchesBoxAlongZ(float s0, float s1, const AABB& box, float margin)
+{
+    return s1 >= box.min.z - margin && s0 <= box.max.z + margin;
+}
+
+bool PointNearBoxAlongZ(float s, const AABB& box, float margin)
+{
+    return s > box.min.z - margin && s < box.max.z + margin;
 }
 
 float CeilingPenetration(const AABB& box, float ceiling)

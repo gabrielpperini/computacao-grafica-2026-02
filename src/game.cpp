@@ -230,8 +230,7 @@ void Game::Update(float dt)
             continue;
         // Em pé (apoiado na rampa ou num teto) na altura do teto, sobre a
         // pegada do trem: está em cima dele, qualquer que seja a fase do passo.
-        if (o.type == ObstacleType::TRAIN && player.grounded &&
-            now.min.y >= o.box.max.y - ROOF_TOLERANCE && FootprintsOverlap(now, o.box))
+        if (o.type == ObstacleType::TRAIN && player.grounded && StandsOnTop(now, o.box, ROOF_TOLERANCE))
             continue;
         int n = ObstacleParts(o, parts);
         if (o.type == ObstacleType::TRAIN)
@@ -404,7 +403,7 @@ void Game::DropPigCoin()
     AABB parts[3];
     for (size_t i = 0; i < obstacles.size(); ++i) {
         const Obstacle& o = obstacles[i];
-        if (o.box.max.z < pos.z - 2.0f * COIN_RADIUS || o.box.min.z > pos.z + 2.0f * COIN_RADIUS)
+        if (!SpanTouchesBoxAlongZ(pos.z - 2.0f * COIN_RADIUS, pos.z + 2.0f * COIN_RADIUS, o.box, 0.0f))
             continue;
         const int n = ObstacleParts(o, parts);
         for (int k = 0; k < n; ++k)
@@ -607,8 +606,7 @@ float Game::GroundHeight() const
         if (o.type == ObstacleType::RAMP && RampHeightUnder(o.box, p, &h) &&
             h <= player.y + ROOF_TOLERANCE)
             g = std::max(g, h);
-        else if (o.type == ObstacleType::TRAIN && FootprintsOverlap(p, o.box) &&
-                 o.box.max.y <= player.y + ROOF_TOLERANCE)
+        else if (o.type == ObstacleType::TRAIN && StandsOnTop(p, o.box, ROOF_TOLERANCE))
             g = std::max(g, o.box.max.y);
     }
     return g;
@@ -720,9 +718,9 @@ void Game::MoveObstacles(float dt)
 
         float limit = o.min_s;
         for (size_t j = 0; j < obstacles.size(); ++j) {
-            const Obstacle& other = obstacles[j];
-            if (j != i && other.lane == o.lane && other.box.max.z <= o.box.min.z + 1e-3f)
-                limit = std::max(limit, other.box.max.z + TRAIN_STOP_GAP);
+            float stop_z;
+            if (j != i && StopBehindAlongZ(o.box, obstacles[j].box, TRAIN_STOP_GAP, &stop_z))
+                limit = std::max(limit, stop_z);
         }
 
         float target = o.box.min.z + o.velocity * dt;
@@ -921,8 +919,7 @@ void Game::GenerateChunk(int index)
         bool blocked = false;
         for (size_t k = first_new; k < obstacles.size(); k++) {
             const Obstacle& o = obstacles[k];
-            if (o.lane == safe && s + COIN_RADIUS >= o.box.min.z - 0.5f &&
-                s - COIN_RADIUS <= o.box.max.z + 0.5f)
+            if (o.lane == safe && SpanTouchesBoxAlongZ(s - COIN_RADIUS, s + COIN_RADIUS, o.box, 0.5f))
                 blocked = true;
         }
         if (!blocked) {
@@ -975,7 +972,7 @@ void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_c
         bool free = true;
         for (size_t i = first_new; i < obstacles.size() && free; ++i) {
             const Obstacle& o = obstacles[i];
-            if (o.lane == safe && s > o.box.min.z - POWERUP_CLEARANCE && s < o.box.max.z + POWERUP_CLEARANCE)
+            if (o.lane == safe && PointNearBoxAlongZ(s, o.box, POWERUP_CLEARANCE))
                 free = false;
         }
         for (size_t i = first_coin; i < coins.size() && free; ++i)
