@@ -11,6 +11,11 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
+// Posição da câmera em coordenadas de mundo (w = 1), calculada uma vez por
+// quadro no C++ (Revisão final, item 4: antes era inverse(view) por vértice).
+// Declarada também em shader_fragment.glsl.
+uniform vec4 camera_position;
+
 // Atributos de vértice que serão gerados como saída ("out") pelo Vertex Shader.
 // ** Estes serão interpolados pelo rasterizador! ** gerando, assim, valores
 // para cada fragmento, os quais serão recebidos como entrada pelo Fragment
@@ -185,7 +190,6 @@ void main()
         float nl = length(n);
         n = (nl > 1e-6) ? n / nl : vec3(0.0, 1.0, 0.0);
 
-        vec4 camera_position = inverse(view) * vec4(0.0, 0.0, 0.0, 1.0);
         vec3 v = camera_position.xyz - position_world.xyz;
         float vl = length(v);
         v = (vl > 1e-6) ? v / vl : vec3(0.0, 0.0, 1.0);

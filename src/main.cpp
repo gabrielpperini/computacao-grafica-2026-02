@@ -451,6 +451,7 @@ bool g_ShowInfoText = false;
 GLuint g_GpuProgramID = 0;
 GLint g_model_uniform;
 GLint g_view_uniform;
+GLint g_camera_position_uniform; // posição da câmera (mundo), para o vetor v de Blinn-Phong e a névoa
 GLint g_projection_uniform;
 GLint g_object_id_uniform;
 GLint g_uv_mode_uniform;
@@ -847,6 +848,10 @@ int main(int argc, char* argv[])
         // (GPU). Veja o arquivo "shader_vertex.glsl", onde estas são
         // efetivamente aplicadas em todos os pontos.
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
+        // Posição da câmera em coordenadas de mundo (Revisão final, item 4):
+        // antes os shaders a recalculavam com inverse(view) em cada vértice
+        // (Gouraud) e em cada fragmento, caro numa GPU fraca.
+        glUniform4f(g_camera_position_uniform, pose.position.x, pose.position.y, pose.position.z, 1.0f);
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
         // Luzes: sol + as MAX_POINT_LIGHTS lâmpadas mais próximas do jogador
@@ -2305,6 +2310,7 @@ void LoadShadersFromFiles()
     // (GPU)! Veja arquivo "shader_vertex.glsl" e "shader_fragment.glsl".
     g_model_uniform      = glGetUniformLocation(g_GpuProgramID, "model"); // Variável da matriz "model"
     g_view_uniform       = glGetUniformLocation(g_GpuProgramID, "view"); // Variável da matriz "view" em shader_vertex.glsl
+    g_camera_position_uniform = glGetUniformLocation(g_GpuProgramID, "camera_position"); // nos dois shaders
     g_projection_uniform = glGetUniformLocation(g_GpuProgramID, "projection"); // Variável da matriz "projection" em shader_vertex.glsl
     g_object_id_uniform  = glGetUniformLocation(g_GpuProgramID, "object_id"); // Variável "object_id" em shader_fragment.glsl
     g_uv_mode_uniform    = glGetUniformLocation(g_GpuProgramID, "uv_mode"); // Variável "uv_mode" em shader_fragment.glsl

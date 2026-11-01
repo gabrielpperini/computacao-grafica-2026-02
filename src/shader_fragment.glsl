@@ -21,6 +21,11 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
+// Posição da câmera em coordenadas de mundo (w = 1), calculada uma vez por
+// quadro no C++ (Revisão final, item 4: antes era inverse(view) por
+// fragmento). Declarada também em shader_vertex.glsl.
+uniform vec4 camera_position;
+
 // Identificadores de objeto (uniform "object_id") e modos de UV (uniform
 // "uv_mode"). ATENÇÃO: espelham include/object_ids.h; manter em sincronia.
 const int PLAYER             = 0;
@@ -207,11 +212,6 @@ void main()
         color.a = glow * particle_alpha;
         return;
     }
-
-    // Obtemos a posição da câmera utilizando a inversa da matriz que define o
-    // sistema de coordenadas da câmera.
-    vec4 origin = vec4(0.0, 0.0, 0.0, 1.0);
-    vec4 camera_position = inverse(view) * origin;
 
     // O fragmento atual é coberto por um ponto que percente à superfície de um
     // dos objetos virtuais da cena. Este ponto, p, possui uma posição no
