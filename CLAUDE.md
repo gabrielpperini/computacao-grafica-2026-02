@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Contexto
 
 Trabalho final de **INF01047 — Computação Gráfica e Visualização I (INF/UFRGS)**, feito em dupla.
-O código base é uma aplicação OpenGL 3.3 core profile em C++11 (GLFW + GLAD + GLM), que carrega
-modelos `.obj` via tinyobjloader e texturas via stb_image.
+O projeto é o jogo *Rail Rush* (corredor infinito sobre trilhos, `SPEC.md`), uma aplicação OpenGL 3.3
+core profile em C++11 (GLFW + GLAD + GLM + Dear ImGui), que carrega modelos `.obj` via tinyobjloader
+e texturas via stb_image. Estado em 2026-11-01 (fim da Tarefa 7.2): jogo completo e polido; falta só
+a entrega humana (Tarefa 7.3: `README.md`, vídeo, metadados).
 
 O enunciado completo está em `ordem-trabalho.md` (versão 2026-09-16). **Em caso de conflito entre
 este arquivo e `ordem-trabalho.md`, o enunciado prevalece** — várias regras abaixo são
@@ -82,8 +84,8 @@ Use sempre os helpers de `include/matrices.h`: `Matrix_Translate`, `Matrix_Scale
 ### 7. Testes de colisão em arquivo separado
 
 Os testes de intersecção **devem** ficar em **`src/collisions.cpp`** (nome exigido pelo
-enunciado, é critério de avaliação). Ainda não existe — ao criá-lo, registre-o nos dois builds
-(veja "Ao adicionar um novo arquivo `.cpp`").
+enunciado, é critério de avaliação). Ele existe desde a Tarefa 2.1 e já está nos dois builds; todo
+teste de intersecção novo vai para ele (veja "Ao adicionar um novo arquivo `.cpp`" se criar outro).
 
 ### 8. Histórico do Git
 
@@ -120,14 +122,14 @@ precisar divergir do plano, atualize o plano junto.
 
 ## Requisitos técnicos e estado atual do código base
 
-Checklist de avaliação, com o que o código base já entrega. **Nada marcado como "falta" está
-implementado** — o base é só um visualizador.
+Checklist de avaliação. **Todos os requisitos estão atendidos (✅)**; a coluna "Estado" diz onde cada um
+mora no código e como é verificado.
 
 | Requisito | Estado |
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
 | Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k), túnel (módulo de abóbada e portal com moldura) e rampa (estrutura metálica + tábuas) |
-| Interação por mouse **e** teclado | ✅ teclado: controles do jogador em `HandleKey()`; mouse: na câmera livre (Tarefa 5.1, `C`) o cursor é capturado e o movimento gira o olhar (`CursorPosCallback`). O mouse não faz nada fora da câmera livre (botões clicáveis virão com a GUI da Tarefa 6.2) |
+| Interação por mouse **e** teclado | ✅ teclado: controles do jogador em `HandleKey()`; mouse: na câmera livre (Tarefa 5.1, `C`) o cursor é capturado e o movimento gira o olhar (`CursorPosCallback`). Fora da câmera livre o mouse clica nos botões da GUI do menu, da pausa e do game over (Tarefa 6.2, ImGui) |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ✅ (1) 3ª pessoa look-at (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); (2) câmera livre "fly" (`FreeCamera`, Tarefa 5.1): `C` alterna `PLAYING` ↔ `FREE_CAMERA` com o jogo congelado, WASD/Espaço/Shift voam a 10 m/s, o mouse gira (pitch ±89°) |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
@@ -135,7 +137,7 @@ implementado** — o base é só um visualizador.
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ✅ `include/bezier.h`, `src/bezier.cpp`; porco voador do cofrinho (`Game::pig`, Tarefa 5.3) |
-| Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (~1 em 3) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
+| Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (1/3 de chance por reta elegível) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` e `Game::Update()` usam `ClampFrameDt()` (`game.cpp`: NaN/negativo/zero → 0, o resto limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
 | Rampas para subir nos trens (SPEC) | ✅ Tarefa 4.4: metade dos trens parados ganha uma rampa (8 m, 0 → 3.2 m) colada à frente; o jogador sobe correndo, anda no teto, pula de um teto para outro ou troca de faixa para o teto vizinho, e cai no fim do trem ou ao trocar para uma faixa vazia; a câmera sobe junto com o chão (não com o pulo) (veja "Rampas e tetos") |
@@ -160,6 +162,13 @@ apresentação, prefira o Release. Limitações conhecidas: objetos do cenário 
 só existem em ≈ −20…+150 m do jogador (na câmera livre, voando para longe, só sobra o chão);
 o vão entre os dormentes de faixas vizinhas aparece como uma linha de brita contínua quando a câmera
 fica alinhada com ele (geometria, não é Z-fighting).
+
+**Builds e testes verificados (Tarefa 7.2):** Windows (MinGW UCRT, Debug e Release, `-G Ninja`, build limpo
+sem warnings do nosso código) e Linux (Ubuntu 24.04 em Docker: `make`, `cmake --build`, `logic_tests`; o
+binário `main` linka com `lib-linux/libglfw3.a`). **macOS nunca foi testado** (não há macOS disponível): só
+se conferiu que a lista de fontes e as flags do `Makefile.macOS` batem com o `CMakeLists.txt` e que o mesmo
+comando compila no Linux (sem warnings; o binário rodou o E2E `smoke`) trocando `-framework OpenGL` por `-lGL`. MSVC (`lib-vc2022/`) também não foi testado.
+Apt/winget/CMake exigidos estão em `COMPILACAO.md`.
 
 **Resto do laboratório anterior, sem efeito:** `src/buildtriangles.cpp` não é compilado por
 nenhum build. (As variáveis `g_AngleX/Y/Z`, `g_ForearmAngle*` e `g_TorsoPosition*` e as teclas
@@ -195,10 +204,11 @@ make run
 
 **Windows**: só via CMake/VSCode com MinGW ou MSVC — o `CMakeLists.txt` detecta a toolchain e
 escolhe o `libglfw3.a`/`glfw3.lib` correto dentro de `lib-mingw-32/`, `lib-mingw-64/`,
-`lib-ucrt-64/` ou `lib-vc2022/`. Detalhes de setup em `COMPILACAO.md`. Build Release separado
-(medição de desempenho): `cmake -G Ninja -B build-release -S . -DCMAKE_BUILD_TYPE=Release && cmake --build
-build-release` → `bin/Release/` (`build-release/` está no `.gitignore`; o `run_e2e.sh` usa `bin/Debug`,
-mas `cd bin/Release && ./main.exe --autotest <cenario>` funciona).
+`lib-ucrt-64/` ou `lib-vc2022/`. Detalhes de setup em `COMPILACAO.md` (caminho testado: WinLibs MinGW UCRT
+via `winget`, que traz g++, CMake e Ninja). Build Release separado (medição e apresentação):
+`cmake -G Ninja -B build-release -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build-release` →
+`bin/Release/` (`build-release/` está no `.gitignore`). `bash tests/run_e2e.sh` usa `bin/Debug`; para o
+Release, `E2E_BIN_DIR=bin/Release bash tests/run_e2e.sh`.
 
 O `README.md` da entrega final precisa explicar todos os passos de compilação e execução, e o
 critério "facilidade de compilação e execução, com instruções corretas e reproduzíveis" é
@@ -264,7 +274,10 @@ janela para 640x400 e 480x270 com "Controles" aberto: botões inteiros na tela, 
 trilhos, borda do leito, rampa, barreira, teto do trem, portal, chão e parede do túnel, prédios e
 terreno numa curva, portal de saída —, levando `g_Game.player.s` junto; uma foto por pose para inspeção)
 e `perf_heavy` (túnel + trens + moedas + ímã + porco + 80 partículas por quadro; imprime
-`E2E perf_heavy: ... media ... fps, 1% mais lento ...` com o tempo de relógio por quadro).
+`E2E perf_heavy: ... media ... fps, 1% mais lento ...` com o tempo de relógio por quadro; desde a Tarefa 7.2
+**falha se a média passar de 16 ms** — `PERF_MAX_AVG_MS`, vale também no Debug, onde mede ~6.7 ms na GTX 1070).
+`run_e2e.sh` roda tudo em ~10 min no Windows (o `marathon` sozinho leva ~30 s) e, se o comando `timeout` não existir
+(macOS padrão), roda os cenários sem limite de tempo (usa `gtimeout` se houver).
 **Não fixe valores de s ligados
 à semente**: os cenários de curva/túnel acham o segmento com `FindFirstSegment()` (no `setup`, ou
 numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do comprimento).
@@ -287,11 +300,30 @@ executável `main` (não do `logic_tests`); no `Makefile.macOS` estão na mesma 
 
 ## Arquitetura
 
-`src/main.cpp` (~3100 linhas) cuida de janela, shaders, texturas, VAOs, desenho, callbacks e GUI. A
+**Mapa dos módulos** (sem GL = testado por `tests/logic_tests.cpp`, que é o alvo CMake `logic_tests`):
+
+| Arquivo | Papel | GL? |
+|---|---|---|
+| `include/game_config.h` | constantes de gameplay | não |
+| `src/collisions.cpp` | todos os testes de intersecção (AABB, esfera, rampa, pouso, varredura, túnel) | não |
+| `src/bezier.cpp` | Bézier cúbica e tangente (porco do cofrinho) | não |
+| `src/track.cpp` | segmentos reta/curva/túnel, `FrameAt(s)`, faixas de malha do chão | não |
+| `src/game.cpp` | estados, jogador, spawn, pontuação, power-ups, porco | não |
+| `src/camera.cpp` | câmera em 3ª pessoa e câmera livre | não |
+| `src/scenery.cpp` | prédios, postes, luzes, túneis visíveis, faixas de chão/trilhos | não |
+| `src/particles.cpp` | pool de partículas (extra obrigatório) | não |
+| `src/main.cpp` | janela, shaders, texturas, VAOs, desenho, callbacks, GUI (ImGui) | sim |
+| `src/autotest.cpp` | harness E2E (`--autotest`) | sim |
+| `src/shader_vertex.glsl`, `src/shader_fragment.glsl` | Blinn-Phong (Phong e Gouraud), UV, névoa | sim |
+
+**Como testar:** `logic_tests` (rápido, sem janela) e `bash tests/run_e2e.sh` (cenários com janela real e
+GPU); detalhes em "Build e execução" e em `COMPILACAO.md`.
+
+`src/main.cpp` (~3000 linhas) cuida de janela, shaders, texturas, VAOs, desenho, callbacks e GUI. A
 lógica sem OpenGL fica em módulos testados por `tests/logic_tests.cpp`: `track.cpp` (pista e
 referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras, spawn de obstáculos/moedas por
 chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp` (todos os testes
-de intersecção),
+de intersecção), `bezier.cpp` (Bézier cúbica), `particles.cpp` (pool de partículas),
 `camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
 `scenery.cpp` (faixas de chão/dormentes/trilhos, prédios, postes e peças/lâmpadas dos túneis do
 trecho visível `[s-20, s+150]`, sem prédios/postes junto aos túneis; as faixas começam na grade de 1 m em s para o chão facetado das curvas não
@@ -560,7 +592,7 @@ do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição)
 `A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; `P` ou `ESC` pausam e
 continuam (**`ESC` não fecha mais o programa**: sair é pelo botão "Sair" do menu); no MENU,
 `Enter` (ou `Espaço`) equivale a "Jogar"; no GAME OVER, `Enter` (ou `Espaço`) equivale a "Jogar
-de novo"; `H` liga e desliga o texto de depuração (velocidade, faixa, FPS; nunca no MENU — o HUD de
+de novo"; `H` liga e desliga o texto de depuração (velocidade, faixa, FPS; **começa desligado**; nunca no MENU — o HUD de
 pontos/moedas/distância e os tempos dos power-ups ativos fica sempre visível); `C` liga/desliga a
 câmera livre (jogo congelado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe,
 `Shift` desce, `C` volta ao jogo, `P`/`ESC` sai dela direto para a pausa); `R` recarrega shaders.
@@ -596,6 +628,48 @@ em seguida pelo `KeyCallback()`), que o harness E2E também usa; novos atalhos e
 
 ---
 
+## Controles (para o manual do README)
+
+Lista final de atalhos, para a dupla escrever o manual do `README.md` (a IA não escreve o README):
+
+| Tecla / ação | O que faz |
+|---|---|
+| `←` / `→` ou `A` / `D` | troca de faixa (esquerda / direita; faixas -1, 0, 1) |
+| `↑`, `W` ou `Espaço` | pula (com o tênis, pula mais alto e passa por cima de placas) |
+| `↓` ou `S` | rola (passa sob a barreira alta e a placa) |
+| `P` ou `ESC` | pausa / continua (`ESC` **não** fecha o programa; sair é pelo botão "Sair" do menu) |
+| `Enter` (ou `Espaço`) | no menu: "Jogar"; no game over: "Jogar de novo" |
+| `C` | liga / desliga a câmera livre (jogo congelado) |
+| câmera livre: `W` `A` `S` `D` | voa para frente / esquerda / trás / direita (10 m/s) |
+| câmera livre: `Espaço` / `Shift` | sobe / desce |
+| câmera livre: mouse | gira o olhar (cursor capturado; sem botão) |
+| câmera livre: `C`, `P` ou `ESC` | volta ao jogo (`C`) ou vai direto para a pausa (`P`/`ESC`) |
+| `H` | liga / desliga o texto de depuração (velocidade, faixa, FPS); começa desligado |
+| `R` | recarrega os shaders do disco (`src/shader_*.glsl`) sem recompilar |
+| mouse | clica nos botões do menu, da pausa e do game over |
+
+HUD (pontos, moedas, distância, tempos dos power-ups) sempre visível durante a corrida. Power-ups:
+ímã (puxa moedas), tênis (pulo 1.5x), multiplicador x2 (pontos das moedas) e cofrinho (porco voador
+em Bézier solta moedas), 10 s cada, renovam ao pegar de novo.
+
+## Limitações conhecidas
+
+- O cenário (prédios, postes, túneis, trilhos) só existe em ≈ −20…+150 m ao redor do jogador: voar
+  longe com a câmera livre mostra só o chão até o horizonte e a névoa.
+- O tênis permite pular por cima das placas (apogeu ~4.5 m), por desenho.
+- Na raspada lateral num trem o braço do personagem pode entrar ~13 cm na parede antes do game over
+  (a caixa de colisão segue o tronco, não os braços).
+- O build padrão do CMake é Debug (~150 fps no cenário mais pesado numa GTX 1070); para a
+  apresentação use `-DCMAKE_BUILD_TYPE=Release` (~540 fps).
+- Windows App Control pode bloquear um `.exe` recém-linkado ("Permission denied"): toque num `.cpp`
+  e recompile.
+- macOS e MSVC nunca foram compilados (sem máquina disponível); o Linux foi verificado só num
+  contêiner Ubuntu 24.04 (compila, linka, passa nos `logic_tests` e roda o E2E `smoke` sob Xvfb + Mesa; o jogo
+  completo só foi jogado e inspecionado no Windows).
+- Em Release o `stb_image.h` (vendorizado, não editável) gera um aviso `-Wstringop-overflow` do GCC.
+
+---
+
 ## Áreas que não devem ser editadas
 
 - `include/glm/`, `include/glad/`, `include/GLFW/`, `include/KHR/`, `include/stb_image.h`,
@@ -620,5 +694,4 @@ formato exato no `ordem-trabalho.md`. Mais: vídeo de 3 a 5 minutos e `README.md
 descrição da aplicação, funcionalidade extra, contribuições de cada integrante, parágrafo de
 análise crítica do uso de IA, ≥2 imagens, manual de uso e instruções de compilação.
 
-Imagens da especificação vão em `images/spec/` (`image1`, `image2`, `image3`) — diretório ainda
-não criado.
+Imagens da especificação estão em `images/spec/` (`image1.png`, `image2.png`, `image3.png`).
