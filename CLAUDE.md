@@ -146,6 +146,21 @@ implementado** — o base é só um visualizador.
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
 movimentação travada ou com flickering, e qualquer crash durante a demonstração.
 
+**Qualidade visual e desempenho (Tarefa 7.1, partes a e b, concluída):** névoa por distância (90–145 m
+da câmera, cor do céu) esconde o fim do cenário gerado; um chão "até o horizonte" (quadrado centrado
+na câmera, 5 cm abaixo das faixas, mesma textura em coordenadas de mundo) cobre o que fica além das
+faixas de terreno; UV do chão e dos trilhos sem esticar nas curvas; o vão dos portais fica na sombra
+do túnel (sem anel claro); as nervuras do teto do trem são achatadas (o pé não entra nelas);
+partículas quicam no chão; a GUI cabe em janelas baixas. Varredura de Z-fighting com o E2E
+`visual_audit` (13 poses rasantes da câmera livre: nada encontrado além do que foi corrigido).
+Desempenho (E2E `perf_heavy`, túnel + trens + 512 partículas + porco, sem vsync, GTX 1070): Release
+~540–590 fps (1% mais lento ≥ 310 fps), Debug ~150 fps (≥ 107 fps). **Conferir no laboratório** — o
+build padrão do CMake é Debug (limitado pela CPU: geração das faixas a cada quadro); para a
+apresentação, prefira o Release. Limitações conhecidas: objetos do cenário (prédios, postes, túneis)
+só existem em ≈ −20…+150 m do jogador (na câmera livre, voando para longe, só sobra o chão);
+o vão entre os dormentes de faixas vizinhas aparece como uma linha de brita contínua quando a câmera
+fica alinhada com ele (geometria, não é Z-fighting).
+
 **Resto do laboratório anterior, sem efeito:** `src/buildtriangles.cpp` não é compilado por
 nenhum build. (As variáveis `g_AngleX/Y/Z`, `g_ForearmAngle*` e `g_TorsoPosition*` e as teclas
 `X`/`Y`/`Z` foram removidas na Tarefa 0.1.)
@@ -180,7 +195,10 @@ make run
 
 **Windows**: só via CMake/VSCode com MinGW ou MSVC — o `CMakeLists.txt` detecta a toolchain e
 escolhe o `libglfw3.a`/`glfw3.lib` correto dentro de `lib-mingw-32/`, `lib-mingw-64/`,
-`lib-ucrt-64/` ou `lib-vc2022/`. Detalhes de setup em `COMPILACAO.md`.
+`lib-ucrt-64/` ou `lib-vc2022/`. Detalhes de setup em `COMPILACAO.md`. Build Release separado
+(medição de desempenho): `cmake -G Ninja -B build-release -S . -DCMAKE_BUILD_TYPE=Release && cmake --build
+build-release` → `bin/Release/` (`build-release/` está no `.gitignore`; o `run_e2e.sh` usa `bin/Debug`,
+mas `cd bin/Release && ./main.exe --autotest <cenario>` funciona).
 
 O `README.md` da entrega final precisa explicar todos os passos de compilação e execução, e o
 critério "facilidade de compilação e execução, com instruções corretas e reproduzíveis" é
@@ -240,7 +258,14 @@ no jogador, Enter inicia sem pular, P e ESC saem da câmera livre direto para a 
 (600 s de jogo com spawn ligado e um piloto automático que segue a faixa segura e pula/rola as barreiras:
 60 s de quadros × 10 passos de lógica por quadro, feitos no `frame_hook`; confere 0 mortes, sem erro de GL
 e que obstáculos, moedas, power-ups, partículas e segmentos da pista ficam em contagens limitadas; leva ~30 s,
-dentro do timeout de 60 s do `run_e2e.sh`). **Não fixe valores de s ligados
+dentro do timeout de 60 s do `run_e2e.sh`); da Tarefa 7.1b, `gui_small_window` (o hook redimensiona a
+janela para 640x400 e 480x270 com "Controles" aberto: botões inteiros na tela, "Jogar" clicável),
+`visual_audit` (câmera livre posta pelo hook com `g_FreeCamera.StartAt()` em 13 poses rasantes —
+trilhos, borda do leito, rampa, barreira, teto do trem, portal, chão e parede do túnel, prédios e
+terreno numa curva, portal de saída —, levando `g_Game.player.s` junto; uma foto por pose para inspeção)
+e `perf_heavy` (túnel + trens + moedas + ímã + porco + 80 partículas por quadro; imprime
+`E2E perf_heavy: ... media ... fps, 1% mais lento ...` com o tempo de relógio por quadro).
+**Não fixe valores de s ligados
 à semente**: os cenários de curva/túnel acham o segmento com `FindFirstSegment()` (no `setup`, ou
 numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do comprimento).
 
@@ -322,9 +347,13 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 - **Uniforms**: `model`, `view`, `projection`, `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` e os de
   iluminação (`sun_direction`, `sun_color`, `ambient_color`, `num_point_lights`, `point_light_position[8]`,
   `point_light_color[8]`, `shading_mode`, `material_kd_tint`, `material_ks`, `material_q`, `material_emissive`,
-  e dos túneis: `num_tunnels`, `tunnel_start[4]`, `tunnel_forward[4]`, `tunnel_shape`) têm seus
+  e dos túneis: `num_tunnels`, `tunnel_start[4]`, `tunnel_forward[4]`, `tunnel_shape`; da névoa:
+  `fog_color`, `fog_params`) têm seus
   locations cacheados nos globais `g_*_uniform` em `LoadShadersFromFiles()`. Um uniform novo
   precisa ser declarado no shader, ter o global criado e o `glGetUniformLocation()` adicionado ali.
+- **Tamanhos dos arrays**: `MAX_POINT_LIGHTS` (`scenery.h`) e `MAX_TUNNELS` (= `MAX_SHADER_TUNNELS`,
+  `main.cpp`) **não** são definidos nos shaders: `LoadShader()` insere os `#define` logo depois do
+  `#version` (com `#line 2`, para os números de linha dos erros baterem com o arquivo). Uma fonte só.
 - **IDs de objeto e modos de UV**: as constantes `const int` (`PLAYER`, `GROUND`, ..., `LAMP_POLE` e
   `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`/`UV_BOX`) vivem em `include/object_ids.h` e são
   **copiadas** para o topo de `shader_fragment.glsl` (a sintaxe é a mesma em C++ e GLSL) — alterar
@@ -353,7 +382,17 @@ túneis visíveis (`ComputeVisibleTunnels()`) e `SkyVisibility(p)` (no bloco dup
 "sombra" do túnel, visível também de fora. As luminárias do teto (`ComputeTunnelLamps()`, bloco
 emissivo `LAMP`) entram na mesma escolha das 8 luzes mais próximas que os postes. Com a CÂMERA
 (em `s - g_Camera.Back()`) no túnel, `g_TunnelDimming` (rampa linear de `StepTunnelDimming()`)
-multiplica `sun_color` por até 0.2 e `ambient_color` por até 0.6.
+multiplica `sun_color` por até 0.2 e `ambient_color` por até 0.6. O volume enviado ao shader vai da
+face de fora de um portal à do outro (`TUNNEL_SHADOW_PORTAL_EXTENSION` = profundidade do portal − 5 cm,
+Tarefa 7.1b): o vão dos portais fica na sombra e a fachada fica fora dela, sem piscar.
+
+**Névoa e chão até o horizonte** (Tarefa 7.1b): o fragment shader mistura a cor final (depois da
+correção gamma) com `fog_color` = `SKY_COLOR` (a mesma do `glClearColor`) por
+`smoothstep(FOG_START = 90, FOG_END = 145, distância à câmera)`; com a câmera no túnel
+(`fog_params.z` = `g_TunnelDimming`) os pontos também dentro dele ficam sem névoa. Partículas e GUI não
+passam por ela. `DrawGroundPlane()` desenha, por último entre os opacos, um quadrado horizontal de lado
+`2·FOG_END + 40` centrado na câmera, `GROUND_PLANE_DROP` (5 cm) abaixo das faixas, com a textura de
+terreno em `UV_PLANAR_XZ` (`uv_scale = 1/GROUND_TEXTURE_TILE`, o mesmo ladrilho das faixas de terreno).
 
 **Obstáculos e moedas**: `Game` gera um chunk de `CHUNK_LENGTH` por vez (até `s + SPAWN_AHEAD`)
 e descarta o que fica `DESPAWN_BEHIND` para trás. Cada obstáculo é uma `AABB` em coordenadas
@@ -509,7 +548,8 @@ em `PLAYING`; moedas, trens e passada também ficam parados). O mouse gira sem p
 cima, frente), dt)` a 10 m/s, normalizado, com "frente" incluindo o pitch e "cima" = Y do mundo.
 As teclas seguradas ficam em `g_KeyHeld[]` (atualizada por `HandleKey()` em PRESS/RELEASE, vale
 também no E2E) e o movimento é aplicado todo quadro com `dt`. Limitação aceita: o cenário só é
-gerado ao redor do jogador (≈ −20…+150 m), então voar para longe mostra o vazio; o escurecimento do
+gerado ao redor do jogador (≈ −20…+150 m), então voar para longe mostra só o chão até o horizonte
+(`DrawGroundPlane`) e a névoa; o escurecimento do
 túnel usa a posição da câmera livre (`PointInsideTunnel`, em `collisions.cpp`: ponto de mundo dentro da abóbada, com `TunnelCeilingHeight`). O E2E injeta o mouse pelos campos
 `mouse_dx/mouse_dy` de `AutotestStep` (cenário `free_camera`).
 

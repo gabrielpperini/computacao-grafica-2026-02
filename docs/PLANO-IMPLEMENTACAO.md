@@ -668,12 +668,15 @@ public:
 
 ### Tarefa 7.1: Caça a bugs avaliados
 
-- [ ] Z-fighting: trilho × chão, faces coplanares de prédios; testar olhando rasante.
-- [ ] Texturas esticadas: todo objeto com `uv_mode` adequado.
-- [ ] Colisão: jogar 10 partidas seguidas tentando cada obstáculo, rampa e pouso.
-- [ ] Desempenho: ≥ 60 FPS na máquina do laboratório (texto de FPS já existe, tecla `H`).
-- [ ] Partida longa (10 min) sem crash, sem vazamento (contagem de obstáculos/moedas estável).
-- [ ] Todos os `TODO`, `printf` de debug e restos do lab removidos.
+- [x] Z-fighting: trilho × chão, faces coplanares de prédios; testar olhando rasante.
+  (7.1b: E2E `visual_audit`, câmera livre em 13 poses rasantes; nervuras do teto do trem achatadas.)
+- [x] Texturas esticadas: todo objeto com `uv_mode` adequado.
+  (7.1b: UV do chão em coordenadas de mundo e dos trilhos pelo comprimento de arco: nada estica nas curvas.)
+- [x] Colisão: jogar 10 partidas seguidas tentando cada obstáculo, rampa e pouso. (7.1a)
+- [x] Desempenho: ≥ 60 FPS na máquina do laboratório (texto de FPS já existe, tecla `H`).
+  (7.1b: E2E `perf_heavy`; medido numa GTX 1070: Release ~540 fps, Debug ~150 fps. Conferir no laboratório.)
+- [x] Partida longa (10 min) sem crash, sem vazamento (contagem de obstáculos/moedas estável). (7.1a: E2E `marathon`)
+- [x] Todos os `TODO`, `printf` de debug e restos do lab removidos. (7.1b)
 
 ### Tarefa 7.2: Builds e documentação de apoio
 
