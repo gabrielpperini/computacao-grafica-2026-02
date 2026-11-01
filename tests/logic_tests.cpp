@@ -90,6 +90,31 @@ void Test_TrackFrameOutOfRange()
     TrackFrame g = t.FrameAt(-5.0f); // antes do primeiro segmento mantido
     assert(std::isfinite(g.position.z));
     assert(t.SegmentAt(-5.0f) == nullptr || t.SegmentAt(-5.0f)->s_start <= -5.0f);
+
+    // Valores (Tarefa 7.1a): numa pista montada à mão com duas retas a mais, a
+    // extrapolação além do último segmento e antes do primeiro mantido segue a
+    // reta do segmento (posição = início + forward * distância, heading igual).
+    Track u(1);
+    u.AppendSegment(50.0f, 0.0f, false);
+    u.AppendSegment(60.0f, 0.0f, false);
+    const TrackSegment last = u.Segments().back();
+    const float end = last.s_start + last.length;
+    const float hl = last.start_heading;
+    const vec4 fwd(-std::sin(hl), 0.0f, -std::cos(hl), 0.0f);
+    const float far_s[3] = {end + 0.5f, end + 40.0f, 1e6f};
+    for (int i = 0; i < 3; ++i) {
+        TrackFrame e = u.FrameAt(far_s[i]);
+        vec4 expect = last.start_position + fwd * (far_s[i] - last.s_start);
+        assert(near(e.position, expect, 1e-2f + 1e-6f * far_s[i]));
+        assert(near(e.forward, fwd) && nearf(e.heading, hl));
+    }
+    u.DiscardBefore(last.s_start + 1.0f); // fica só o último segmento (reta)
+    assert(u.Segments().size() == 1);
+    TrackFrame b = u.FrameAt(last.s_start - 5.0f);
+    assert(near(b.position, last.start_position - fwd * 5.0f, 1e-3f));
+    assert(nearf(b.heading, hl));
+    // A extrapolação é contínua com o interior do segmento.
+    assert(near(u.FrameAt(last.s_start).position, last.start_position));
 }
 
 void Test_TrackDeterministicSeed()
@@ -1425,6 +1450,19 @@ static void Run(Game& g, float seconds, float dt = 1.0f / 60.0f)
     for (int i = 0; i < steps; i++) g.Update(dt);
 }
 
+// Avança 1/60 s por quadro enquanto 'cond()' for verdadeira, com no máximo
+// max_steps quadros (Tarefa 7.1a): se o comportamento esperado regredir, o teste
+// falha com assert em vez de travar para sempre.
+template <typename Cond>
+static void RunWhile(Game& g, Cond cond, int max_steps = 60 * 120)
+{
+    int steps = 0;
+    while (cond()) {
+        assert(steps++ < max_steps && "RunWhile: condição nunca deixou de valer");
+        g.Update(1.0f / 60.0f);
+    }
+}
+
 static bool IsBlocking(ObstacleType t)
 {
     return t == ObstacleType::SIGN || t == ObstacleType::TRAIN;
@@ -1712,7 +1750,7 @@ void Test_HighBarrierPosts()
     assert(parts[0].min.y == h.box.min.y); // a viga é a própria caixa
     for (int i = 1; i < 3; i++) {
         assert(nearf(parts[i].min.y, 0.0f) && nearf(parts[i].max.y, BARRIER_HIGH_CLEARANCE));
-        assert(std::fabs(parts[i].min.x) > PLAYER_HALF_WIDTH || std::fabs(parts[i].max.x) > PLAYER_HALF_WIDTH);
+        assert(parts[i].max.x < -PLAYER_HALF_WIDTH || parts[i].min.x > PLAYER_HALF_WIDTH);
         assert(parts[i].min.x >= h.box.min.x && parts[i].max.x <= h.box.max.x);
         assert(!AABBIntersectsAABB(parts[i], MakeAABB(glm::vec3(0, 0.4f, 5.0f),
                                                       glm::vec3(PLAYER_HALF_WIDTH, 0.4f, PLAYER_HALF_DEPTH))));
@@ -1754,7 +1792,7 @@ void Test_SweptBoxNoTunneling()
     g.SetObstacleExtents(ObstacleType::BARRIER_LOW, glm::vec3(1.0f, 0.45f, 0.15f));
     g.obstacles.push_back(g.MakeObstacle(ObstacleType::BARRIER_LOW, 0, 0.75f)); // z em [0.6, 0.9]
     g.player.speed = PLAYER_MAX_SPEED;
-    AABB before = g.PlayerBox(); // z em [-0.4, 0.4]
+    AABB before = g.PlayerBox(); // z em [-0.27, 0.27]
     g.Update(MAX_DT);            // s = 1.5 -> z em [1.1, 1.9]
     assert(nearf(g.player.s, 1.5f));
     assert(before.max.z < 0.6f && g.PlayerBox().min.z > 0.9f); // nenhuma das duas toca
@@ -2074,9 +2112,9 @@ void Test_MovingTrainNoTunneling()
         t.velocity = -MOVING_TRAIN_SPEED;
         t.min_s = -1e9f;
         g.obstacles.push_back(t);
-        AABB before = g.PlayerBox(); // z em [-0.4, 0.4]
+        AABB before = g.PlayerBox(); // z em [-0.27, 0.27]
         assert(before.max.z < t.box.min.z);
-        g.Update(MAX_DT);            // jogador a [1.1, 1.9]; trem a [0.15, 0.45]
+        g.Update(MAX_DT);            // jogador a [1.23, 1.77]; trem a [0.15, 0.45]
         assert(g.PlayerBox().min.z > g.obstacles[0].box.max.z); // nenhum dos dois toca o outro
         assert(g.mode == GameMode::GAME_OVER);
     }
@@ -2089,7 +2127,7 @@ void Test_MovingTrainNoTunneling()
         t.velocity = -100.0f;                                      // 5 m por passo
         t.min_s = -1e9f;
         g.obstacles.push_back(t);
-        g.Update(MAX_DT);            // trem a [-2.0, -1.7]; jogador varreu [-0.4, 1.0]
+        g.Update(MAX_DT);            // trem a [-2.0, -1.7]; jogador varreu [-0.27, 0.87]
         assert(g.obstacles[0].box.max.z < g.PlayerBox().min.z);
         assert(g.mode == GameMode::GAME_OVER);
     }
@@ -2164,6 +2202,34 @@ void Test_MovingTrainsSpawnAndStayPassable()
     printf("  [trens moveis] %d de %d trens gerados\n", moving_total, trains_total);
     assert(moving_total >= 30); // a funcionalidade aparece de fato
     assert(moving_total < trains_total);
+}
+
+// Dois obstáculos da mesma faixa nunca se sobrepõem ao longo do tempo (Tarefa
+// 7.1a), nem com os trens móveis andando e parando uns contra os outros e
+// contra as rampas: só podem se tocar (rampa colada ao trem, folga zero).
+void Test_ObstaclesSameLaneNeverOverlap()
+{
+    int moving_seen = 0;
+    for (unsigned seed = 1; seed <= 30; seed++) {
+        Game g(seed);
+        while (g.player.s < 2500.0f) {
+            g.player.lane = AutopilotLane(g);
+            g.Update(1.0f / 60.0f);
+            g.mode = GameMode::PLAYING; // bater em barreira não encerra o teste
+            for (size_t i = 0; i < g.obstacles.size(); i++) {
+                const Obstacle& a = g.obstacles[i];
+                if (a.velocity < 0.0f) moving_seen++;
+                for (size_t j = i + 1; j < g.obstacles.size(); j++) {
+                    const Obstacle& b = g.obstacles[j];
+                    if (a.lane != b.lane) continue;
+                    const float overlap = std::min(a.box.max.z, b.box.max.z) -
+                                          std::max(a.box.min.z, b.box.min.z);
+                    assert(overlap <= 1e-3f);
+                }
+            }
+        }
+    }
+    assert(moving_seen > 0); // o cenário de fato teve trens móveis andando
 }
 
 // Mesma semente -> mesmos trens móveis (decisão determinística).
@@ -2899,26 +2965,27 @@ void Test_SameTypeRenewsTimer()
     g.powerups.push_back(MakePowerUp(PowerUpType::MULTIPLIER, 0, 63.0f));
     assert(!g.PowerUpActive(PowerUpType::MAGNET));
     // (Os power-ups ficam para trás e são descartados: não indexar depois.)
-    while (!g.PowerUpActive(PowerUpType::MAGNET)) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return !g.PowerUpActive(PowerUpType::MAGNET); });
     assert(g.powerup_timer[(int)PowerUpType::MAGNET] > POWERUP_DURATION - 0.05f);
     assert(g.powerup_timer[(int)PowerUpType::MAGNET] <= POWERUP_DURATION);
 
     // Corre até logo antes do segundo ímã: o tempo já caiu bem abaixo do máximo.
-    while (g.player.s < 58.0f) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return g.player.s < 58.0f; });
     const float before = g.powerup_timer[(int)PowerUpType::MAGNET];
     assert(before > 0.0f && before < POWERUP_DURATION - 3.0f);
 
     // O tempo só sobe quando o 2º ímã é pego.
     float prev = before;
-    while (g.powerup_timer[(int)PowerUpType::MAGNET] <= prev) {
+    RunWhile(g, [&] {
+        const bool wait = g.powerup_timer[(int)PowerUpType::MAGNET] <= prev;
         prev = g.powerup_timer[(int)PowerUpType::MAGNET];
-        g.Update(1.0f / 60.0f);
-    }
+        return wait;
+    });
     const float renewed = g.powerup_timer[(int)PowerUpType::MAGNET];
     assert(renewed > POWERUP_DURATION - 0.05f && renewed <= POWERUP_DURATION); // não passa de 10 s
     assert(!g.PowerUpActive(PowerUpType::MULTIPLIER)); // ainda não pegou o outro tipo
 
-    while (!g.PowerUpActive(PowerUpType::MULTIPLIER)) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return !g.PowerUpActive(PowerUpType::MULTIPLIER); });
     assert(g.PowerUpActive(PowerUpType::MAGNET));
     assert(g.powerup_timer[(int)PowerUpType::MAGNET] < POWERUP_DURATION - 0.1f); // não renovou o ímã
     assert(g.multiplier == 2);
@@ -2956,8 +3023,16 @@ void Test_MagnetPullsCoin()
     assert(g.coins[0].collected && g.coins[1].collected);
     assert(g.coins_collected == 2 && g.mode == GameMode::PLAYING);
     assert(g.score >= 20.0f);
-    // A moeda longe só é puxada quando o jogador chega a menos de MAGNET_RADIUS.
-    assert(!g.coins[2].collected || g.player.s > 60.0f - MAGNET_RADIUS - 1.0f);
+    // A moeda longe só é puxada quando o jogador chega a menos de MAGNET_RADIUS
+    // (no s = ~12 a distância é ~48 m: nem puxada nem coletada)...
+    assert(g.player.s < 60.0f - MAGNET_RADIUS - 20.0f);
+    assert(!g.coins[2].pulled && !g.coins[2].collected);
+    // ...e depois de chegar perto, foi puxada e coletada, mesmo estando na
+    // faixa 1 (as outras já tinham sido descartadas atrás: só o contador vale).
+    assert(g.coins_collected == 2);
+    Run(g, 4.5f);
+    assert(g.player.s > 60.0f - MAGNET_RADIUS && g.mode == GameMode::PLAYING);
+    assert(g.coins_collected == 3);
 }
 
 // Tênis: pulo com SNEAKERS_JUMP_MULT x a velocidade inicial => altura ~ x^2.
@@ -2969,8 +3044,8 @@ void Test_SneakersHigherJump()
 
     Game g = QuietGame();
     g.powerups.push_back(MakePowerUp(PowerUpType::SNEAKERS, 0, 2.0f));
-    while (!g.powerups[0].collected) g.Update(1.0f / 60.0f);
-    while (!g.player.grounded) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return !g.powerups[0].collected; });
+    RunWhile(g, [&] { return !g.player.grounded; });
     const float high = MaxJumpHeight(g);
     assert(nearf(high / normal, SNEAKERS_JUMP_MULT * SNEAKERS_JUMP_MULT, 0.15f));
     assert(high > 4.0f);
@@ -3020,7 +3095,7 @@ void Test_PowerupExpires()
     g.HandleInput(Input::JUMP);
     assert(nearf(g.player.vy, JUMP_VELOCITY));
     // Sem ímã, a moeda ao lado deixa de ser puxada.
-    while (!g.player.grounded) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return !g.player.grounded; });
     Coin side = {1, g.player.s + 4.0f, COIN_HEIGHT, false};
     g.coins.push_back(side);
     g.Update(1.0f / 60.0f);
@@ -3060,7 +3135,7 @@ void Test_PiggyPickupLaunchesPig()
     g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 3.0f));
     g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 20.0f));
     assert(g.piggy_pickups == 0 && !g.pig.active);
-    while (!g.pig.active) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return !g.pig.active; });
     assert(g.piggy_pickups == 0); // consumido no lançamento
     for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(g.powerup_timer[t] == 0.0f);
     assert(g.multiplier == 1);
@@ -3709,7 +3784,7 @@ void Test_CoinPickupEmitsEvent()
     assert(g.events.empty());
     Coin c = {0, 4.0f, COIN_HEIGHT, false};
     g.coins.push_back(c);
-    while (g.coins_collected == 0 && g.player.s < 20.0f) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return g.coins_collected == 0 && g.player.s < 20.0f; });
     assert(g.coins_collected == 1);
     assert(g.events.size() == 1);
     assert(g.events[0].kind == CollectKind::COIN);
@@ -3727,7 +3802,7 @@ void Test_PowerupPickupEmitsEvent()
     Game g = QuietGame();
     g.powerups.push_back(MakePowerUp(PowerUpType::SNEAKERS, 0, 3.0f));
     g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 9.0f));
-    while (g.player.s < 14.0f) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return g.player.s < 14.0f; });
     // (O cofrinho lança o porco, que solta moedas: filtra só os power-ups.)
     std::vector<CollectEvent> pu;
     for (size_t i = 0; i < g.events.size(); ++i)
@@ -3746,7 +3821,7 @@ void Test_EventsResetAndBounded()
     Game g = QuietGame();
     Coin c = {0, 3.0f, COIN_HEIGHT, false};
     g.coins.push_back(c);
-    while (g.coins_collected == 0) g.Update(1.0f / 60.0f);
+    RunWhile(g, [&] { return g.coins_collected == 0; });
     assert(!g.events.empty());
     g.Reset();
     assert(g.events.empty());
@@ -3871,6 +3946,7 @@ int main()
     Test_MovingTrainHitAndDodge();
     Test_MovingTrainNoTunneling();
     Test_MovingTrainsSpawnAndStayPassable();
+    Test_ObstaclesSameLaneNeverOverlap();
     Test_MovingTrainsDeterministic();
     // Rampas e andar sobre trens (4.4)
     Test_RampGeometry();
