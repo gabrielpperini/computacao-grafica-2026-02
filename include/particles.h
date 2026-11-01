@@ -23,6 +23,7 @@ struct Particle {
     float max_life;      // tempo de vida total (s)
     float size;          // lado do quad no nascimento (m); o desenho o encolhe com life/max_life
     glm::vec3 color;     // cor RGB (a mesma ao longo da vida; o alfa decai no desenho)
+    float floor_y;       // altura do chão sob a explosão (y de mundo); PARTICLE_NO_FLOOR = sem chão
 };
 
 // Parâmetros de emissão e física.
@@ -34,6 +35,12 @@ const float  PARTICLE_MIN_LIFE      = 0.4f;   // s
 const float  PARTICLE_MAX_LIFE      = 0.9f;
 const float  PARTICLE_MIN_SIZE      = 0.20f;  // m
 const float  PARTICLE_MAX_SIZE      = 0.45f;
+// Chão (Tarefa 7.1b): ao chegar a meio tamanho do chão (o sprite não é cortado
+// por ele), a partícula quica: v.y troca de sinal e é multiplicada por
+// PARTICLE_BOUNCE, e a velocidade horizontal por PARTICLE_GROUND_FRICTION.
+const float  PARTICLE_BOUNCE          = 0.35f;
+const float  PARTICLE_GROUND_FRICTION = 0.6f;
+const float  PARTICLE_NO_FLOOR        = -1e30f; // floor_y padrão: cai sem chão
 
 class ParticleSystem {
 public:
@@ -45,13 +52,17 @@ public:
     // hemisfério superior (y >= 0), velocidade em [PARTICLE_MIN_SPEED,
     // PARTICLE_MAX_SPEED], vida em [PARTICLE_MIN_LIFE, PARTICLE_MAX_LIFE] e
     // tamanho em [PARTICLE_MIN_SIZE, PARTICLE_MAX_SIZE]. O gerador (mt19937) é
-    // semeado com 'seed': mesma semente, mesma explosão. Com o pool cheio as
-    // partículas novas são DESCARTADAS (as que já estão na tela terminam
-    // normalmente): Alive().size() nunca passa da capacidade.
-    void Emit(glm::vec4 world_pos, int count, glm::vec3 color, unsigned seed);
+    // semeado com 'seed': mesma semente, mesma explosão. floor_y é a altura do
+    // chão sob a explosão (as partículas quicam nele; veja Update). Com o pool
+    // cheio cada partícula nova SUBSTITUI a de menor vida restante (a que ia
+    // sumir primeiro): a explosão da coleta sempre aparece, e Alive().size()
+    // nunca passa da capacidade (count > capacidade: só 'capacidade' nascem).
+    void Emit(glm::vec4 world_pos, int count, glm::vec3 color, unsigned seed,
+              float floor_y = PARTICLE_NO_FLOOR);
 
     // Avança dt segundos (dt < 0 vira 0): gravidade PARTICLE_GRAVITY em -y,
-    // posição integrada com dt, e remove (troca com a última) as de vida <= 0.
+    // posição integrada com dt, quique no chão (o centro nunca fica abaixo de
+    // floor_y + size/2) e remove (troca com a última) as de vida <= 0.
     void Update(float dt);
 
     // Remove todas as partículas (reinício da corrida).

@@ -3716,7 +3716,7 @@ void Test_CapacityRespected()
     ps.Emit(vec4(0, 0, 0, 1), 2000, glm::vec3(1.0f), 1);
     assert(AliveCount(ps) <= 512);
     assert(AliveCount(ps) == 512);
-    ps.Emit(vec4(0, 0, 0, 1), 100, glm::vec3(1.0f), 2);   // cheio: descarta
+    ps.Emit(vec4(0, 0, 0, 1), 100, glm::vec3(1.0f), 2);   // cheio: substitui as que vão morrer antes
     assert(AliveCount(ps) == 512);
     for (int i = 0; i < 70; ++i) ps.Update(0.016f);
     assert(AliveCount(ps) == 0);
@@ -3728,6 +3728,81 @@ void Test_CapacityRespected()
     assert(AliveCount(tiny) == 10);
     tiny.Emit(vec4(0, 0, 0, 1), -5, glm::vec3(1.0f), 5);  // contagem negativa: nada
     assert(AliveCount(tiny) == 10);
+}
+
+// Pool cheio (Tarefa 7.1b): a explosão nova SUBSTITUI as partículas com menor
+// vida restante (as que iam sumir primeiro), em vez de ser descartada: uma
+// coleta nunca fica sem partículas.
+void Test_ParticlesFullPoolReplacesShortestLived()
+{
+    ParticleSystem ps(10);
+    ps.Emit(vec4(0, 1, 0, 1), 10, glm::vec3(1.0f), 21);
+    for (int i = 0; i < 12; ++i) ps.Update(0.016f);       // 0.19 s: todas vivas, vidas diferentes
+    assert(AliveCount(ps) == 10);
+    std::vector<float> lives;
+    for (size_t i = 0; i < ps.Alive().size(); ++i) lives.push_back(ps.Alive()[i].life);
+    std::sort(lives.begin(), lives.end());
+    const glm::vec3 red(1.0f, 0.0f, 0.0f);
+    ps.Emit(vec4(5, 1, 0, 1), 3, red, 22);
+    assert(AliveCount(ps) == 10);
+    int fresh = 0;
+    std::vector<float> old_left;
+    for (size_t i = 0; i < ps.Alive().size(); ++i) {
+        const Particle& p = ps.Alive()[i];
+        if (p.color == red) {
+            fresh++;
+            assert(p.life == p.max_life && nearf(p.position.x, 5.0f));
+        } else {
+            old_left.push_back(p.life);
+        }
+    }
+    assert(fresh == 3);
+    // Sobraram exatamente as 7 antigas de MAIOR vida restante.
+    std::sort(old_left.begin(), old_left.end());
+    assert(old_left.size() == 7);
+    for (size_t i = 0; i < 7; ++i) assert(old_left[i] == lives[i + 3]);
+    // Pedir mais que a capacidade: o pool fica com 'capacidade' partículas novas.
+    ps.Emit(vec4(0, 1, 0, 1), 25, glm::vec3(0.0f, 1.0f, 0.0f), 23);
+    assert(AliveCount(ps) == 10);
+    for (size_t i = 0; i < ps.Alive().size(); ++i)
+        assert(ps.Alive()[i].color == glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+// Chão (Tarefa 7.1b): com floor_y, nenhuma partícula afunda no chão (o centro
+// do sprite fica a meio tamanho acima dele, então o quad não é cortado); quem
+// chega ao chão quica para cima, mais devagar. Vale com passos pequenos e com
+// o maior dt do jogo. Sem floor_y (padrão) caem livremente, como antes.
+void Test_ParticlesBounceOnFloor()
+{
+    const float dts[2] = {1.0f / 120.0f, MAX_DT};
+    for (int k = 0; k < 2; ++k) {
+        ParticleSystem ps(512);
+        const float floor_y = 0.0f;
+        ps.Emit(vec4(0, 0.3f, 0, 1), 200, glm::vec3(1.0f), 31, floor_y);
+        int bounced = 0;
+        std::vector<float> prev_vy(200, 0.0f);
+        for (float t = 0.0f; t < 1.0f; t += dts[k]) {
+            ps.Update(dts[k]);
+            for (size_t i = 0; i < ps.Alive().size(); ++i) {
+                const Particle& p = ps.Alive()[i];
+                assert(p.position.y >= floor_y + 0.5f * p.size - 1e-4f);
+                if (nearf(p.position.y, floor_y + 0.5f * p.size, 1e-4f) && p.velocity.y > 0.0f)
+                    bounced++;
+                assert(p.velocity.y <= PARTICLE_MAX_SPEED + 1e-3f);
+            }
+        }
+        assert(bounced > 0);
+    }
+    // Sem chão: a mesma explosão afunda abaixo de y = 0.
+    ParticleSystem free_fall(512);
+    free_fall.Emit(vec4(0, 0.3f, 0, 1), 200, glm::vec3(1.0f), 31);
+    bool below = false;
+    for (int i = 0; i < 30; ++i) {
+        free_fall.Update(0.016f);
+        for (size_t j = 0; j < free_fall.Alive().size(); ++j)
+            below = below || free_fall.Alive()[j].position.y < 0.0f;
+    }
+    assert(below);
 }
 
 // Sem alocação em tempo de jogo: depois de muitas emissões e atualizações o
@@ -4025,6 +4100,8 @@ int main()
     Test_ParticlesExpire();
     Test_CapacityRespected();
     Test_ParticlesNoReallocation();
+    Test_ParticlesFullPoolReplacesShortestLived();
+    Test_ParticlesBounceOnFloor();
     Test_ParticlesMoveWithDt();
     Test_ParticlesDeterministic();
     Test_CoinPickupEmitsEvent();

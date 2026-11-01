@@ -1445,7 +1445,9 @@ glm::vec3 PowerUpParticleColor(PowerUpType type)
 // x lateral, y altura, z = s): converte cada um para o MUNDO com o referencial
 // da pista em s e dispara a explosão (moeda: PARTICLES_PER_COIN douradas;
 // power-up: PARTICLES_PER_POWERUP na cor do tipo). As partículas ficam onde
-// nasceram (não acompanham o jogador). Esvazia a lista, sem alocar.
+// nasceram (não acompanham o jogador) e quicam no chão da pista (f.position.y);
+// sobre um trem, as que caem no teto somem dentro dele (z-buffer) e as que
+// saem pela lateral caem até o chão. Esvazia a lista, sem alocar.
 void EmitCollectParticles(Game& game)
 {
     std::vector<CollectEvent>& events = game.events;
@@ -1456,9 +1458,10 @@ void EmitCollectParticles(Game& game)
         const glm::vec4 world = f.position + f.right * e.position.x
                               + glm::vec4(0.0f, e.position.y, 0.0f, 0.0f);
         if (e.kind == CollectKind::COIN)
-            g_Particles.Emit(world, PARTICLES_PER_COIN, PARTICLE_COIN_COLOR, g_ParticleSeed++);
+            g_Particles.Emit(world, PARTICLES_PER_COIN, PARTICLE_COIN_COLOR, g_ParticleSeed++, f.position.y);
         else
-            g_Particles.Emit(world, PARTICLES_PER_POWERUP, PowerUpParticleColor(e.powerup), g_ParticleSeed++);
+            g_Particles.Emit(world, PARTICLES_PER_POWERUP, PowerUpParticleColor(e.powerup), g_ParticleSeed++,
+                             f.position.y);
     }
     events.clear();
 }

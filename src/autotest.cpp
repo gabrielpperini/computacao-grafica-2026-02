@@ -438,12 +438,23 @@ static int  g_PtPowerBurst  = -1;  // idem, do power-up
 static int  g_PtMaxAlive    = 0;
 static int  g_PtFrame       = 0;
 static bool g_PtColorsOk    = true; // cores: douradas na moeda, vermelhas no power-up
+static int  g_PtBelowFloor  = 0;    // partículas com o sprite atravessando o chão (Tarefa 7.1b)
+static int  g_PtOnFloor     = 0;    // partículas apoiadas no chão (quicaram)
 
 static void Hook_Particles()
 {
     ++g_PtFrame;
     const std::vector<Particle>& alive = g_Particles.Alive();
     g_PtMaxAlive = std::max(g_PtMaxAlive, (int)alive.size());
+    // Chão da pista (y = 0 nesta pista): nenhum sprite o atravessa (Tarefa 7.1b).
+    for (size_t i = 0; i < alive.size(); ++i)
+    {
+        const float rest = g_Game.track.FrameAt(g_Game.player.s).position.y + 0.5f * alive[i].size;
+        if (alive[i].position.y < rest - 1e-3f)
+            ++g_PtBelowFloor;
+        else if (alive[i].position.y < rest + 1e-3f)
+            ++g_PtOnFloor;
+    }
     if (g_Game.coins_collected > g_PtPrevCoins)
     {
         g_PtCoinBurst = (int)alive.size();
@@ -486,6 +497,13 @@ static bool Check_particles(std::string* why)
     if (!g_PtColorsOk)
     {
         *why = "cor das particulas errada (moeda dourada / power-up vermelho)";
+        return false;
+    }
+    if (g_PtBelowFloor > 0 || g_PtOnFloor == 0)
+    {
+        snprintf(buf, sizeof(buf), "particulas abaixo do chao em %d amostras; apoiadas no chao em %d (esperava > 0)",
+                 g_PtBelowFloor, g_PtOnFloor);
+        *why = buf;
         return false;
     }
     if (!g_Game.events.empty())
