@@ -248,7 +248,7 @@ rodar `cmake -B build -S .` seguido de `cmake --build build --config Release`; o
 
 # Testes
 
-Há dois tipos de teste, ambos opcionais para jogar mas obrigatórios antes de entregar:
+Há dois tipos de teste, ambos opcionais para jogar e recomendados antes de entregar:
 
 ## Testes unitários da lógica (`logic_tests`)
 
@@ -294,7 +294,8 @@ ficam em `bin/<plataforma>/e2e/<cenario>_<rotulo>.png`. Cada cenário tem limite
   `game_over_gui`, `game_over_menu`, `gui_small_window`;
 - **Robustez e desempenho:** `marathon` (600 s de jogo com piloto automático: sem vazamento, sem erro
   de GL) e `perf_heavy` (cenário mais pesado: **falha se a média passar de 16 ms por quadro**, mesmo
-  em Debug).
+  em Debug; com OpenGL por software — `GL_RENDERER` com llvmpipe, softpipe, "Software" ou "Microsoft
+  Basic Render" — só imprime um aviso, pois ali o tempo não reflete uma GPU).
 
 No Linux/macOS o script usa `bin/Linux` / `bin/macOS`. Sem monitor (por exemplo, num servidor), é
 preciso um X virtual com OpenGL por software (`xvfb-run` e Mesa).

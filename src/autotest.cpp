@@ -23,6 +23,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1856,6 +1857,24 @@ static void Hook_PerfHeavy()
 // para o build Debug.
 static const float PERF_MAX_AVG_MS = 16.0f;
 
+// GL_RENDERER de um OpenGL por software (Mesa llvmpipe/softpipe sob Xvfb, o
+// "Microsoft Basic Render Driver" do Windows sem driver de vídeo, ...): ali o
+// tempo de quadro mede a CPU, não uma GPU, e o limite de PERF_MAX_AVG_MS vira
+// só um aviso (Revisão final, item 10).
+static bool IsSoftwareRenderer(const char* renderer)
+{
+    if (renderer == NULL)
+        return false;
+    static const char* const MARKERS[] = {"llvmpipe", "softpipe", "software", "microsoft basic render"};
+    std::string r(renderer);
+    for (size_t i = 0; i < r.size(); ++i)
+        r[i] = (char)std::tolower((unsigned char)r[i]);
+    for (size_t k = 0; k < sizeof(MARKERS) / sizeof(MARKERS[0]); ++k)
+        if (r.find(MARKERS[k]) != std::string::npos)
+            return true;
+    return false;
+}
+
 static bool Check_perf_heavy(std::string* why)
 {
     char buf[200];
@@ -1880,6 +1899,13 @@ static bool Check_perf_heavy(std::string* why)
     // precisa ficar abaixo de 16 ms (~60 fps); medido ~6.7 ms numa GTX 1070.
     if (avg > PERF_MAX_AVG_MS)
     {
+        const char* renderer = (const char*)glGetString(GL_RENDERER);
+        if (IsSoftwareRenderer(renderer))
+        {
+            printf("E2E perf_heavy: AVISO: media de %.2f ms acima de %.1f ms, mas o OpenGL e por software "
+                   "(%s): limite ignorado\n", avg, PERF_MAX_AVG_MS, renderer);
+            return true;
+        }
         snprintf(buf, sizeof(buf), "media de %.2f ms por quadro acima do limite de %.1f ms (%.0f fps)",
                  avg, PERF_MAX_AVG_MS, 1000.0f / avg);
         *why = buf;
