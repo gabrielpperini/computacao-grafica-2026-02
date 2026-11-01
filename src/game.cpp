@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <glm/common.hpp>
+#include <glm/geometric.hpp>
 
 #include "scenery.h" // TunnelCeilingHeight (perfil do teto do túnel)
 
@@ -17,6 +18,8 @@ const unsigned kSpawnSeedMix = 0x9E3779B9u;
 const unsigned kMovingSeedMix = 0x85EBCA6Bu;
 // Idem para o sorteio de quais trens parados ganham rampa (Tarefa 4.4).
 const unsigned kRampSeedMix = 0xC2B2AE35u;
+// Idem para o sorteio dos power-ups (Tarefa 5.2).
+const unsigned kPowerUpSeedMix = 0x27D4EB2Fu;
 
 bool IsBarrier(ObstacleType t)
 {
@@ -39,11 +42,20 @@ int ObstacleParts(const Obstacle& o, AABB parts[3])
     return 3;
 }
 
+glm::vec3 CoinCenter(const Coin& c)
+{
+    if (c.pulled)
+        return glm::vec3(c.px, c.py, c.ps);
+    return glm::vec3(c.lane * LANE_WIDTH, c.y, c.s);
+}
+
 Game::Game(unsigned seed)
     : mode(GameMode::PLAYING), track(seed), elapsed(0.0f), coins_collected(0),
-      score(0.0f), multiplier(1), spawn_enabled(true), ramps_enabled(true), seed_(seed),
+      score(0.0f), multiplier(1), piggy_pickups(0), spawn_enabled(true), ramps_enabled(true),
+      powerups_enabled(true), seed_(seed),
       rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0),
-      moving_rng_(seed ^ kMovingSeedMix), ramp_rng_(seed ^ kRampSeedMix)
+      moving_rng_(seed ^ kMovingSeedMix), ramp_rng_(seed ^ kRampSeedMix),
+      powerup_rng_(seed ^ kPowerUpSeedMix)
 {
     for (int i = 0; i < OBSTACLE_TYPE_COUNT; i++)
         SetObstacleExtents((ObstacleType)i, 0.5f * glm::vec3(OBSTACLE_SIZE[i][0], OBSTACLE_SIZE[i][1],
@@ -67,9 +79,13 @@ void Game::Reset()
 
     obstacles.clear();
     coins.clear();
+    powerups.clear();
     coins_collected = 0;
     score = 0.0f;
     multiplier = 1;
+    piggy_pickups = 0;
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++)
+        powerup_timer[t] = 0.0f;
     next_chunk_ = 0;
     safe_lane_ = 0;
     safe_lanes_.clear();
@@ -78,6 +94,7 @@ void Game::Reset()
     rng_.seed(seed_ ^ kSpawnSeedMix);
     moving_rng_.seed(seed_ ^ kMovingSeedMix);
     ramp_rng_.seed(seed_ ^ kRampSeedMix);
+    powerup_rng_.seed(seed_ ^ kPowerUpSeedMix);
     track = Track(seed_);
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
 }
@@ -95,9 +112,11 @@ void Game::HandleInput(Input in)
         player.lane = std::min(player.lane + 1, 1);
         break;
     case Input::JUMP:
-        // Só pula do chão (sem pulo duplo); pular cancela o rolamento.
+        // Só pula do chão (sem pulo duplo); pular cancela o rolamento. Com o
+        // tênis (Tarefa 5.2) a velocidade inicial é SNEAKERS_JUMP_MULT vezes
+        // maior (a altura, ~ o quadrado disso).
         if (player.grounded) {
-            player.vy = JUMP_VELOCITY;
+            player.vy = JUMP_VELOCITY * (PowerUpActive(PowerUpType::SNEAKERS) ? SNEAKERS_JUMP_MULT : 1.0f);
             player.grounded = false;
             player.roll_timer = 0.0f;
         }
@@ -119,6 +138,7 @@ void Game::Update(float dt)
 
     dt = std::min(std::max(dt, 0.0f), MAX_DT);
     elapsed += dt;
+    StepPowerUpTimers(dt);
 
     // Caixa do jogador antes do passo (para a caixa varrida, abaixo).
     AABB before = PlayerBox();
@@ -199,12 +219,17 @@ void Game::Update(float dt)
         }
     }
 
+    // Power-ups (esfera x caixa varrida) e puxão do ímã nas moedas, antes de
+    // coletá-las: o multiplicador recém-pego já vale para as moedas do passo.
+    CollectPowerUps(swept);
+    PullCoins(dt);
+
     // Moedas: esfera da moeda x caixa do jogador -> coletada (uma única vez).
     for (size_t i = 0; i < coins.size(); ++i) {
         Coin& c = coins[i];
         if (c.collected)
             continue;
-        glm::vec3 center(c.lane * LANE_WIDTH, c.y, c.s);
+        glm::vec3 center = CoinCenter(c);
         if (SphereIntersectsAABB(center, COIN_RADIUS, swept)) {
             c.collected = true;
             coins_collected += 1;
@@ -227,8 +252,73 @@ void Game::Update(float dt)
                                    [behind](const Obstacle& o) { return o.box.max.z < behind; }),
                     obstacles.end());
     coins.erase(std::remove_if(coins.begin(), coins.end(),
-                               [behind](const Coin& c) { return c.s < behind; }),
+                               [behind](const Coin& c) { return CoinCenter(c).z < behind; }),
                 coins.end());
+    powerups.erase(std::remove_if(powerups.begin(), powerups.end(),
+                                  [behind](const PowerUp& p) { return p.s < behind; }),
+                   powerups.end());
+}
+
+// Os tempos dos power-ups com duração correm só aqui (Update só roda em
+// PLAYING, então pausa, câmera livre e fim de jogo os congelam). O
+// multiplicador acompanha o tempo do power-up de multiplicador.
+void Game::StepPowerUpTimers(float dt)
+{
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++)
+        if (powerup_timer[t] > 0.0f)
+            powerup_timer[t] = std::max(powerup_timer[t] - dt, 0.0f);
+    multiplier = PowerUpActive(PowerUpType::MULTIPLIER) ? 2 : 1;
+}
+
+// Coleta os power-ups tocados pela caixa varrida do jogador. Pegar um tipo com
+// duração (re)põe o tempo em POWERUP_DURATION: o mesmo tipo de novo só
+// renova, não soma nem duplica o efeito. O cofrinho só registra o pedido de
+// porco (Tarefa 5.3 o consome).
+void Game::CollectPowerUps(const AABB& swept)
+{
+    for (size_t i = 0; i < powerups.size(); ++i) {
+        PowerUp& p = powerups[i];
+        if (p.collected)
+            continue;
+        glm::vec3 center(p.lane * LANE_WIDTH, POWERUP_HEIGHT, p.s);
+        if (!SphereIntersectsAABB(center, POWERUP_RADIUS, swept))
+            continue;
+        p.collected = true;
+        if (p.type == PowerUpType::PIGGY)
+            piggy_pickups += 1;
+        else
+            powerup_timer[(int)p.type] = POWERUP_DURATION;
+    }
+    multiplier = PowerUpActive(PowerUpType::MULTIPLIER) ? 2 : 1;
+}
+
+// Ímã: com ele ativo, moedas a menos de MAGNET_RADIUS do centro do jogador
+// (esfera x esfera) passam a ser "puxadas" e voam até ele; uma moeda puxada
+// continua indo mesmo depois que o ímã acaba. A velocidade soma a do jogador,
+// para alcançar moedas que ficaram para trás. Sempre com dt.
+void Game::PullCoins(float dt)
+{
+    const AABB box = PlayerBox();
+    const glm::vec3 target = 0.5f * (box.min + box.max);
+    const float step = (player.speed + MAGNET_PULL_SPEED) * dt;
+    const bool magnet = PowerUpActive(PowerUpType::MAGNET);
+    for (size_t i = 0; i < coins.size(); ++i) {
+        Coin& c = coins[i];
+        if (c.collected)
+            continue;
+        glm::vec3 pos = CoinCenter(c);
+        if (!c.pulled) {
+            if (!magnet || !SphereIntersectsSphere(pos, COIN_RADIUS, target, MAGNET_RADIUS))
+                continue;
+            c.pulled = true;
+        }
+        const glm::vec3 d = target - pos;
+        const float dist = glm::length(d);
+        pos = (dist <= step) ? target : pos + d * (step / dist);
+        c.px = pos.x;
+        c.py = pos.y;
+        c.ps = pos.z;
+    }
 }
 
 AABB Game::PlayerBox() const
@@ -303,14 +393,24 @@ void Game::MoveVertically(const AABB& before, float dt)
     player.vy -= GRAVITY * dt;
 
     // 3) Dentro do túnel a cabeça não passa da abóbada (o teto é mais baixo
-    //    nas faixas de fora); ao bater, para de subir.
-    if (track.IsTunnelAt(player.s)) {
+    //    nas faixas de fora); ao bater, para de subir. "Dentro" é a caixa toda:
+    //    basta a frente ou a traseira estar no túnel. Na aproximação (Tarefa
+    //    5.2) o teto vale com uma folga que cresce com a distância até a boca
+    //    (TUNNEL_APPROACH_SLOPE): um pulo alto (tênis, ou saindo do teto de um
+    //    trem) que entra no túnel no ar é achatado aos poucos, não de uma vez
+    //    quando a frente cruza o portal.
+    {
         const AABB box = PlayerBox();
-        const float ceiling = std::min(TunnelCeilingHeight(box.min.x), TunnelCeilingHeight(box.max.x));
-        const float push = CeilingPenetration(box, ceiling);
-        if (push > 0.0f) {
-            player.y -= push;
-            player.vy = std::min(player.vy, 0.0f);
+        float dist = track.TunnelDistanceAhead(box.max.z, TUNNEL_APPROACH_LENGTH);
+        if (dist < 0.0f && track.IsTunnelAt(box.min.z))
+            dist = 0.0f;
+        if (dist >= 0.0f) {
+            const float ceiling = std::min(TunnelCeilingHeight(box.min.x), TunnelCeilingHeight(box.max.x));
+            const float push = CeilingPenetration(box, TunnelApproachCeiling(ceiling, dist, TUNNEL_APPROACH_SLOPE));
+            if (push > 0.0f) {
+                player.y -= push;
+                player.vy = std::min(player.vy, 0.0f);
+            }
         }
     }
 
@@ -368,6 +468,12 @@ float Game::GroundHeight() const
             g = std::max(g, o.box.max.y);
     }
     return g;
+}
+
+float Game::CameraTargetHeight() const
+{
+    const float ground = GroundHeight();
+    return ground + CAMERA_JUMP_FOLLOW * std::max(player.y - ground - CAMERA_JUMP_FREE_HEIGHT, 0.0f);
 }
 
 void Game::SetObstacleExtents(ObstacleType type, glm::vec3 half_extents)
@@ -658,6 +764,7 @@ void Game::GenerateChunk(int index)
     }
 
     // Fileira de moedas na faixa segura, pulando as que cairiam numa barreira.
+    const size_t first_coin = coins.size();
     int count = RandomInt(4, 7);
     float row = (count - 1) * COIN_SPACING;
     float s0 = start + 1.0f + Random01() * (CHUNK_LENGTH - 2.0f - row);
@@ -674,5 +781,50 @@ void Game::GenerateChunk(int index)
             Coin c = {safe, s, COIN_HEIGHT, false};
             coins.push_back(c);
         }
+    }
+
+    GeneratePowerUp(index, safe, first_new, first_coin);
+}
+
+float Game::PowerUpRandom01()
+{
+    return (float)(powerup_rng_() >> 8) * (1.0f / 16777216.0f);
+}
+
+// Power-up do chunk (Tarefa 5.2): chance POWERUP_CHUNK_CHANCE, tipo uniforme,
+// na faixa segura. Os três sorteios são sempre consumidos (o gerador é
+// próprio: a sequência de obstáculos e moedas não muda). A posição é o
+// primeiro de 16 pontos igualmente espaçados no miolo do chunk (a partir do
+// sorteado) que esteja a pelo menos POWERUP_CLEARANCE de qualquer obstáculo
+// ou moeda da mesma faixa; se nenhum serve, o chunk fica sem power-up.
+void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_coin)
+{
+    const float roll = PowerUpRandom01();
+    const float kind = PowerUpRandom01();
+    const float u = PowerUpRandom01();
+    if (!powerups_enabled || roll >= POWERUP_CHUNK_CHANCE)
+        return;
+
+    const float start = index * CHUNK_LENGTH;
+    const float lo = start + 2.0f, hi = start + CHUNK_LENGTH - 2.0f;
+    const int tries = 16;
+    for (int k = 0; k < tries; ++k) {
+        const float f = std::fmod(u + (float)k / (float)tries, 1.0f);
+        const float s = lo + (hi - lo) * f;
+        bool free = true;
+        for (size_t i = first_new; i < obstacles.size() && free; ++i) {
+            const Obstacle& o = obstacles[i];
+            if (o.lane == safe && s > o.box.min.z - POWERUP_CLEARANCE && s < o.box.max.z + POWERUP_CLEARANCE)
+                free = false;
+        }
+        for (size_t i = first_coin; i < coins.size() && free; ++i)
+            if (coins[i].lane == safe && std::fabs(coins[i].s - s) < POWERUP_CLEARANCE)
+                free = false;
+        if (!free)
+            continue;
+        PowerUp p = {(PowerUpType)std::min((int)(kind * (float)POWERUP_TYPE_COUNT), POWERUP_TYPE_COUNT - 1),
+                     safe, s, false};
+        powerups.push_back(p);
+        return;
     }
 }

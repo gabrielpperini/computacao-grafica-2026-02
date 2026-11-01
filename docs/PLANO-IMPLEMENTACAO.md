@@ -585,9 +585,9 @@ public:
   posição de obstáculo.
 - Produz em `Game`: `struct PowerUp { PowerUpType type; int lane; float s; bool collected; };`,
   `float powerup_timer[4]`.
-- [ ] **Passo 1: testes** — `Test_SameTypeRenewsTimer`, `Test_MagnetPullsCoin`,
+- [x] **Passo 1: testes** — `Test_SameTypeRenewsTimer`, `Test_MagnetPullsCoin`,
   `Test_SneakersHigherJump`, `Test_MultiplierDoublesCoinScore`, `Test_PowerupExpires`.
-- [ ] **Passo 2:** implementar; `OK`; rodar; commit `IA: power-ups ímã, tênis e multiplicador`.
+- [x] **Passo 2:** implementar; `OK`; rodar; commit `IA: power-ups ímã, tênis e multiplicador`.
 
 ### Tarefa 5.3: Cofrinho e porco voador na Bézier cúbica
 

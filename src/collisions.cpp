@@ -8,7 +8,8 @@
 //     (RampHeightUnder/RampHeightAt) e pouso em cima do trem (LandsOnTop,
 //     com FootprintsOverlap), para o jogador subir e andar nos trens;
 //   - teto do túnel: quanto a cabeça do jogador passou dele
-//     (CeilingPenetration);
+//     (CeilingPenetration) e o teto efetivo na aproximação da boca
+//     (TunnelApproachCeiling);
 //   - câmera livre: ponto de mundo x volume interior do túnel
 //     (PointInsideTunnel), para escurecer o sol/céu só dentro dele;
 //   - ímã: esfera de alcance do jogador x esfera da moeda -> a moeda é atraída
@@ -150,6 +151,11 @@ bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
 float CeilingPenetration(const AABB& box, float ceiling)
 {
     return std::max(box.max.y - ceiling, 0.0f);
+}
+
+float TunnelApproachCeiling(float ceiling, float distance, float slope)
+{
+    return ceiling + slope * std::max(distance, 0.0f);
 }
 
 bool PointInsideTunnelSegment(const TrackSegment& seg, glm::vec3 point)

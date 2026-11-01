@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <vector>
 
+#include <glm/geometric.hpp>
 #include <glm/vec4.hpp>
 
 #include "camera.h"
@@ -2724,6 +2725,440 @@ void Test_PointInsideTunnel()
     assert(!PointInsideTunnelSegment(t.Segments()[0], TrackPoint(t, 10.0f, 0.0f, 3.0f)));
 }
 
+// ---------------------------------------------------------- Power-ups (5.2)
+
+// Power-up de 'type' na faixa e em s (ordem de s preservada pelo chamador).
+static PowerUp MakePowerUp(PowerUpType type, int lane, float s)
+{
+    PowerUp p = {type, lane, s, false};
+    return p;
+}
+
+static float MaxJumpHeight(Game& g)
+{
+    g.HandleInput(Input::JUMP);
+    float max_y = 0.0f;
+    for (int i = 0; i < 300 && !(i > 0 && g.player.grounded); i++) {
+        g.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        max_y = std::max(max_y, g.player.y);
+    }
+    return max_y;
+}
+
+// Pegar o power-up põe o tempo cheio; pegar outro do mesmo tipo com o primeiro
+// ainda ativo só renova (não soma nem empilha); tipos diferentes têm tempos
+// independentes.
+void Test_SameTypeRenewsTimer()
+{
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::MAGNET, 0, 3.0f));
+    g.powerups.push_back(MakePowerUp(PowerUpType::MAGNET, 0, 60.0f));
+    g.powerups.push_back(MakePowerUp(PowerUpType::MULTIPLIER, 0, 63.0f));
+    assert(!g.PowerUpActive(PowerUpType::MAGNET));
+    // (Os power-ups ficam para trás e são descartados: não indexar depois.)
+    while (!g.PowerUpActive(PowerUpType::MAGNET)) g.Update(1.0f / 60.0f);
+    assert(g.powerup_timer[(int)PowerUpType::MAGNET] > POWERUP_DURATION - 0.05f);
+    assert(g.powerup_timer[(int)PowerUpType::MAGNET] <= POWERUP_DURATION);
+
+    // Corre até logo antes do segundo ímã: o tempo já caiu bem abaixo do máximo.
+    while (g.player.s < 58.0f) g.Update(1.0f / 60.0f);
+    const float before = g.powerup_timer[(int)PowerUpType::MAGNET];
+    assert(before > 0.0f && before < POWERUP_DURATION - 3.0f);
+
+    // O tempo só sobe quando o 2º ímã é pego.
+    float prev = before;
+    while (g.powerup_timer[(int)PowerUpType::MAGNET] <= prev) {
+        prev = g.powerup_timer[(int)PowerUpType::MAGNET];
+        g.Update(1.0f / 60.0f);
+    }
+    const float renewed = g.powerup_timer[(int)PowerUpType::MAGNET];
+    assert(renewed > POWERUP_DURATION - 0.05f && renewed <= POWERUP_DURATION); // não passa de 10 s
+    assert(!g.PowerUpActive(PowerUpType::MULTIPLIER)); // ainda não pegou o outro tipo
+
+    while (!g.PowerUpActive(PowerUpType::MULTIPLIER)) g.Update(1.0f / 60.0f);
+    assert(g.PowerUpActive(PowerUpType::MAGNET));
+    assert(g.powerup_timer[(int)PowerUpType::MAGNET] < POWERUP_DURATION - 0.1f); // não renovou o ímã
+    assert(g.multiplier == 2);
+}
+
+// Com o ímã, moedas a menos de MAGNET_RADIUS do jogador (inclusive de outra
+// faixa e no ar) voam até ele e são coletadas; sem o ímã a mesma moeda passa
+// batido. Moedas longe do alcance não são tocadas.
+void Test_MagnetPullsCoin()
+{
+    // Sem ímã: moeda na faixa vizinha, ao alcance do raio, não é coletada.
+    {
+        Game g = QuietGame();
+        Coin c = {1, 4.0f, COIN_HEIGHT, false};
+        g.coins.push_back(c);
+        Run(g, 1.0f);
+        assert(g.coins_collected == 0 && !g.coins[0].pulled);
+    }
+    // Com ímã.
+    Game g = QuietGame();
+    g.powerup_timer[(int)PowerUpType::MAGNET] = POWERUP_DURATION;
+    Coin near_side = {1, 4.0f, COIN_HEIGHT, false};
+    Coin high = {-1, 5.0f, 2.2f, false};
+    Coin far_away = {1, 60.0f, COIN_HEIGHT, false}; // fora do raio por enquanto
+    g.coins.push_back(near_side);
+    g.coins.push_back(high);
+    g.coins.push_back(far_away);
+    g.Update(1.0f / 60.0f);
+    assert(g.coins[0].pulled && g.coins[1].pulled && !g.coins[2].pulled);
+    // A moeda puxada anda em direção ao jogador (já no 1º quadro está mais perto).
+    const glm::vec3 body(g.player.x, g.player.y + 0.5f * PLAYER_HEIGHT, g.player.s);
+    const glm::vec3 start(2.5f, COIN_HEIGHT, 4.0f);
+    assert(glm::distance(CoinCenter(g.coins[0]), body) < glm::distance(start, body));
+    Run(g, 1.0f);
+    assert(g.coins[0].collected && g.coins[1].collected);
+    assert(g.coins_collected == 2 && g.mode == GameMode::PLAYING);
+    assert(g.score >= 20.0f);
+    // A moeda longe só é puxada quando o jogador chega a menos de MAGNET_RADIUS.
+    assert(!g.coins[2].collected || g.player.s > 60.0f - MAGNET_RADIUS - 1.0f);
+}
+
+// Tênis: pulo com SNEAKERS_JUMP_MULT x a velocidade inicial => altura ~ x^2.
+void Test_SneakersHigherJump()
+{
+    Game plain = QuietGame();
+    const float normal = MaxJumpHeight(plain);
+    assert(normal > 1.5f && normal < 2.3f);
+
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::SNEAKERS, 0, 2.0f));
+    while (!g.powerups[0].collected) g.Update(1.0f / 60.0f);
+    while (!g.player.grounded) g.Update(1.0f / 60.0f);
+    const float high = MaxJumpHeight(g);
+    assert(nearf(high / normal, SNEAKERS_JUMP_MULT * SNEAKERS_JUMP_MULT, 0.15f));
+    assert(high > 4.0f);
+    // O pulo comum da velocidade inicial: vy = JUMP_VELOCITY * multiplicador.
+    Game h = QuietGame();
+    h.powerup_timer[(int)PowerUpType::SNEAKERS] = 1.0f;
+    h.HandleInput(Input::JUMP);
+    assert(nearf(h.player.vy, JUMP_VELOCITY * SNEAKERS_JUMP_MULT));
+}
+
+// Multiplicador: enquanto ativo (multiplier = 2) cada moeda vale 20 pontos.
+void Test_MultiplierDoublesCoinScore()
+{
+    Game plain = QuietGame();
+    Coin c = {0, 2.0f, COIN_HEIGHT, false};
+    plain.coins.push_back(c);
+    Run(plain, 0.5f);
+    assert(plain.coins_collected == 1 && plain.multiplier == 1);
+    assert(nearf(plain.score, plain.player.s + 10.0f, 0.05f));
+
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::MULTIPLIER, 0, 1.0f));
+    Coin c1 = {0, 6.0f, COIN_HEIGHT, false};
+    Coin c2 = {0, 8.0f, COIN_HEIGHT, false};
+    g.coins.push_back(c1);
+    g.coins.push_back(c2);
+    Run(g, 1.0f);
+    assert(g.coins_collected == 2 && g.multiplier == 2);
+    assert(nearf(g.score, g.player.s + 2 * 20.0f, 0.05f));
+}
+
+// Passados POWERUP_DURATION s os efeitos acabam: multiplicador volta a 1, o
+// pulo volta ao normal, o ímã deixa de puxar.
+void Test_PowerupExpires()
+{
+    Game g = QuietGame();
+    g.powerup_timer[(int)PowerUpType::MAGNET] = POWERUP_DURATION;
+    g.powerup_timer[(int)PowerUpType::SNEAKERS] = POWERUP_DURATION;
+    g.powerup_timer[(int)PowerUpType::MULTIPLIER] = POWERUP_DURATION;
+    Run(g, POWERUP_DURATION - 0.5f);
+    assert(g.PowerUpActive(PowerUpType::MAGNET) && g.PowerUpActive(PowerUpType::SNEAKERS));
+    assert(g.multiplier == 2);
+    Run(g, 0.6f);
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(g.powerup_timer[t] == 0.0f);
+    assert(g.multiplier == 1);
+    assert(!g.PowerUpActive(PowerUpType::SNEAKERS));
+    g.HandleInput(Input::JUMP);
+    assert(nearf(g.player.vy, JUMP_VELOCITY));
+    // Sem ímã, a moeda ao lado deixa de ser puxada.
+    while (!g.player.grounded) g.Update(1.0f / 60.0f);
+    Coin side = {1, g.player.s + 4.0f, COIN_HEIGHT, false};
+    g.coins.push_back(side);
+    g.Update(1.0f / 60.0f);
+    assert(!g.coins.back().pulled);
+}
+
+// Fora de PLAYING (pausa, câmera livre, fim de jogo) os tempos não correm.
+void Test_PowerupTimersFrozenOutsidePlaying()
+{
+    const GameMode modes[3] = {GameMode::PAUSED, GameMode::FREE_CAMERA, GameMode::GAME_OVER};
+    for (int m = 0; m < 3; m++) {
+        Game g = QuietGame();
+        g.powerup_timer[(int)PowerUpType::MAGNET] = 5.0f;
+        g.powerup_timer[(int)PowerUpType::MULTIPLIER] = 5.0f;
+        g.mode = modes[m];
+        Run(g, 2.0f);
+        assert(g.powerup_timer[(int)PowerUpType::MAGNET] == 5.0f);
+        assert(g.powerup_timer[(int)PowerUpType::MULTIPLIER] == 5.0f);
+    }
+    // Voltando a PLAYING (pausa e retoma) o tempo continua de onde parou.
+    Game g = QuietGame();
+    g.powerup_timer[(int)PowerUpType::MAGNET] = 5.0f;
+    g.mode = GameMode::PAUSED;
+    Run(g, 3.0f);
+    g.mode = GameMode::PLAYING;
+    Run(g, 1.0f);
+    assert(nearf(g.powerup_timer[(int)PowerUpType::MAGNET], 4.0f, 0.05f));
+}
+
+// O cofrinho não tem duração: pegá-lo só registra o evento (para a Tarefa
+// 5.3) e não mexe nos tempos nem no multiplicador.
+void Test_PiggyPickupRecorded()
+{
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 3.0f));
+    g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 20.0f));
+    assert(g.piggy_pickups == 0);
+    while (g.piggy_pickups == 0) g.Update(1.0f / 60.0f);
+    assert(g.piggy_pickups == 1);
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(g.powerup_timer[t] == 0.0f);
+    assert(g.multiplier == 1);
+    Run(g, 0.5f);
+    assert(g.piggy_pickups == 1); // coletado uma única vez
+    while (g.piggy_pickups == 1) g.Update(1.0f / 60.0f);
+    assert(g.piggy_pickups == 2);
+}
+
+// Power-up de outra faixa não é coletado; rolando também pega (a esfera de
+// coleta cobre a altura do rolamento).
+void Test_PowerupOtherLaneNotCollected()
+{
+    Game g = QuietGame();
+    g.powerups.push_back(MakePowerUp(PowerUpType::MULTIPLIER, 1, 3.0f));
+    Run(g, 1.0f);
+    assert(!g.powerups[0].collected && !g.PowerUpActive(PowerUpType::MULTIPLIER));
+    Game r = QuietGame();
+    r.powerups.push_back(MakePowerUp(PowerUpType::MAGNET, 0, 3.0f));
+    r.HandleInput(Input::ROLL);
+    Run(r, 0.3f);
+    assert(r.powerups[0].collected);
+}
+
+// Câmera nos pulos: o pulo comum não a move; o do tênis a sobe (parte do que
+// passa de CAMERA_JUMP_FREE_HEIGHT) sem nunca passar do jogador.
+void Test_CameraFollowsHighJump()
+{
+    Game plain = QuietGame();
+    plain.HandleInput(Input::JUMP);
+    for (int i = 0; i < 60; i++) {
+        plain.Update(1.0f / 60.0f);
+        assert(plain.CameraTargetHeight() == plain.GroundHeight());
+    }
+    Game g = QuietGame();
+    g.powerup_timer[(int)PowerUpType::SNEAKERS] = POWERUP_DURATION;
+    g.HandleInput(Input::JUMP);
+    float max_target = 0.0f;
+    for (int i = 0; i < 90; i++) {
+        g.Update(1.0f / 60.0f);
+        const float target = g.CameraTargetHeight();
+        assert(target >= g.GroundHeight() && target < g.player.y + 1e-3f);
+        max_target = std::max(max_target, target);
+    }
+    assert(max_target > 1.5f && max_target < 3.0f);
+    assert(g.player.grounded && g.CameraTargetHeight() == 0.0f);
+}
+
+// Reset zera tempos, power-ups, cofrinhos e refaz os mesmos power-ups.
+void Test_PowerupResetClears()
+{
+    Game g(5);
+    g.GenerateChunksUntil(60 * CHUNK_LENGTH);
+    const std::vector<PowerUp> first = g.powerups;
+    assert(!first.empty());
+    g.powerup_timer[(int)PowerUpType::MAGNET] = 4.0f;
+    g.piggy_pickups = 3;
+    g.multiplier = 2;
+    g.Reset();
+    assert(g.powerups.empty() && g.piggy_pickups == 0 && g.multiplier == 1);
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(g.powerup_timer[t] == 0.0f);
+    g.GenerateChunksUntil(60 * CHUNK_LENGTH);
+    assert(g.powerups.size() == first.size());
+    for (size_t i = 0; i < first.size(); i++)
+        assert(g.powerups[i].type == first[i].type && g.powerups[i].lane == first[i].lane &&
+               g.powerups[i].s == first[i].s);
+}
+
+// Spawn: raro (~1 por 6 chunks), todos os tipos aparecem, sempre na faixa
+// segura do chunk, dentro do chunk, e nunca sobre obstáculo ou moeda.
+void Test_PowerupSpawnRules()
+{
+    int total = 0, chunks_total = 0;
+    int per_type[POWERUP_TYPE_COUNT] = {0, 0, 0, 0};
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Game g(seed);
+        const int chunks = 300;
+        g.GenerateChunksUntil(chunks * CHUNK_LENGTH);
+        chunks_total += chunks;
+        for (size_t i = 0; i < g.powerups.size(); i++) {
+            const PowerUp& p = g.powerups[i];
+            total++;
+            per_type[(int)p.type]++;
+            const int chunk = (int)std::floor(p.s / CHUNK_LENGTH);
+            assert(chunk >= 1);
+            assert(p.lane == g.SafeLaneOfChunk(chunk));
+            assert(!p.collected);
+            if (i > 0) assert(g.powerups[i].s >= g.powerups[i - 1].s); // ordem de s
+            const glm::vec3 c(p.lane * LANE_WIDTH, POWERUP_HEIGHT, p.s);
+            // Nada sólido a menos de POWERUP_CLEARANCE em s, na mesma faixa.
+            for (size_t k = 0; k < g.obstacles.size(); k++) {
+                const Obstacle& o = g.obstacles[k];
+                if (o.lane != p.lane) continue;
+                AABB parts[3];
+                int n = ObstacleParts(o, parts);
+                for (int q = 0; q < n; q++) {
+                    assert(!SphereIntersectsAABB(c, POWERUP_RADIUS, parts[q]));
+                    assert(p.s < parts[q].min.z - POWERUP_CLEARANCE + 1e-3f ||
+                           p.s > parts[q].max.z + POWERUP_CLEARANCE - 1e-3f);
+                }
+            }
+            for (size_t k = 0; k < g.coins.size(); k++) {
+                const Coin& co = g.coins[k];
+                assert(!SphereIntersectsSphere(c, POWERUP_RADIUS, CoinCenter(co), COIN_RADIUS));
+                if (co.lane == p.lane) assert(std::fabs(co.s - p.s) >= POWERUP_CLEARANCE - 1e-3f);
+            }
+        }
+    }
+    const float rate = (float)total / (float)chunks_total;
+    assert(rate > 0.10f && rate < 0.22f); // ~ 1/6
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(per_type[t] > 0);
+    printf("  [power-ups] %d em %d chunks (%.3f por chunk); ima %d, tenis %d, x2 %d, cofrinho %d\n",
+           total, chunks_total, rate, per_type[0], per_type[1], per_type[2], per_type[3]);
+}
+
+// Gerador próprio: ligar/desligar power-ups não muda obstáculos nem moedas, e
+// a mesma semente dá os mesmos power-ups.
+void Test_PowerupSpawnDeterministic()
+{
+    for (unsigned seed = 1; seed <= 5; seed++) {
+        Game a(seed), b(seed), none(seed);
+        none.powerups_enabled = false;
+        none.Reset();
+        a.GenerateChunksUntil(200 * CHUNK_LENGTH);
+        b.GenerateChunksUntil(200 * CHUNK_LENGTH);
+        none.GenerateChunksUntil(200 * CHUNK_LENGTH);
+        assert(none.powerups.empty() && !a.powerups.empty());
+        assert(a.powerups.size() == b.powerups.size());
+        for (size_t i = 0; i < a.powerups.size(); i++)
+            assert(a.powerups[i].type == b.powerups[i].type && a.powerups[i].lane == b.powerups[i].lane &&
+                   a.powerups[i].s == b.powerups[i].s);
+        assert(a.obstacles.size() == none.obstacles.size() && a.coins.size() == none.coins.size());
+        for (size_t i = 0; i < a.obstacles.size(); i++)
+            assert(a.obstacles[i].type == none.obstacles[i].type && a.obstacles[i].s == none.obstacles[i].s &&
+                   a.obstacles[i].lane == none.obstacles[i].lane);
+        for (size_t i = 0; i < a.coins.size(); i++)
+            assert(a.coins[i].lane == none.coins[i].lane && a.coins[i].s == none.coins[i].s);
+    }
+}
+
+// O que ficou mais de DESPAWN_BEHIND para trás é descartado (sem vazamento).
+void Test_PowerupDespawnBehind()
+{
+    Game g(3);
+    g.GenerateChunksUntil(100 * CHUNK_LENGTH);
+    const size_t before = g.powerups.size();
+    assert(before > 5);
+    g.player.s = 1500.0f; // teleporte: tudo antes de 1480 m fica para trás
+    g.track.EnsureGeneratedUntil(1500.0f + SPAWN_AHEAD);
+    g.spawn_enabled = false;
+    g.Update(1.0f / 60.0f);
+    assert(g.powerups.size() < before);
+    for (size_t i = 0; i < g.powerups.size(); i++)
+        assert(g.powerups[i].s >= g.player.s - DESPAWN_BEHIND);
+}
+
+// Teto na aproximação do túnel: contínuo (no portal vale o teto de verdade) e
+// crescente com a distância; Track::TunnelDistanceAhead dá 0 dentro, a
+// distância até a boca à frente, ou -1.
+void Test_TunnelApproach()
+{
+    assert(TunnelApproachCeiling(7.0f, 0.0f, 0.25f) == 7.0f);
+    assert(TunnelApproachCeiling(7.0f, -3.0f, 0.25f) == 7.0f);
+    assert(nearf(TunnelApproachCeiling(7.0f, 8.0f, 0.25f), 9.0f));
+    Track t(1);
+    const float L0 = t.Segments()[0].length;
+    t.AppendSegment(50.0f, 0.0f, true);
+    assert(t.TunnelDistanceAhead(L0 + 10.0f, 16.0f) == 0.0f);
+    assert(t.TunnelDistanceAhead(L0, 16.0f) == 0.0f);
+    assert(nearf(t.TunnelDistanceAhead(L0 - 5.0f, 16.0f), 5.0f));
+    assert(t.TunnelDistanceAhead(L0 - 17.0f, 16.0f) < 0.0f);
+    assert(t.TunnelDistanceAhead(0.0f, 16.0f) < 0.0f || L0 <= 16.0f);
+}
+
+// Tênis + túnel (Tarefas 4.4/5.2): um pulo alto que ENTRA no túnel no ar não
+// leva um tranco. Em cada quadro no ar, o teto pode (a) absorver a subida do
+// quadro (bater a cabeça: para de subir) e (b) acompanhar a descida suave da
+// folga da aproximação; o que passar disso é um "tranco" (a cabeça sendo
+// empurrada para baixo além do movimento livre). Esse excesso fica abaixo de
+// TUNNEL_BOUND, também saindo do teto de um trem (pulo de 3.2 + 4.5 m) em
+// direção à boca do túnel; e dentro do túnel a cabeça nunca passa da abóbada.
+static float MaxCeilingCorrection(Game& g, bool* entered_tunnel_airborne)
+{
+    float worst = 0.0f;
+    const float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 400; i++) {
+        const bool air = !g.player.grounded;
+        const float y0 = g.player.y, vy0 = g.player.vy;
+        g.Update(dt);
+        assert(g.mode == GameMode::PLAYING);
+        if (air && !g.player.grounded) {
+            // Movimento livre do quadro (cinemática exata sob gravidade).
+            const float free_dy = vy0 * dt - 0.5f * GRAVITY * dt * dt;
+            const float pushed_down = free_dy - (g.player.y - y0);
+            worst = std::max(worst, pushed_down - std::max(free_dy, 0.0f));
+            if (g.track.IsTunnelAt(g.player.s))
+                *entered_tunnel_airborne = true;
+        }
+        const AABB p = g.PlayerBox();
+        if (g.track.IsTunnelAt(p.max.z) || g.track.IsTunnelAt(p.min.z)) {
+            const float ceiling = std::min(TunnelCeilingHeight(p.min.x), TunnelCeilingHeight(p.max.x));
+            assert(p.max.y <= ceiling + 1e-3f);
+        }
+        if (g.player.grounded && i > 5) break;
+    }
+    return worst;
+}
+
+void Test_SneakersTunnelEntryNoPop()
+{
+    const float TUNNEL_BOUND = 0.07f; // ~ TUNNEL_APPROACH_SLOPE * 12.5 m/s / 60 + folga
+    int cases = 0, entered_cases = 0;
+    for (int lane = 0; lane <= 1; lane++)
+        for (int from_roof = 0; from_roof <= 1; from_roof++)
+            for (float off = 2.0f; off <= 24.0f; off += 0.5f) {
+                Game g = QuietGame();
+                g.track = Track(1);
+                const float L0 = g.track.Segments()[0].length;
+                g.track.AppendSegment(200.0f, 0.0f, true);
+                g.player.lane = lane;
+                g.player.x = lane * LANE_WIDTH;
+                g.player.s = L0 - off;
+                g.powerup_timer[(int)PowerUpType::SNEAKERS] = POWERUP_DURATION;
+                if (from_roof) {
+                    // Já no ar, saindo do teto de um trem (3.2 m), pulo de tênis.
+                    g.player.y = 3.2f;
+                    g.player.grounded = false;
+                    g.player.vy = JUMP_VELOCITY * SNEAKERS_JUMP_MULT;
+                } else {
+                    g.HandleInput(Input::JUMP);
+                }
+                bool entered = false;
+                const float worst = MaxCeilingCorrection(g, &entered);
+                assert(worst <= TUNNEL_BOUND);
+                cases++;
+                if (entered) entered_cases++;
+            }
+    assert(entered_cases > 20); // o varrimento realmente entra no túnel no ar
+    printf("  [tunel+tenis] %d saltos, %d entraram no tunel no ar, correcao do teto por quadro <= %.2f m\n",
+           cases, entered_cases, TUNNEL_BOUND);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -2850,6 +3285,22 @@ int main()
     Test_FreeCamPitchClamp();
     Test_FreeCamMoveDt();
     Test_PointInsideTunnel();
+    // Power-ups (5.2)
+    Test_SameTypeRenewsTimer();
+    Test_MagnetPullsCoin();
+    Test_SneakersHigherJump();
+    Test_MultiplierDoublesCoinScore();
+    Test_PowerupExpires();
+    Test_PowerupTimersFrozenOutsidePlaying();
+    Test_PiggyPickupRecorded();
+    Test_PowerupOtherLaneNotCollected();
+    Test_CameraFollowsHighJump();
+    Test_PowerupResetClears();
+    Test_PowerupSpawnRules();
+    Test_PowerupSpawnDeterministic();
+    Test_PowerupDespawnBehind();
+    Test_TunnelApproach();
+    Test_SneakersTunnelEntryNoPop();
     printf("OK\n");
     return 0;
 }

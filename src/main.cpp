@@ -350,9 +350,18 @@ void DrawTunnelLamp(const Track& track, float s);
 // de TUNNEL_DIM_TIME s; veja StepTunnelDimming() em scenery.cpp).
 float g_TunnelDimming = 0.0f;
 
-// Power-ups e porco voador: modelos já carregados (usados nas Fases 5.2/5.3);
-// por enquanto só aparecem no cenário E2E "showcase_props".
-void DrawShowcaseProps();
+// Power-ups (Tarefa 5.2): o modelo de cada tipo flutua (sobe e desce) e gira
+// em torno do eixo vertical, com o ângulo e a fase acumulados por dt. O maior
+// lado do modelo vira POWERUP_DRAW_SIZE (um pouco menor que a esfera de coleta,
+// de diâmetro 2 * POWERUP_RADIUS). O porco voador (Tarefa 5.3) está carregado
+// mas ainda não é desenhado.
+const float POWERUP_DRAW_SIZE  = 1.2f;  // m
+const float POWERUP_SPIN_SPEED = 2.0f;  // rad/s
+const float POWERUP_BOB_SPEED  = 3.0f;  // rad/s (fase da flutuação)
+const float POWERUP_BOB_HEIGHT = 0.12f; // m (amplitude)
+float g_PowerUpSpin = 0.0f;             // ângulo atual (acumula dt)
+float g_PowerUpBob  = 0.0f;             // fase da flutuação (acumula dt)
+void DrawPowerUp(const PowerUp& p);
 
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
@@ -600,7 +609,7 @@ int main(int argc, char* argv[])
         Autotest_Start();
 
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
+                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 
     // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
@@ -635,7 +644,11 @@ int main(int argc, char* argv[])
         // Câmera livre: o jogo fica congelado (nada se anima, nem as moedas).
         const bool free_camera = g_Game.mode == GameMode::FREE_CAMERA;
         if (!free_camera)
+        {
             g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
+            g_PowerUpSpin = std::fmod(g_PowerUpSpin + POWERUP_SPIN_SPEED * dt, 6.2831853f);
+            g_PowerUpBob = std::fmod(g_PowerUpBob + POWERUP_BOB_SPEED * dt, 6.2831853f);
+        }
         // Passada do personagem: a fase avança com a distância corrida (para
         // de mexer as pernas no GAME_OVER).
         if (g_Game.mode == GameMode::PLAYING)
@@ -659,7 +672,7 @@ int main(int argc, char* argv[])
         else
         {
             g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
-                            g_Game.GroundHeight());
+                            g_Game.CameraTargetHeight());
             camera_in_tunnel = g_Game.track.IsTunnelAt(player.s - g_Camera.Back());
         }
         // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
@@ -836,9 +849,10 @@ int main(int argc, char* argv[])
             if (!g_Game.coins[i].collected)
                 DrawCoin(g_Game.coins[i]);
 
-        // Cenário E2E "showcase_props": power-ups e porco voador em exposição.
-        if (Autotest_ShowProps())
-            DrawShowcaseProps();
+        // Power-ups ainda não coletados: o modelo do tipo, flutuando e girando.
+        for (size_t i = 0; i < g_Game.powerups.size(); ++i)
+            if (!g_Game.powerups[i].collected)
+                DrawPowerUp(g_Game.powerups[i]);
         // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
         // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
@@ -981,10 +995,12 @@ Material MaterialFor(int object_id)
     case RAMP:        m = { white, glm::vec3(0.35f), 24.0f, none, 0 }; break;
     case TUNNEL:      m = { white, glm::vec3(0.10f), 12.0f, none, 0 }; break;  // tijolo: quase fosco
     case COIN:        m = { glm::vec3(1.25f, 1.1f, 0.85f), glm::vec3(0.90f), 32.0f, none, 1 }; break; // ouro; Gouraud
-    case POWERUP_MAGNET:
-    case POWERUP_SNEAKERS:
-    case POWERUP_MULTIPLIER:
-    case POWERUP_PIGGY:
+    // Power-ups: plástico brilhante com um leve brilho próprio (emissivo) na cor
+    // do tipo, para se destacarem na pista (e no túnel escuro).
+    case POWERUP_MAGNET:     m = { white, glm::vec3(0.50f), 48.0f, glm::vec3(0.22f, 0.04f, 0.04f), 0 }; break;
+    case POWERUP_SNEAKERS:   m = { white, glm::vec3(0.50f), 48.0f, glm::vec3(0.04f, 0.12f, 0.22f), 0 }; break;
+    case POWERUP_MULTIPLIER: m = { white, glm::vec3(0.50f), 48.0f, glm::vec3(0.22f, 0.17f, 0.03f), 0 }; break;
+    case POWERUP_PIGGY:      m = { white, glm::vec3(0.50f), 48.0f, glm::vec3(0.22f, 0.07f, 0.10f), 0 }; break;
     case FLYING_PIG:  m = { white, glm::vec3(0.50f), 48.0f, none, 0 }; break;  // plástico brilhante
     case LAMP_POLE:   m = { white, glm::vec3(0.60f), 32.0f, none, 0 }; break;
     case LAMP:        m = { glm::vec3(0.10f), none, 1.0f, glm::vec3(1.5f, 1.15f, 0.65f), 0 }; break; // lâmpada acesa
@@ -1159,12 +1175,14 @@ void DrawObstacle(const Obstacle& o)
     DrawObject(name, model, id, g_Tex.atlas, UV_OBJ);
 }
 
-// Moeda de pé, centrada na altura c.y, girando em torno do eixo vertical.
+// Moeda de pé, centrada na altura c.y, girando em torno do eixo vertical. Uma
+// moeda puxada pelo ímã (Tarefa 5.2) está em posição livre: CoinCenter.
 void DrawCoin(const Coin& c)
 {
     const float k = COIN_DRAW_DIAMETER / ObjectSize("coin").y;
-    glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(c.s), c.lane * LANE_WIDTH,
-                                     c.y - 0.5f * COIN_DRAW_DIAMETER, g_CoinSpin)
+    const glm::vec3 center = CoinCenter(c);
+    glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(center.z), center.x,
+                                     center.y - 0.5f * COIN_DRAW_DIAMETER, g_CoinSpin)
                     * Matrix_OnGround("coin", k, k, k);
     DrawObject("coin", model, COIN, g_Tex.atlas, UV_OBJ);
 }
@@ -1249,28 +1267,22 @@ void DrawTunnelLamp(const Track& track, float s)
     DrawObject("the_cube", model, LAMP, g_Tex.metal, UV_BOX, 0.5f);
 }
 
-// Cenário E2E "showcase_props": os power-ups (ímã, tênis, x2, cofrinho) em
-// fila sobre a pista e o porco voador acima deles, para conferir os modelos
-// antes das Tarefas 5.2/5.3.
-void DrawShowcaseProps()
+// Power-up na pista: o modelo do tipo, com o centro na altura POWERUP_HEIGHT
+// (mais a flutuação), girando. Cada tipo tem seu objeto (e material) próprio.
+void DrawPowerUp(const PowerUp& p)
 {
-    static const char* const PROPS[4] = {"powerup_magnet", "powerup_sneaker", "powerup_multiplier", "piggy_bank"};
-    static const int PROP_IDS[4] = {POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_PIGGY};
-    const float s = 7.0f, scale = 1.6f;
-    const TrackFrame f = g_Game.track.FrameAt(s);
-    for (int i = 0; i < 4; ++i)
-    {
-        glm::mat4 model = TrackPlacement(f, -3.3f + 2.2f * i, 0.6f, 0.6f)
-                        * Matrix_OnGround(PROPS[i], scale, scale, scale);
-        DrawObject(PROPS[i], model, PROP_IDS[i], g_Tex.atlas, UV_OBJ);
-    }
-    static const char* const PIG[3] = {"flying_pig_body", "flying_pig_wing_left", "flying_pig_wing_right"};
-    // Porco de frente para a câmera, um pouco virado, abaixo da altura da
-    // câmera (as asas, finas, aparecem vistas de cima).
-    glm::mat4 pig = TrackPlacement(g_Game.track.FrameAt(s + 6.0f), 0.0f, 0.4f, 2.6f)
-                  * Matrix_Scale(2.2f, 2.2f, 2.2f);
-    for (int i = 0; i < 3; ++i)
-        DrawObject(PIG[i], pig, FLYING_PIG, g_Tex.atlas, UV_OBJ);
+    static const char* const NAMES[POWERUP_TYPE_COUNT] = {"powerup_magnet", "powerup_sneaker",
+                                                           "powerup_multiplier", "piggy_bank"};
+    static const int IDS[POWERUP_TYPE_COUNT] = {POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER,
+                                                POWERUP_PIGGY};
+    const char* name = NAMES[(int)p.type];
+    const glm::vec3 size = ObjectSize(name);
+    const float k = POWERUP_DRAW_SIZE / std::max(size.x, std::max(size.y, size.z));
+    const float bob = POWERUP_BOB_HEIGHT * std::sin(g_PowerUpBob + 0.7f * p.s); // fase por power-up
+    glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(p.s), p.lane * LANE_WIDTH,
+                                     POWERUP_HEIGHT + bob - 0.5f * k * size.y, g_PowerUpSpin)
+                    * Matrix_OnGround(name, k, k, k);
+    DrawObject(name, model, IDS[(int)p.type], g_Tex.atlas, UV_OBJ);
 }
 
 // Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a
@@ -1279,7 +1291,7 @@ void RestartRun()
 {
     g_Game.Reset();
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
+                  g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
     g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 }
 
@@ -2037,7 +2049,7 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
             // certo (sem suavizar desde a posição da câmera livre).
             g_Game.mode = GameMode::PLAYING;
             g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
-                          g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
+                          g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.CameraTargetHeight());
             if (!Autotest_Active())
             {
                 // Desfaz exatamente o que a entrada fez (movimento bruto e captura).
@@ -2244,6 +2256,29 @@ void TextRendering_ShowRunInfo(GLFWwindow* window)
     PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 2.5f * hud_scale * lineheight, hud_scale, 1.0f, 0.85f, 0.2f);
     snprintf(buffer, sizeof(buffer), "Distancia: %.0f m", g_Game.player.s);
     PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - 3.5f * hud_scale * lineheight, hud_scale, 1.0f, 1.0f, 1.0f);
+
+    // Power-ups ativos (Tarefa 5.2): nome, barra do tempo restante e segundos.
+    // ASCII apenas: a fonte do texto não tem acentos.
+    static const char* const POWERUP_HUD_NAMES[3] = {"IMA", "TENIS", "x2"};
+    static const float POWERUP_HUD_COLORS[3][3] = {
+        {1.0f, 0.45f, 0.4f}, {0.45f, 0.8f, 1.0f}, {1.0f, 0.85f, 0.3f}};
+    const int bar_cells = 10;
+    int line = 0;
+    for (int t = 0; t < 3; ++t)
+    {
+        const float left = g_Game.powerup_timer[t];
+        if (left <= 0.0f)
+            continue;
+        char bar[bar_cells + 1];
+        const int filled = std::min(bar_cells, (int)std::ceil(bar_cells * left / POWERUP_DURATION));
+        for (int i = 0; i < bar_cells; ++i)
+            bar[i] = (i < filled) ? '=' : ' ';
+        bar[bar_cells] = '\0';
+        snprintf(buffer, sizeof(buffer), "%-5s [%s] %2ds", POWERUP_HUD_NAMES[t], bar, (int)std::ceil(left));
+        PrintShadowed(window, buffer, -1.0f + charwidth, 1.0f - (4.8f + 1.0f * line) * hud_scale * lineheight,
+                      hud_scale, POWERUP_HUD_COLORS[t][0], POWERUP_HUD_COLORS[t][1], POWERUP_HUD_COLORS[t][2]);
+        ++line;
+    }
 
     if ( !g_ShowInfoText )
         return;

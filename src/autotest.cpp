@@ -235,6 +235,121 @@ static bool Check_showcase(std::string* why)
     return true;
 }
 
+// powerups (Tarefa 5.2): ímã, multiplicador, tênis e cofrinho em fila na faixa
+// do jogador; moedas nas faixas VIZINHAS (só o ímã as alcança), em seguida
+// duas na faixa dele bem depois de os efeitos acabarem. Sem obstáculos.
+static const int PU_SIDE_COINS = 12; // 6 em cada faixa vizinha
+static void SetupPowerups()
+{
+    SetupNoSpawn();
+    const PowerUp magnet = {PowerUpType::MAGNET, 0, 8.0f, false};
+    const PowerUp mult   = {PowerUpType::MULTIPLIER, 0, 14.0f, false};
+    const PowerUp shoes  = {PowerUpType::SNEAKERS, 0, 20.0f, false};
+    const PowerUp piggy  = {PowerUpType::PIGGY, 0, 27.0f, false};
+    g_Game.powerups.push_back(magnet);
+    g_Game.powerups.push_back(mult);
+    g_Game.powerups.push_back(shoes);
+    g_Game.powerups.push_back(piggy);
+    for (int i = 0; i < 6; ++i)
+        for (int lane = -1; lane <= 1; lane += 2)
+        {
+            Coin c = {lane, 34.0f + i * COIN_SPACING, COIN_HEIGHT, false};
+            g_Game.coins.push_back(c);
+        }
+    // Depois dos 10 s dos efeitos (o jogador está em ~s = 170 aos 14 s).
+    for (int i = 0; i < 2; ++i)
+    {
+        Coin c = {0, 190.0f + i * COIN_SPACING, COIN_HEIGHT, false};
+        g_Game.coins.push_back(c);
+    }
+}
+
+static int   g_PuPrevCoins   = 0;
+static float g_PuPrevScore   = 0.0f;
+static float g_PuPrevS       = 0.0f;
+static int   g_PuDoubled     = 0;     // moedas que valeram 20 pontos
+static int   g_PuSingle      = 0;     // moedas que valeram 10 pontos
+static bool  g_PuSawSneakers = false; // tênis já esteve ativo
+static float g_PuMaxYBoost   = 0.0f;  // maior altura com o tênis ativo
+static float g_PuMaxYPlain   = 0.0f;  // maior altura depois que ele acabou
+static bool  g_PuSawMultipl  = false; // multiplicador x2 já esteve ativo
+
+static void Hook_Powerups()
+{
+    const int gained = g_Game.coins_collected - g_PuPrevCoins;
+    if (gained > 0)
+    {
+        const float per_coin = ((g_Game.score - g_PuPrevScore) - (g_Game.player.s - g_PuPrevS)) / gained;
+        if (std::fabs(per_coin - 20.0f) < 0.5f)
+            g_PuDoubled += gained;
+        else if (std::fabs(per_coin - 10.0f) < 0.5f)
+            g_PuSingle += gained;
+    }
+    g_PuPrevCoins = g_Game.coins_collected;
+    g_PuPrevScore = g_Game.score;
+    g_PuPrevS     = g_Game.player.s;
+
+    if (g_Game.multiplier == 2)
+        g_PuSawMultipl = true;
+    if (g_Game.PowerUpActive(PowerUpType::SNEAKERS))
+    {
+        g_PuSawSneakers = true;
+        g_PuMaxYBoost = std::max(g_PuMaxYBoost, g_Game.player.y);
+    }
+    else if (g_PuSawSneakers)
+        g_PuMaxYPlain = std::max(g_PuMaxYPlain, g_Game.player.y);
+}
+
+static bool Check_powerups(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "jogo terminou (nao ha obstaculos neste cenario)";
+        return false;
+    }
+    if (g_Game.coins_collected != PU_SIDE_COINS + 2)
+    {
+        snprintf(buf, sizeof(buf), "moedas = %d (esperava %d: %d das faixas vizinhas, so pelo ima, + 2)",
+                 g_Game.coins_collected, PU_SIDE_COINS + 2, PU_SIDE_COINS);
+        *why = buf;
+        return false;
+    }
+    if (g_PuDoubled != PU_SIDE_COINS || g_PuSingle != 2)
+    {
+        snprintf(buf, sizeof(buf), "moedas a 20 pts = %d (esperava %d), a 10 pts = %d (esperava 2)",
+                 g_PuDoubled, PU_SIDE_COINS, g_PuSingle);
+        *why = buf;
+        return false;
+    }
+    if (!g_PuSawMultipl || g_Game.multiplier != 1)
+    {
+        *why = "o multiplicador nao ficou ativo ou nao voltou a 1 ao acabar";
+        return false;
+    }
+    if (g_Game.piggy_pickups != 1)
+    {
+        snprintf(buf, sizeof(buf), "cofrinhos pegos = %d (esperava 1)", g_Game.piggy_pickups);
+        *why = buf;
+        return false;
+    }
+    for (int t = 0; t < POWERUP_TYPE_COUNT; ++t)
+        if (g_Game.powerup_timer[t] != 0.0f)
+        {
+            *why = "algum power-up ainda ativo no fim (devia ter expirado)";
+            return false;
+        }
+    if (g_PuMaxYBoost < 4.0f || g_PuMaxYPlain < 1.5f || g_PuMaxYPlain > 2.3f ||
+        g_PuMaxYBoost < 1.8f * g_PuMaxYPlain)
+    {
+        snprintf(buf, sizeof(buf), "altura do pulo com tenis = %.2f m, sem tenis = %.2f m", g_PuMaxYBoost,
+                 g_PuMaxYPlain);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 // coins: sem entrada, o jogador passa pela fileira de boas-vindas do 1º chunk
 // (WELCOME_COIN_COUNT moedas na faixa inicial, antes de qualquer obstáculo) e
 // coleta todas. Não depende da semente: o 1º chunk é sempre igual.
@@ -1067,16 +1182,25 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
-    // showcase_props: modelos dos power-ups (ímã, tênis, x2, cofrinho) e do
-    // porco voador, que só entram no jogo nas Tarefas 5.2/5.3.
+    // powerups: ímã, multiplicador x2, tênis e cofrinho na faixa do jogador;
+    // moedas nas faixas vizinhas só são coletadas pelo ímã e valem o dobro com o
+    // x2; o pulo com tênis é bem mais alto que o comum, depois de expirar.
     {
         AutotestScenario s;
-        s.name        = "showcase_props";
-        s.duration    = 0.3f;
-        s.final_check = NULL;
-        s.setup       = SetupNoSpawn;
-        s.show_props  = true;
-        s.steps.push_back(AutotestStep{0.1f, 0, 0, "props"});
+        s.name        = "powerups";
+        s.duration    = 16.0f;
+        s.final_check = Check_powerups;
+        s.setup       = SetupPowerups;
+        s.frame_hook  = Hook_Powerups;
+        s.steps.push_back(AutotestStep{0.3f, 0, 0, "ahead"});
+        s.steps.push_back(AutotestStep{1.9f, 0, 0, "picked"});
+        s.steps.push_back(AutotestStep{2.4f, 0, 0, "magnet_pull"});
+        s.steps.push_back(AutotestStep{2.8f, GLFW_KEY_UP, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.35f, 0, 0, "sneakers_jump"});
+        s.steps.push_back(AutotestStep{5.0f, 0, 0, "timers_mid"});
+        s.steps.push_back(AutotestStep{8.0f, 0, 0, "timers_low"});
+        s.steps.push_back(AutotestStep{13.0f, GLFW_KEY_UP, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{13.3f, 0, 0, "expired_jump"});
         scenarios.push_back(s);
     }
 
@@ -1299,7 +1423,6 @@ static AutotestScenario g_Scenario;
 static size_t           g_NextStep = 0;
 
 bool  Autotest_Active()    { return g_Active; }
-bool  Autotest_ShowProps() { return g_Active && g_Scenario.show_props; }
 float Autotest_FixedDt()   { return AUTOTEST_DT; }
 
 void Autotest_Start()

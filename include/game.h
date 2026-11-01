@@ -68,8 +68,53 @@ const float OBSTACLE_SIZE[OBSTACLE_TYPE_COUNT][3] = {
 // trem móvel não passa daí (começo da reta onde ele nasceu; -1e9 = sem limite).
 struct Obstacle { ObstacleType type; int lane; float s, velocity; AABB box; float min_s; };
 
-// Moeda: esfera de raio COIN_RADIUS centrada em (lane*LANE_WIDTH, y, s).
-struct Coin { int lane; float s, y; bool collected; };
+// Moeda: esfera de raio COIN_RADIUS centrada em (lane*LANE_WIDTH, y, s). Com o
+// ímã (Tarefa 5.2) a moeda vira "puxada" (pulled): passa a ter posição livre
+// (px, py, ps), em coordenadas de pista, e voa até o jogador. Os campos extras
+// ficam depois de 'collected' para que {lane, s, y, false} continue valendo.
+struct Coin { int lane; float s, y; bool collected; bool pulled; float px, py, ps; };
+
+// Centro da moeda em coordenadas de pista (x, y, s): o da faixa, ou a posição
+// livre se ela está sendo puxada pelo ímã.
+glm::vec3 CoinCenter(const Coin& c);
+
+// ---- Power-ups (Tarefa 5.2) ----
+//
+// Ímã, tênis e multiplicador duram POWERUP_DURATION; pegar o mesmo tipo de
+// novo só renova o tempo (não empilha). O cofrinho não tem duração: pegá-lo
+// só registra o evento (Game::piggy_pickups), que a Tarefa 5.3 consome para
+// lançar o porco voador. Aparecem na faixa segura do chunk, a altura de
+// moeda, nunca em cima de obstáculo ou moeda.
+enum class PowerUpType { MAGNET, SNEAKERS, MULTIPLIER, PIGGY };
+const int POWERUP_TYPE_COUNT = 4;
+
+// Esfera de coleta de raio POWERUP_RADIUS centrada em (lane*LANE_WIDTH,
+// POWERUP_HEIGHT, s).
+struct PowerUp { PowerUpType type; int lane; float s; bool collected; };
+
+// Raio de coleta e altura (m) do centro dos power-ups: maiores que os da moeda.
+const float POWERUP_RADIUS = 0.6f;
+const float POWERUP_HEIGHT = COIN_HEIGHT;
+// Probabilidade de um chunk ter um power-up: em média 1 a cada 6 (spawn raro).
+const float POWERUP_CHUNK_CHANCE = 1.0f / 6.0f;
+// Folga (m) de s entre um power-up e o obstáculo ou a moeda mais próximos.
+const float POWERUP_CLEARANCE = 1.5f;
+// Velocidade (m/s) com que o ímã puxa uma moeda, somada à do jogador (assim a
+// moeda alcança o jogador mesmo vindo de trás).
+const float MAGNET_PULL_SPEED = 20.0f;
+
+// Câmera nos pulos altos: acima de CAMERA_JUMP_FREE_HEIGHT m do chão ela sobe
+// CAMERA_JUMP_FOLLOW do excesso (o pulo comum, de ~2 m, não a move).
+const float CAMERA_JUMP_FREE_HEIGHT = 2.2f; // m
+const float CAMERA_JUMP_FOLLOW      = 0.8f;
+
+// Teto do túnel na aproximação: a cabeça do jogador no ar não pode estar acima
+// de (teto + TUNNEL_APPROACH_SLOPE * distância até a entrada), nos últimos
+// TUNNEL_APPROACH_LENGTH metros antes dela. A folga some linearmente até a
+// boca do túnel, onde vale o teto de verdade: o pulo (principalmente o do
+// tênis) é achatado aos poucos, sem o tranco de uma correção de uma vez só.
+const float TUNNEL_APPROACH_SLOPE  = 0.25f;
+const float TUNNEL_APPROACH_LENGTH = 16.0f; // m
 
 // Geração por chunks de CHUNK_LENGTH. Em cada chunk os obstáculos ficam só em
 // [início + CHUNK_CLEAR_HEAD, fim - CHUNK_CLEAR_TAIL]: a emenda entre dois
@@ -116,7 +161,8 @@ public:
     // ele pousou; sem apoio, cai; no túnel a cabeça não passa da abóbada);
     // colisões com a caixa varrida do jogador e dos obstáculos que andaram
     // (obstáculo -> GAME_OVER, exceto rampas e o trem em cujo teto ele está;
-    // moeda -> coletada); pontuação; spawn de chunks até
+    // power-up -> coletado (Tarefa 5.2: os tempos correm no início do passo,
+    // o ímã puxa as moedas antes da coleta); moeda -> coletada); pontuação; spawn de chunks até
     // player.s + SPAWN_AHEAD (se spawn_enabled) e descarte do que ficou mais
     // de DESPAWN_BEHIND para trás (a pista: + TRACK_KEEP_MARGIN).
     void Update(float dt);
@@ -126,6 +172,12 @@ public:
     // No ar continua sendo a do que está embaixo (pulando do teto, o teto),
     // ignorando o arco do pulo. Usada pela câmera.
     float GroundHeight() const;
+
+    // Altura que a câmera acompanha (Tarefa 5.2): GroundHeight() e, nos pulos
+    // que passam de CAMERA_JUMP_FREE_HEIGHT acima do chão (os do tênis), a
+    // fração CAMERA_JUMP_FOLLOW do que passou, para o jogador não sair do
+    // quadro. O pulo comum (2 m) não mexe na câmera.
+    float CameraTargetHeight() const;
 
     // Caixa do jogador em coordenadas de pista: altura PLAYER_ROLL_HEIGHT
     // rolando, PLAYER_HEIGHT em pé; base em player.y.
@@ -175,7 +227,15 @@ public:
     std::vector<Coin> coins;
     int coins_collected;
     float score;     // += distância percorrida; += 10*multiplier por moeda
-    int multiplier;  // 1 (o power-up de multiplicador vem na Fase 5)
+    int multiplier;  // 1; 2 enquanto o power-up de multiplicador está ativo
+
+    // Power-ups (Tarefa 5.2). powerup_timer[tipo] = segundos restantes (0 =
+    // inativo; o cofrinho nunca tem tempo). piggy_pickups = cofrinhos pegos e
+    // ainda não consumidos pela Tarefa 5.3 (quem lança o porco decrementa).
+    std::vector<PowerUp> powerups;  // ordenados por s (ordem de geração)
+    float powerup_timer[POWERUP_TYPE_COUNT];
+    int piggy_pickups;
+    bool PowerUpActive(PowerUpType type) const { return powerup_timer[(int)type] > 0.0f; }
 
     // false = não gera obstáculos/moedas (testes de física e cenários E2E que
     // não devem terminar em colisão). Colisões com os que já existem continuam.
@@ -183,6 +243,9 @@ public:
     // false = trens parados nunca ganham rampa (só para testes: o resto do
     // spawn sai idêntico, as rampas têm gerador próprio). Mantido no Reset.
     bool ramps_enabled;
+    // false = não gera power-ups (só para testes: eles têm gerador próprio, o
+    // resto do spawn sai idêntico). Mantido no Reset.
+    bool powerups_enabled;
 
 private:
     void GenerateChunk(int index);
@@ -210,6 +273,15 @@ private:
     // passo) entre o leito (0), as rampas e, se include_roofs, os tetos de
     // trem em que ele pousa vindo de 'before' (LandsOnTop).
     float SupportHeight(const AABB& before, const AABB& now, bool include_roofs) const;
+    float PowerUpRandom01();      // sorteio dos power-ups (gerador próprio)
+    // Sorteia (gerador próprio) e põe, se couber, um power-up na faixa segura
+    // do chunk; first_new = índice do 1º obstáculo do chunk, first_coin = idem
+    // das moedas. Consome sempre os mesmos 3 sorteios.
+    void GeneratePowerUp(int index, int safe, size_t first_new, size_t first_coin);
+    // Timers, coleta de power-ups e puxão do ímã do passo (veja Update).
+    void StepPowerUpTimers(float dt);
+    void CollectPowerUps(const AABB& swept);
+    void PullCoins(float dt);
     float Random01();             // [0, 1), portável (só usa a saída do mt19937)
     int RandomInt(int lo, int hi); // [lo, hi]
 
@@ -220,6 +292,7 @@ private:
     std::vector<int> safe_lanes_;        // faixa segura de cada chunk gerado (índice = chunk)
     std::mt19937 moving_rng_;            // decide quais trens são móveis (independe de rng_)
     std::mt19937 ramp_rng_;              // decide quais trens parados têm rampa (idem)
+    std::mt19937 powerup_rng_;           // decide onde nascem power-ups (idem)
     std::vector<float> obstacle_dz_;     // deslocamento de cada obstáculo no último Update
     glm::vec3 extents_[OBSTACLE_TYPE_COUNT];
 };

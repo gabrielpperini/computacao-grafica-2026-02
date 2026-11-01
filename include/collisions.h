@@ -73,6 +73,13 @@ bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
 // passou; encostar não conta). Usado para o teto do túnel.
 float CeilingPenetration(const AABB& box, float ceiling);
 
+// Teto efetivo (altura máxima do topo da caixa) a `distance` metros antes da
+// boca de um túnel: o teto de verdade (`ceiling`) mais `slope` metros de folga
+// por metro de distância (distance <= 0: o próprio teto). Cresce de forma
+// contínua com a distância, então quem entra no túnel no ar é achatado aos
+// poucos em vez de levar um tranco na boca.
+float TunnelApproachCeiling(float ceiling, float distance, float slope);
+
 // Ponto de mundo dentro do volume interior de um túnel (um segmento reto com
 // tunnel = true): s dentro de [s_start, s_start + length], deslocamento lateral
 // com sinal |lat| <= TUNNEL_INNER_HALF_WIDTH e 0 < altura < TunnelCeilingHeight(lat)

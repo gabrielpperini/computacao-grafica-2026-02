@@ -80,6 +80,11 @@ public:
 
     bool IsTunnelAt(float s) const;
 
+    // Distância (m) de s até o túnel mantido mais próximo: 0 se s está dentro
+    // de um túnel; senão, a distância até a boca (s_start) do próximo túnel à
+    // frente, se for <= max_dist; senão -1 (nenhum por perto).
+    float TunnelDistanceAhead(float s, float max_dist) const;
+
     // true se algum segmento de túnel mantido cruza o intervalo [s0, s1].
     // Usado para tirar prédios e postes de perto dos túneis.
     bool TunnelOverlaps(float s0, float s1) const;

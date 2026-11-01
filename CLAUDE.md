@@ -131,7 +131,7 @@ implementado** — o base é só um visualizador.
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ✅ (1) 3ª pessoa look-at (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); (2) câmera livre "fly" (`FreeCamera`, Tarefa 5.1): `C` alterna `PLAYING` ↔ `FREE_CAMERA` com o jogo congelado, WASD/Espaço/Shift voam a 10 m/s, o mouse gira (pitch ±89°) |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
-| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`) → a cabeça não atravessa a abóbada |
+| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
@@ -140,7 +140,7 @@ implementado** — o base é só um visualizador.
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
 | Rampas para subir nos trens (SPEC) | ✅ Tarefa 4.4: metade dos trens parados ganha uma rampa (8 m, 0 → 3.2 m) colada à frente; o jogador sobe correndo, anda no teto, pula de um teto para outro ou troca de faixa para o teto vizinho, e cai no fim do trem ou ao trocar para uma faixa vazia; a câmera sobe junto com o chão (não com o pulo) (veja "Rampas e tetos") |
 | Trens em movimento (SPEC: velocidade dos trens) | ✅ Tarefa 4.3: ~1 em 3 trens nasce móvel (`MOVING_TRAIN_SPEED` = 8 m/s na direção do jogador), com ≥ 3 s de aviso e sem quebrar a garantia de faixa livre; para ao chegar ao começo da reta onde nasceu ou a 0.5 m de outro obstáculo da faixa; colisão varre também a caixa do obstáculo (veja "Trens móveis") |
-| Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
+| Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação, game over com reinício e, na Tarefa 5.2, power-ups clássicos (ímã, tênis, multiplicador x2: 10 s cada, renovam sem empilhar; veja "Power-ups"); faltam menu, pausa e o cofrinho/porco voador (5.3) |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
 
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
@@ -216,8 +216,9 @@ Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn),
 (60 s de corrida; sem spawn), `obstacle_types` (close-up de cada obstáculo e das moedas),
 `coins` (fileira de boas-vindas coletada), `lighting` (Blinn-Phong com spawn), `showcase`
 (arranjo fixo com um exemplar de cada obstáculo, 2 trens e moedas, + foto do pulo — imagem para
-o README/vídeo), `showcase_props` (power-ups e porco voador em exposição: `show_props = true`
-faz `main.cpp` chamar `DrawShowcaseProps()`), `game_over` (bate sem entrada) e `restart` /
+o README/vídeo), `powerups` (ímã + x2 + tênis + cofrinho postos na faixa do jogador, moedas só nas faixas vizinhas:
+confere que o ímã as coleta, que valem 20 pontos com o x2 e 10 depois que expira, e que o pulo
+com tênis é > 1.8x o comum; fotos com o HUD de tempos), `game_over` (bate sem entrada) e `restart` /
 `restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo), `curve` (jogador posto 24 m
 antes da 1ª curva, troca de faixa dentro dela; fotos de entrada, meio e saída),
 `curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte),
@@ -386,6 +387,29 @@ No túnel a cabeça é limitada pela abóbada (`TunnelCeilingHeight` + `CeilingP
 `ramp_frame`; o topo das tábuas é a mesma reta de `RampHeightAt`. E2E: `ramp_train`, `roof_hop`,
 `ramp_side_block`.
 
+**Power-ups (Tarefa 5.2)**: `PowerUp { PowerUpType type; int lane; float s; bool collected; }`
+(`MAGNET`, `SNEAKERS`, `MULTIPLIER`, `PIGGY`) em `Game::powerups`; esfera de coleta
+`POWERUP_RADIUS` a `POWERUP_HEIGHT` na faixa, testada contra a caixa varrida do jogador
+(`SphereIntersectsAABB`). Spawn (`Game::GeneratePowerUp`): 1 chance em 6 por chunk
+(`POWERUP_CHUNK_CHANCE`), sempre na faixa segura do chunk, no primeiro de 16 pontos do chunk que
+fique a `POWERUP_CLEARANCE` de qualquer obstáculo/moeda da faixa; gerador próprio `powerup_rng_`
+(3 sorteios por chunk, sempre consumidos: o resto do spawn não muda; `powerups_enabled = false`
+só para o teste que confere isso). `Game::powerup_timer[tipo]` conta segundos só em `PLAYING` (pausa,
+câmera livre e game over congelam); pegar de novo o mesmo tipo volta a `POWERUP_DURATION` (não
+empilha). **Ímã**: com ele ativo, moedas a `MAGNET_RADIUS` do centro do jogador (`SphereIntersectsSphere`)
+viram `Coin::pulled` e voam (posição livre `px/py/ps`, `CoinCenter()`) a `speed + MAGNET_PULL_SPEED`
+m/s até ele, e continuam mesmo se o ímã acabar. **Tênis**: `HandleInput(JUMP)` usa
+`JUMP_VELOCITY * SNEAKERS_JUMP_MULT` (apogeu ~4.5 m; passa por cima de placas); a câmera acompanha
+pulos acima de `CAMERA_JUMP_FREE_HEIGHT` (`Game::CameraTargetHeight()`). **Multiplicador**:
+`multiplier = 2` enquanto ativo (moeda = 10·multiplier). **Cofrinho**: sem duração; só incrementa
+`Game::piggy_pickups` (a Tarefa 5.3 consome para lançar o porco). **Túnel**: o teto da abóbada
+limita a caixa do jogador inteira (frente ou traseira dentro) e, nos `TUNNEL_APPROACH_LENGTH` m
+antes da boca, vale com folga `TUNNEL_APPROACH_SLOPE` por metro de distância
+(`TunnelApproachCeiling`, `Track::TunnelDistanceAhead`): um pulo alto que entra no túnel no ar
+é achatado aos poucos, sem tranco (`Test_SneakersTunnelEntryNoPop`). Desenho: `DrawPowerUp()`
+(modelo flutuando e girando, `g_PowerUpSpin/Bob` acumulam `dt`; material com leve emissivo por
+tipo). HUD (`TextRendering_ShowRunInfo`): uma linha "IMA/TENIS/x2 [====] Ns" por efeito ativo.
+
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler
 object) e não depende mais da ordem das chamadas; os ids ficam em `g_Tex` (`main.cpp`). Quem desenha usa
@@ -450,7 +474,7 @@ Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbac
 do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição): `←`/`→` ou
 `A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; no GAME OVER, `Enter`
 (ou `Espaço`) reinicia a corrida; `H` liga e desliga o texto informativo (velocidade, faixa,
-FPS — o placar de pontos/moedas/distância fica sempre visível); `C` liga/desliga a câmera livre
+FPS — o placar de pontos/moedas/distância e os tempos dos power-ups ativos ficam sempre visíveis); `C` liga/desliga a câmera livre
 (jogo pausado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe, `Shift` desce,
 `C` volta ao jogo); `R` recarrega shaders; `ESC` fecha. Fora da câmera livre o mouse não faz
 nada. Todo atalho precisa acabar documentado no manual dentro

@@ -131,6 +131,22 @@ bool Track::IsTunnelAt(float s) const
     return seg != nullptr && seg->tunnel;
 }
 
+float Track::TunnelDistanceAhead(float s, float max_dist) const
+{
+    float best = -1.0f;
+    for (size_t i = 0; i < segments_.size(); ++i) {
+        const TrackSegment& seg = segments_[i];
+        if (!seg.tunnel)
+            continue;
+        if (s >= seg.s_start && s <= seg.s_start + seg.length)
+            return 0.0f;
+        const float d = seg.s_start - s;
+        if (d > 0.0f && d <= max_dist && (best < 0.0f || d < best))
+            best = d;
+    }
+    return best;
+}
+
 bool Track::TunnelOverlaps(float s0, float s1) const
 {
     for (size_t i = 0; i < segments_.size(); ++i) {
