@@ -49,6 +49,7 @@
 #include "utils.h"
 #include "matrices.h"
 #include "game_config.h"
+#include "object_ids.h"
 
 // Estrutura que representa um modelo geométrico carregado a partir de um
 // arquivo ".obj". Veja https://en.wikipedia.org/wiki/Wavefront_.obj_file .
@@ -121,8 +122,10 @@ float ComputeFrameDt(double now, double* last);
 void BuildTrianglesAndAddToVirtualScene(ObjModel*); // Constrói representação de um ObjModel como malha de triângulos para renderização
 void ComputeNormals(ObjModel* model); // Computa normais de um ObjModel, caso não existam.
 void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, criando um programa de GPU
-void LoadTextureImage(const char* filename); // Função que carrega imagens de textura
+GLuint LoadTextureImage(const char* filename); // Carrega uma imagem de textura e devolve o id da textura OpenGL
 void DrawVirtualObject(const char* object_name); // Desenha um objeto armazenado em g_VirtualScene
+// Desenha um objeto da cena com sua matriz de modelagem, id, textura (ligada na unidade 0) e modo de UV
+void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode, float uv_scale = 1.0f);
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -212,11 +215,10 @@ GLint g_model_uniform;
 GLint g_view_uniform;
 GLint g_projection_uniform;
 GLint g_object_id_uniform;
+GLint g_uv_mode_uniform;
+GLint g_uv_scale_uniform;
 GLint g_bbox_min_uniform;
 GLint g_bbox_max_uniform;
-
-// Número de texturas carregadas pela função LoadTextureImage()
-GLuint g_NumLoadedTextures = 0;
 
 int main(int argc, char* argv[])
 {
@@ -291,9 +293,11 @@ int main(int argc, char* argv[])
     //
     LoadShadersFromFiles();
 
-    // Carregamos duas imagens para serem utilizadas como textura
-    LoadTextureImage("../../data/red_brick_diff_1k.jpg");      // TextureImage0
-    LoadTextureImage("../../data/rocky_terrain_02_diff_1k.jpg"); // TextureImage1
+    // Carregamos as imagens de textura. Cada objeto escolhe a sua em DrawObject(),
+    // que a liga na unidade de textura 0 antes de desenhar.
+    GLuint tex_brick = LoadTextureImage("../../data/red_brick_diff_1k.jpg");
+    GLuint tex_rock  = LoadTextureImage("../../data/rocky_terrain_02_diff_1k.jpg");
+    GLuint tex_metal = LoadTextureImage("../../data/metal_plate_diff_1k.jpg");
 
     // Construímos a representação de objetos geométricos através de malhas de triângulos
     ObjModel spheremodel("../../data/sphere.obj");
@@ -307,6 +311,10 @@ int main(int argc, char* argv[])
     ObjModel planemodel("../../data/plane.obj");
     ComputeNormals(&planemodel);
     BuildTrianglesAndAddToVirtualScene(&planemodel);
+
+    ObjModel cubemodel("../../data/cube.obj");
+    ComputeNormals(&cubemodel);
+    BuildTrianglesAndAddToVirtualScene(&cubemodel);
 
     if ( argc > 1 )
     {
@@ -413,31 +421,31 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        #define SPHERE 0
-        #define BUNNY  1
-        #define PLANE  2
+        // Objetos de teste (cena provisória até a pista do jogo). Os ids são
+        // apenas reaproveitados de object_ids.h; cada objeto usa uma textura e
+        // um modo de UV diferentes.
 
-        // Desenhamos o modelo da esfera
+        // Desenhamos o modelo da esfera (projeção esférica, pois o OBJ não tem UV)
         model = Matrix_Translate(-1.0f,0.0f,0.0f)
               * Matrix_Rotate_Z(0.6f)
               * Matrix_Rotate_X(0.2f)
               * Matrix_Rotate_Y(g_SphereSpin);
-        glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(g_object_id_uniform, SPHERE);
-        DrawVirtualObject("the_sphere");
+        DrawObject("the_sphere", model, COIN, tex_brick, UV_SPHERICAL);
 
-        // Desenhamos o modelo do coelho
+        // Desenhamos o modelo do coelho (projeção planar XY pela AABB)
         model = Matrix_Translate(1.0f,0.0f,0.0f)
               * Matrix_Rotate_X(g_BunnySpin);
-        glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(g_object_id_uniform, BUNNY);
-        DrawVirtualObject("the_bunny");
+        DrawObject("the_bunny", model, PLAYER, tex_rock, UV_BBOX_XY);
 
-        // Desenhamos o plano do chão
+        // Desenhamos o plano do chão, com a textura repetida 4x para não esticar
         model = Matrix_Translate(0.0f,-1.1f,0.0f);
-        glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(g_object_id_uniform, PLANE);
-        DrawVirtualObject("the_plane");
+        DrawObject("the_plane", model, GROUND, tex_rock, UV_OBJ, 4.0f);
+
+        // Desenhamos o cubo (placeholder de barreira), com as UV do OBJ
+        model = Matrix_Translate(0.0f,-0.8f,0.9f)
+              * Matrix_Rotate_Y(0.5f)
+              * Matrix_Scale(0.6f,0.6f,0.6f);
+        DrawObject("the_cube", model, BARRIER_LOW, tex_metal, UV_OBJ);
 
         // Imprimimos na informação sobre a matriz de projeção sendo utilizada.
         TextRendering_ShowProjection(window);
@@ -478,7 +486,7 @@ float ComputeFrameDt(double now, double* last)
 }
 
 // Função que carrega uma imagem para ser utilizada como textura
-void LoadTextureImage(const char* filename)
+GLuint LoadTextureImage(const char* filename)
 {
     printf("Carregando imagem \"%s\"... ", filename);
 
@@ -499,17 +507,7 @@ void LoadTextureImage(const char* filename)
 
     // Agora criamos objetos na GPU com OpenGL para armazenar a textura
     GLuint texture_id;
-    GLuint sampler_id;
     glGenTextures(1, &texture_id);
-    glGenSamplers(1, &sampler_id);
-
-    // Veja slides 95-96 do documento Aula_20_Mapeamento_de_Texturas.pdf
-    glSamplerParameteri(sampler_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glSamplerParameteri(sampler_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // Parâmetros de amostragem da textura.
-    glSamplerParameteri(sampler_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glSamplerParameteri(sampler_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     // Agora enviamos a imagem lida do disco para a GPU
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -517,16 +515,41 @@ void LoadTextureImage(const char* filename)
     glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
     glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 
-    GLuint textureunit = g_NumLoadedTextures;
-    glActiveTexture(GL_TEXTURE0 + textureunit);
+    // Todas as texturas são usadas pela unidade 0 (veja DrawObject()), então
+    // os parâmetros de amostragem ficam guardados na própria textura, e não em
+    // um sampler object preso a uma unidade. Veja slides 95-96 do documento
+    // Aula_20_Mapeamento_de_Texturas.pdf
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_id);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
-    glBindSampler(textureunit, sampler_id);
+
+    // GL_REPEAT em S e T: permite repetir a textura (uv_scale > 1) em chão e paredes.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     stbi_image_free(data);
 
-    g_NumLoadedTextures += 1;
+    return texture_id;
+}
+
+// Função que desenha um objeto da cena: envia a matriz de modelagem, o id do
+// objeto, o modo de UV e a escala de UV para a GPU, liga a textura do objeto na
+// unidade 0 e desenha a malha. Os valores dos ids e dos modos de UV estão em
+// "object_ids.h" (espelhados em shader_fragment.glsl).
+void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode, float uv_scale)
+{
+    glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+    glUniform1i(g_object_id_uniform, object_id);
+    glUniform1i(g_uv_mode_uniform, uv_mode);
+    glUniform1f(g_uv_scale_uniform, uv_scale);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    DrawVirtualObject(name);
 }
 
 // Função que desenha um objeto armazenado em g_VirtualScene. Veja definição
@@ -602,14 +625,14 @@ void LoadShadersFromFiles()
     g_view_uniform       = glGetUniformLocation(g_GpuProgramID, "view"); // Variável da matriz "view" em shader_vertex.glsl
     g_projection_uniform = glGetUniformLocation(g_GpuProgramID, "projection"); // Variável da matriz "projection" em shader_vertex.glsl
     g_object_id_uniform  = glGetUniformLocation(g_GpuProgramID, "object_id"); // Variável "object_id" em shader_fragment.glsl
+    g_uv_mode_uniform    = glGetUniformLocation(g_GpuProgramID, "uv_mode"); // Variável "uv_mode" em shader_fragment.glsl
+    g_uv_scale_uniform   = glGetUniformLocation(g_GpuProgramID, "uv_scale"); // Variável "uv_scale" em shader_fragment.glsl
     g_bbox_min_uniform   = glGetUniformLocation(g_GpuProgramID, "bbox_min");
     g_bbox_max_uniform   = glGetUniformLocation(g_GpuProgramID, "bbox_max");
 
-    // Variáveis em "shader_fragment.glsl" para acesso das imagens de textura
+    // Variável em "shader_fragment.glsl" para acesso da textura do objeto (unidade 0)
     glUseProgram(g_GpuProgramID);
     glUniform1i(glGetUniformLocation(g_GpuProgramID, "TextureImage0"), 0);
-    glUniform1i(glGetUniformLocation(g_GpuProgramID, "TextureImage1"), 1);
-    glUniform1i(glGetUniformLocation(g_GpuProgramID, "TextureImage2"), 2);
     glUseProgram(0);
 }
 

@@ -128,12 +128,12 @@ implementado** — o base é só um visualizador.
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
 | Malhas poligonais complexas | ✅ `bunny.obj`; quanto mais variedade, melhor |
 | Interação por mouse **e** teclado | ✅ callbacks em `main.cpp` |
-| Transformações geométricas controladas pelo usuário | ⚠️ parcial — `g_AngleX`/`g_AngleY` afetam esfera/coelho |
+| Transformações geométricas controladas pelo usuário | ❌ pendente até a Fase 1 — `g_SphereSpin`/`g_BunnySpin` giram sozinhos (acumulados por `dt`), sem controle do usuário |
 | Duas câmeras consideravelmente distintas | ❌ só look-at; falta câmera livre |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ❌ cada objeto é desenhado uma vez |
 | Testes de intersecção com propósito, em `collisions.cpp` | ❌ inexistente |
 | Iluminação **não-trivial** em todos os objetos | ⚠️ só Lambert difuso com luz fixa; precisa de Phong/Blinn-Phong, especular, etc. |
-| Texturas em todos os objetos, ≥3 imagens distintas | ⚠️ só 2 imagens carregadas; `TextureImage2` está declarado no shader mas nunca é preenchido |
+| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 3 imagens (`red_brick`, `rocky_terrain_02`, `metal_plate`); revisar quando entrarem os modelos finais |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
 | Objetivo e lógica de controle não-triviais | ❌ |
@@ -150,7 +150,10 @@ nenhum build. (As variáveis `g_AngleX/Y/Z`, `g_ForearmAngle*` e `g_TorsoPositio
 
 ## Build e execução
 
-Não há suíte de testes. A verificação é compilar e inspecionar visualmente a aplicação rodando.
+Os módulos de lógica sem GL têm testes com `assert` em `tests/logic_tests.cpp` (alvo CMake `logic_tests`):
+`cmake --build build --target logic_tests` e depois `./bin/Linux/logic_tests` (no Windows,
+`bin/Debug/logic_tests.exe`); imprime `OK` se tudo passar. Não entra no `Makefile.macOS`. A parte gráfica
+não tem teste automatizado: a verificação é compilar e inspecionar visualmente a aplicação rodando.
 
 **macOS** (requer `brew install glfw`):
 
@@ -224,8 +227,8 @@ A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`the_
 `the_bunny`, `the_plane`), não o nome do arquivo. Um OBJ com vários shapes vira várias entradas
 compartilhando o mesmo VAO. Objetos sem nome no OBJ fazem o programa lançar exceção.
 
-Para **instâncias** (requisito obrigatório), basta chamar `DrawVirtualObject()` várias vezes com
-`model` diferente entre as chamadas — o VAO é reaproveitado, nenhum vértice é duplicado.
+Para **instâncias** (requisito obrigatório), basta chamar `DrawObject()` (ou `DrawVirtualObject()`)
+várias vezes com `model` diferente entre as chamadas — o VAO é reaproveitado, nenhum vértice é duplicado.
 A AABB em `SceneObject.bbox_min/bbox_max` está em coordenadas de modelo e é a base natural para
 os testes de colisão.
 
@@ -236,17 +239,22 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 - **Atributos de vértice**: `location 0` = posição (`vec4`), `1` = normal (`vec4`), `2` = texcoords
   (`vec2`). Definidos em `BuildTrianglesAndAddToVirtualScene()` e declarados em
   `shader_vertex.glsl`. Os VBOs de normal e textura só são criados se o OBJ tiver esses dados.
-- **Uniforms**: `model`, `view`, `projection`, `object_id`, `bbox_min`, `bbox_max` têm seus
+- **Uniforms**: `model`, `view`, `projection`, `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` têm seus
   locations cacheados nos globais `g_*_uniform` em `LoadShadersFromFiles()`. Um uniform novo
   precisa ser declarado no shader, ter o global criado e o `glGetUniformLocation()` adicionado ali.
-- **IDs de objeto**: os `#define SPHERE/BUNNY/PLANE` existem duplicados dentro de `main()` e no
-  topo de `shader_fragment.glsl` — alterar um exige alterar o outro. O fragment shader usa
-  `object_id` para escolher o modo de texturização (projeção esférica, planar XY, ou UV do OBJ).
+- **IDs de objeto e modos de UV**: os `#define` (`PLAYER`, `GROUND`, ..., `PARTICLE` e
+  `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`) vivem em `include/object_ids.h` e são
+  **copiados** para o topo de `shader_fragment.glsl` — alterar um exige alterar o outro. O fragment
+  shader usa `uv_mode` para gerar U,V (UV do OBJ, planar XZ em coordenadas de mundo, planar XY
+  normalizado pela AABB, ou esférico) e multiplica por `uv_scale`; `object_id` fica reservado para
+  a iluminação por tipo de objeto.
 
-**Texturas**: `LoadTextureImage()` atribui a texture unit pela *ordem das chamadas* — a primeira
-vira `TextureImage0`, a segunda `TextureImage1`, etc. (`g_NumLoadedTextures` como contador).
-Inserir uma chamada no meio da lista remapeia todas as seguintes. Cada sampler novo precisa ser
-declarado no shader e vinculado com `glUniform1i()` no final de `LoadShadersFromFiles()`.
+**Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
+devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler
+object) e não depende mais da ordem das chamadas. Quem desenha usa
+`DrawObject(nome, model, object_id, textura, uv_mode, uv_scale)`, que liga a textura na unidade 0,
+envia os uniforms e chama `DrawVirtualObject()`. Para textura repetida (chão, paredes) use
+`uv_scale > 1` ou `UV_PLANAR_XZ`.
 
 ### Matemática e câmera
 

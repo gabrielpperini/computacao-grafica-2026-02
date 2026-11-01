@@ -187,18 +187,19 @@ ligada antes de cada desenho, e um uniform `uv_mode` que diz como gerar UV.
     — envia `model`, `object_id`, `uv_mode`, `uv_scale`, liga `texture` na unidade 0 e chama
     `DrawVirtualObject`.
   - `#define UV_OBJ 0`, `UV_PLANAR_XZ 1` (mundo, para chão/paredes sem esticar), `UV_BBOX_XY 2`
-    em `object_ids.h` **e** no topo do fragment shader (manter em sincronia).
+    em `object_ids.h` **e** no topo do fragment shader (manter em sincronia). Implementação
+    acrescentou `UV_SPHERICAL 3` (esfera sem UV no OBJ).
   - IDs em `object_ids.h`: `PLAYER, GROUND, RAIL, BUILDING, BARRIER_LOW, BARRIER_HIGH, SIGN,
     TRAIN, RAMP, TUNNEL, COIN, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER,
     POWERUP_PIGGY, FLYING_PIG, PARTICLE` — espelhados no shader.
 
-- [ ] **Passo 1:** implementar as interfaces acima; desenhar coelho, esfera, plano e `the_cube`
+- [x] **Passo 1:** implementar as interfaces acima; desenhar coelho, esfera, plano e `the_cube`
   via `DrawObject` com três texturas diferentes.
-- [ ] **Passo 2:** compilar, rodar, apertar `R` — esperado: os 4 objetos texturizados, plano com
+- [x] **Passo 2:** compilar, rodar, apertar `R` — esperado: os 4 objetos texturizados, plano com
   textura repetida (`uv_scale = 4`) sem esticar.
-- [ ] **Passo 3:** atualizar a seção "Texturas" do `CLAUDE.md` (o mapeamento por ordem de carga
+- [x] **Passo 3:** atualizar a seção "Texturas" do `CLAUDE.md` (o mapeamento por ordem de carga
   deixou de existir).
-- [ ] **Passo 4:** commit `IA: textura por objeto, uv_mode e ids compartilhados`.
+- [x] **Passo 4:** commit `IA: textura por objeto, uv_mode e ids compartilhados`.
 
 ### Tarefa 0.3: Harness E2E (`--autotest`)
 
