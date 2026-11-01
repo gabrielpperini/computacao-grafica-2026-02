@@ -23,6 +23,10 @@
 using glm::vec4;
 
 static const float kEps = 1e-4f;
+// Teto de passos dos laços de simulação (Tarefa 7.1b): 10 min de jogo a 60 Hz.
+// Se um comportamento regredir (jogador parado, jogo que não acaba), o teste
+// falha com assert em vez de travar para sempre.
+static const int kLoopGuard = 60 * 60 * 10;
 
 static bool near(const vec4& a, const vec4& b, float eps = kEps)
 {
@@ -1933,11 +1937,15 @@ void Test_LanesConcentricInCurve()
         vec4 center = st.position - st.right * (1.0f / k);
 
         // Corre até entrar na curva.
-        while (g.player.s < s0 + 5.0f) g.Update(1.0f / 60.0f);
+        for (int guard = 0; g.player.s < s0 + 5.0f; ++guard) {
+            assert(guard < kLoopGuard && "laço sem fim");
+            g.Update(1.0f / 60.0f);
+        }
         g.HandleInput(Input::RIGHT);
         int steps_in_curve = 0;
         bool changed_back = false;
-        while (g.player.s < s0 + L - 1.0f) {
+        for (int guard = 0; g.player.s < s0 + L - 1.0f; ++guard) {
+            assert(guard < kLoopGuard && "laço sem fim");
             g.Update(1.0f / 60.0f);
             if (!changed_back && g.player.s > s0 + 0.5f * L) {
                 g.HandleInput(Input::LEFT);
@@ -2171,7 +2179,8 @@ void Test_MovingTrainsSpawnAndStayPassable()
     for (unsigned seed = 1; seed <= 30; seed++) {
         Game g(seed);
         int prev_chunk = -1;
-        while (g.player.s < 5000.0f) {
+        for (int guard = 0; g.player.s < 5000.0f; ++guard) {
+            assert(guard < kLoopGuard && "laço sem fim");
             g.player.lane = AutopilotLane(g);
             g.Update(1.0f / 60.0f);
             if (g.mode == GameMode::GAME_OVER) {
@@ -2216,7 +2225,8 @@ void Test_ObstaclesSameLaneNeverOverlap()
     int moving_seen = 0;
     for (unsigned seed = 1; seed <= 30; seed++) {
         Game g(seed);
-        while (g.player.s < 2500.0f) {
+        for (int guard = 0; g.player.s < 2500.0f; ++guard) {
+            assert(guard < kLoopGuard && "laço sem fim");
             g.player.lane = AutopilotLane(g);
             g.Update(1.0f / 60.0f);
             g.mode = GameMode::PLAYING; // bater em barreira não encerra o teste
@@ -2242,7 +2252,8 @@ void Test_MovingTrainsDeterministic()
     auto run = [](unsigned seed) {
         Game g(seed);
         std::vector<float> out;
-        while (g.player.s < 1500.0f) {
+        for (int guard = 0; g.player.s < 1500.0f; ++guard) {
+            assert(guard < kLoopGuard && "laço sem fim");
             g.player.lane = AutopilotLane(g);
             g.Update(1.0f / 60.0f);
             g.mode = GameMode::PLAYING;
@@ -2273,8 +2284,10 @@ static void AddTrain(Game& g, int lane, float train_s, bool with_ramp)
 // Avança em passos de dt até o jogador passar de s (ou o jogo acabar).
 static void RunUntilS(Game& g, float s, float dt = 1.0f / 60.0f)
 {
-    while (g.player.s < s && g.mode == GameMode::PLAYING)
+    for (int guard = 0; g.player.s < s && g.mode == GameMode::PLAYING; ++guard) {
+        assert(guard < kLoopGuard && "laço sem fim");
         g.Update(dt);
+    }
 }
 
 // Roda até o jogador voltar ao chão/teto (no máximo 'seconds'); devolve a
@@ -2315,7 +2328,8 @@ void Test_RampLiftsPlayerOntoTrain()
     AddTrain(g, 0, 40.0f, true); // rampa em [25.5, 33.5], trem em [33.5, 46.5]
     const AABB ramp = g.obstacles[0].box, train = g.obstacles[1].box;
     bool climbed = false;
-    while (g.player.s < 42.0f) {
+    for (int guard = 0; g.player.s < 42.0f; ++guard) {
+        assert(guard < kLoopGuard && "laço sem fim");
         g.Update(1.0f / 60.0f);
         assert(g.mode == GameMode::PLAYING);
         AABB p = g.PlayerBox();
@@ -2428,7 +2442,8 @@ void Test_RampNeverKills()
     RunUntilS(g, 28.0f);
     g.HandleInput(Input::RIGHT);
     float max_x = 0.0f;
-    while (g.player.s < 50.0f) {
+    for (int guard = 0; g.player.s < 50.0f; ++guard) {
+        assert(guard < kLoopGuard && "laço sem fim");
         g.Update(1.0f / 60.0f);
         assert(g.mode == GameMode::PLAYING);
         assert(g.player.y == 0.0f && g.player.grounded); // nenhum "teletransporte"
@@ -2448,7 +2463,8 @@ void Test_RampSideLowStartClimbs()
     RunUntilS(g, 24.2f);          // a pegada chega à faixa x da rampa ~1 m depois
     g.HandleInput(Input::RIGHT);
     float prev_y = g.player.y, max_y = 0.0f;
-    while (g.player.s < 40.0f) {
+    for (int guard = 0; g.player.s < 40.0f; ++guard) {
+        assert(guard < kLoopGuard && "laço sem fim");
         g.Update(1.0f / 60.0f);
         assert(g.mode == GameMode::PLAYING);
         assert(std::fabs(g.player.y - prev_y) <= 0.25f); // suave: só o degrau de entrada e a subida
@@ -2572,7 +2588,8 @@ void Test_RoofLaneChangeToAdjacentTrainStays()
     AddTrain(g, 1, 42.0f, false);  // [35.5, 48.5]
     RunUntilS(g, 36.0f);
     g.HandleInput(Input::RIGHT);
-    while (g.player.s < 47.0f) {
+    for (int guard = 0; g.player.s < 47.0f; ++guard) {
+        assert(guard < kLoopGuard && "laço sem fim");
         g.Update(1.0f / 60.0f);
         assert(g.mode == GameMode::PLAYING);
         assert(g.player.grounded && nearf(g.player.y, kRoof));
