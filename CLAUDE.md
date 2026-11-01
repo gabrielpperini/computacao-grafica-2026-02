@@ -106,6 +106,18 @@ enunciado, é critério de avaliação). Ainda não existe — ao criá-lo, regi
 
 ---
 
+## Plano de implementação
+
+O plano do jogo *Rail Rush* (o que está em `SPEC.md`) está em
+**[`docs/PLANO-IMPLEMENTACAO.md`](docs/PLANO-IMPLEMENTACAO.md)**, dividido em 8 fases (0 a 7) com
+prazos alinhados às avaliações parciais. Antes de implementar qualquer coisa, leia a fase/tarefa
+correspondente: ele fixa a arquitetura (lógica sem OpenGL em módulos testáveis, coordenadas de
+pista `(lateral, altura, s)`), nomes de arquivos, assinaturas e constantes. Ao concluir uma tarefa,
+marque os checkboxes no plano e atualize o checklist abaixo no mesmo commit. Se a implementação
+precisar divergir do plano, atualize o plano junto.
+
+---
+
 ## Requisitos técnicos e estado atual do código base
 
 Checklist de avaliação, com o que o código base já entrega. **Nada marcado como "falta" está

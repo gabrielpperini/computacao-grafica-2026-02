@@ -34,3 +34,18 @@ matrizes, estado global e callbacks de entrada).
 comentários `FONTE`, APIs permitidas, funções de matriz proibidas, `collisions.cpp`, histórico do
 Git), a tabela de prazos, o checklist de requisitos técnicos com o estado atual do código base e a
 seção de entrega final.
+
+---
+
+## 2026-11-01 — `docs/PLANO-IMPLEMENTACAO.md` (plano de implementação)
+
+**Ferramenta:** Claude Code (Claude Opus 5.5)
+
+**Prompt:**
+
+> le todo o repositorio e vamos comecar a executar, comeca criando um plano de implementacao e
+> adicionando ele no repositorio, divide em fases bem definidas, coloca tudo numa pasta docs, faz
+> referencia no claude.md
+
+**Gerado:** `docs/PLANO-IMPLEMENTACAO.md` (plano em 8 fases, com arquitetura, interfaces, testes e
+cronograma alinhado às avaliações parciais) e a seção "Plano de implementação" do `CLAUDE.md`.
