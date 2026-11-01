@@ -420,6 +420,9 @@ void LeaveFreeCamera(GLFWwindow* window);
 // ImGui) no centro do botão com o rótulo dado, desenhado no último quadro.
 // Devolve false se esse botão não estava na tela.
 bool Gui_ClickButton(const char* label);
+// Para o E2E: o botão com esse rótulo foi desenhado no último quadro e está
+// inteiro dentro da janela (e da área visível da janela do ImGui que o contém).
+bool Gui_ButtonOnScreen(const char* label);
 
 // Variável que controla se o texto informativo será mostrado na tela.
 bool g_ShowInfoText = true;
@@ -1704,7 +1707,7 @@ void Gui_Shutdown()
 bool Gui_ClickButton(const char* label)
 {
     std::map<std::string, GuiRect>::const_iterator it = g_GuiButtons.find(label);
-    if (it == g_GuiButtons.end())
+    if (it == g_GuiButtons.end() || !Gui_ButtonOnScreen(label))
         return false;
     g_GuiClickRect  = it->second;
     g_GuiClickPhase = 1;
@@ -1726,15 +1729,31 @@ static void Gui_InjectPendingClick()
     g_GuiClickPhase = (g_GuiClickPhase == 1) ? 2 : 0;
 }
 
-// Botão da largura da janela; guarda o retângulo dele para o E2E.
+// Botão da largura da janela; guarda o retângulo dele para o E2E (cortado
+// pela área visível da janela, se ela estiver rolada).
 static bool GuiButton(const char* label)
 {
     const bool pressed = ImGui::Button(label, ImVec2(-FLT_MIN, 1.9f * ImGui::GetFontSize()));
     const ImVec2 a = ImGui::GetItemRectMin();
     const ImVec2 b = ImGui::GetItemRectMax();
+    const ImVec2 wa = ImGui::GetWindowPos();
+    const ImVec2 ws = ImGui::GetWindowSize();
     GuiRect r = {a.x, a.y, b.x, b.y};
+    // Parte do botão escondida pela rolagem da janela: fora da área visível.
+    if (a.y < wa.y || b.y > wa.y + ws.y)
+        r.y0 = r.y1 = -1.0f;
     g_GuiButtons[label] = r;
     return pressed;
+}
+
+bool Gui_ButtonOnScreen(const char* label)
+{
+    std::map<std::string, GuiRect>::const_iterator it = g_GuiButtons.find(label);
+    if (it == g_GuiButtons.end())
+        return false;
+    const GuiRect& r = it->second;
+    const ImVec2 d = ImGui::GetIO().DisplaySize;
+    return r.y1 > r.y0 && r.x0 >= 0.0f && r.y0 >= 0.0f && r.x1 <= d.x && r.y1 <= d.y;
 }
 
 // Texto centralizado na largura disponível da janela.
@@ -1756,15 +1775,18 @@ static void GuiTitle(const char* text, const ImVec4& color, float size_factor)
 }
 
 // Começa uma janela centralizada na tela, sem barra de título, com largura
-// mínima de 'min_width_em' vezes o tamanho da fonte.
+// mínima de 'min_width_em' vezes o tamanho da fonte. Nunca passa do tamanho da
+// tela (Tarefa 7.1b): se o conteúdo não couber mesmo com a escala mínima da GUI
+// (janela muito baixa), aparece uma barra de rolagem (e a roda do mouse rola).
 static void GuiBeginCentered(const char* id, float min_width_em)
 {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 0.5f * vp->Size.x, vp->Pos.y + 0.5f * vp->Size.y),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(min_width_em * ImGui::GetFontSize(), 0.0f),
-                                        ImVec2(FLT_MAX, FLT_MAX));
-    ImGui::Begin(id, NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+    ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(min_width_em * ImGui::GetFontSize(), vp->Size.x), 0.0f),
+                                        ImVec2(vp->Size.x, vp->Size.y));
+    ImGui::Begin(id, NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                            ImGuiWindowFlags_NoNav);
 }
@@ -1956,10 +1978,14 @@ void Gui_Frame(GLFWwindow* window)
     ImGui_ImplGlfw_NewFrame();
     Gui_InjectPendingClick();
 
-    // Escala da GUI pela altura da janela (referência: 600 pixels), entre 1x e 2x.
+    // Escala da GUI pela altura da janela (referência: 600 pixels), entre
+    // GUI_MIN_SCALE e 2x: numa janela mais baixa que 600 px a GUI encolhe junto
+    // e a janela "Controles" continua cabendo (Tarefa 7.1b); abaixo de
+    // 600 * GUI_MIN_SCALE px as janelas ganham rolagem (GuiBeginCentered).
+    const float GUI_MIN_SCALE = 0.5f;
     int width, height;
     glfwGetWindowSize(window, &width, &height);
-    const float scale = std::max(1.0f, std::min(2.0f, (float)height / 600.0f));
+    const float scale = std::max(GUI_MIN_SCALE, std::min(2.0f, (float)height / 600.0f));
     if (scale != g_GuiScale)
     {
         ImGuiStyle& style = ImGui::GetStyle();
@@ -2689,6 +2715,10 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
     // função "glViewport" define o mapeamento das "normalized device
     // coordinates" (NDC) para "pixel coordinates".  Essa é a operação de
     // "Screen Mapping" ou "Viewport Mapping" vista em aula ({+ViewportMapping2+}).
+    // Janela minimizada (0 x 0): nada a ajustar (evita razão de aspecto 0/0).
+    if (width <= 0 || height <= 0)
+        return;
+
     glViewport(0, 0, width, height);
 
     // Atualizamos também a razão que define a proporção da janela (largura /
@@ -2889,7 +2919,8 @@ void TextRendering_ShowRunInfo(GLFWwindow* window)
 // second).
 void TextRendering_ShowFramesPerSecond(GLFWwindow* window)
 {
-    if ( !g_ShowInfoText )
+    // Só com o texto de depuração ligado (H) e nunca no menu (Tarefa 7.1b).
+    if ( !g_ShowInfoText || g_Game.mode == GameMode::MENU )
         return;
 
     // Variáveis estáticas (static) mantém seus valores entre chamadas

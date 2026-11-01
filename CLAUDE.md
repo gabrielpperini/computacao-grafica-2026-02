@@ -520,7 +520,7 @@ do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição)
 `A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; `P` ou `ESC` pausam e
 continuam (**`ESC` não fecha mais o programa**: sair é pelo botão "Sair" do menu); no MENU,
 `Enter` (ou `Espaço`) equivale a "Jogar"; no GAME OVER, `Enter` (ou `Espaço`) equivale a "Jogar
-de novo"; `H` liga e desliga o texto de depuração (velocidade, faixa, FPS — o HUD de
+de novo"; `H` liga e desliga o texto de depuração (velocidade, faixa, FPS; nunca no MENU — o HUD de
 pontos/moedas/distância e os tempos dos power-ups ativos fica sempre visível); `C` liga/desliga a
 câmera livre (jogo congelado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe,
 `Shift` desce, `C` volta ao jogo, `P`/`ESC` sai dela direto para a pausa); `R` recarrega shaders.
@@ -533,7 +533,8 @@ com `ImGui_ImplGlfw_InitForOpenGL(window, true)`: o backend encadeia os nossos c
 chama primeiro, então o `KeyCallback` com o `Correcao_KeyCallback` segue valendo;
 `io.IniFilename = NULL`, fonte vetorial embutida `AddFontDefaultVector()` a 18 px, estilo escuro
 com botões laranja) e `Gui_Frame()` (a cada quadro, depois da cena 3D: escala estilo e fonte pela
-altura da janela, 600 px = 1x até 2x, e desenha conforme `g_Game.mode`: `MENU` → título "RAIL
+altura da janela, 600 px = 1x, entre 0.5x e 2x — abaixo de 300 px as janelas centralizadas ganham rolagem e
+nunca passam da tela (Tarefa 7.1b), e desenha conforme `g_Game.mode`: `MENU` → título "RAIL
 RUSH", "Jogar", "Controles" (abre a lista de controles na mesma janela), "Sair"; `PLAYING` → HUD
 transparente no canto superior esquerdo; `PAUSED` → HUD + "Continuar", "Reiniciar", "Menu";
 `FREE_CAMERA` → aviso no topo; `GAME_OVER` → pontos, moedas, distância, "Jogar de novo", "Menu").

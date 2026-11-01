@@ -50,6 +50,8 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods);
 void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
 // Clique no botão da GUI com esse rótulo (main.cpp; false se não está na tela).
 bool Gui_ClickButton(const char* label);
+// O botão foi desenhado no último quadro, inteiro dentro da janela (main.cpp).
+bool Gui_ButtonOnScreen(const char* label);
 
 // Dispara as partículas dos eventos de coleta e limpa a lista (main.cpp).
 void EmitCollectParticles(Game& game);
@@ -1737,6 +1739,68 @@ static bool CheckGameOverGui(bool via_menu, std::string* why)
 static bool Check_game_over_gui(std::string* why)  { return CheckGameOverGui(false, why); }
 static bool Check_game_over_menu(std::string* why) { return CheckGameOverGui(true, why); }
 
+// gui_small_window (Tarefa 7.1b): o menu com a lista de "Controles" aberta não
+// pode ser cortado em janelas com menos de 600 px de altura. O hook encolhe a
+// janela para 640x400 (a GUI escala para 0.67x: tudo cabe, os 3 botões ficam
+// inteiros na tela) e depois para 480x270 (abaixo da escala mínima: a janela
+// do menu ganha rolagem e não passa da tela; "Jogar", no topo, continua
+// clicável). No fim volta a 800x600.
+static int  g_SwFrame       = 0;
+static bool g_SwSized400    = false; // a janela chegou a 640x400
+static bool g_SwAllOn400    = false; // Jogar, Controles e Sair inteiros na tela em 640x400
+static bool g_SwSized270    = false;
+static bool g_SwJogarOn270  = false;
+
+static void Hook_SmallWindow()
+{
+    ++g_SwFrame;
+    GLFWwindow* window = glfwGetCurrentContext();
+    int w = 0, h = 0;
+    glfwGetWindowSize(window, &w, &h);
+    if (g_SwFrame == 1)
+        glfwSetWindowSize(window, 640, 400);
+    else if (g_SwFrame == 55 && w == 640 && h == 400)
+    {
+        g_SwSized400 = true;
+        g_SwAllOn400 = Gui_ButtonOnScreen("Jogar") && Gui_ButtonOnScreen("Controles") &&
+                       Gui_ButtonOnScreen("Sair");
+    }
+    else if (g_SwFrame == 60)
+        glfwSetWindowSize(window, 480, 270);
+    else if (g_SwFrame == 115 && w == 480 && h == 270)
+    {
+        g_SwSized270 = true;
+        g_SwJogarOn270 = Gui_ButtonOnScreen("Jogar");
+    }
+    else if (g_SwFrame == 170)
+        glfwSetWindowSize(window, 800, 600);
+}
+
+static bool Check_gui_small_window(std::string* why)
+{
+    char buf[200];
+    if (!g_SwSized400 || !g_SwSized270)
+    {
+        snprintf(buf, sizeof(buf), "a janela nao foi redimensionada (640x400: %d, 480x270: %d)",
+                 (int)g_SwSized400, (int)g_SwSized270);
+        *why = buf;
+        return false;
+    }
+    if (!g_SwAllOn400 || !g_SwJogarOn270)
+    {
+        snprintf(buf, sizeof(buf), "botoes do menu cortados: todos em 640x400 = %d, Jogar em 480x270 = %d",
+                 (int)g_SwAllOn400, (int)g_SwJogarOn270);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "o clique em Jogar (janela pequena) nao iniciou a corrida";
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -2243,6 +2307,24 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{7.0f, 0, 0, NULL, 0, 0, "Menu"});
         s.steps.push_back(AutotestStep{7.2f, 0, 0, "menu"});
         s.steps.push_back(AutotestStep{7.3f, 0, 0, NULL, 0, 0, "Jogar"});
+        scenarios.push_back(s);
+    }
+
+    // gui_small_window: menu com "Controles" aberto em janelas de 640x400 e
+    // 480x270 (veja Hook_SmallWindow); "Jogar" clicado na janela pequena.
+    {
+        AutotestScenario s;
+        s.name          = "gui_small_window";
+        s.duration      = 3.4f;
+        s.final_check   = Check_gui_small_window;
+        s.frame_hook    = Hook_SmallWindow;
+        s.start_in_menu = true;
+        s.steps.push_back(AutotestStep{0.4f, 0, 0, NULL, 0, 0, "Controles"});
+        s.steps.push_back(AutotestStep{0.85f, 0, 0, "h400_controls"});
+        s.steps.push_back(AutotestStep{1.85f, 0, 0, "h270_controls"});
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, NULL, 0, 0, "Jogar"});
+        s.steps.push_back(AutotestStep{2.5f, 0, 0, "h270_playing"});
+        s.steps.push_back(AutotestStep{3.3f, 0, 0, "h600_playing"});
         scenarios.push_back(s);
     }
 
