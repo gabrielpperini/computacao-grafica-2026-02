@@ -3892,6 +3892,29 @@ void Test_ParticlesBounceOnFloor()
     assert(below);
 }
 
+// Atrito no chão (Tarefa 7.2): o fator aplicado à velocidade horizontal em um
+// contato é PARTICLE_GROUND_FRICTION^(dt*60), então não depende da taxa de
+// quadros (60 Hz = 0.6; 30 Hz = 0.36; dt = 0 não muda nada).
+void Test_ParticlesGroundFrictionScalesWithDt()
+{
+    const float dts[4] = {0.0f, 1.0f / 120.0f, 1.0f / 60.0f, MAX_DT};
+    for (int k = 0; k < 4; ++k) {
+        ParticleSystem ps(8);
+        // Nasce 1 m abaixo do chão: nenhum passo (vmax * MAX_DT < 0.3 m) o leva
+        // até lá, então o primeiro Update() é sempre um contato.
+        ps.Emit(vec4(0, 0.0f, 0, 1), 1, glm::vec3(1.0f), 77, 1.0f);
+        assert(ps.Alive().size() == 1);
+        const glm::vec3 v0 = ps.Alive()[0].velocity;
+        assert(std::fabs(v0.x) + std::fabs(v0.z) > 0.1f);
+        ps.Update(dts[k]);
+        assert(ps.Alive().size() == 1);
+        const float expected = std::pow(PARTICLE_GROUND_FRICTION, dts[k] * 60.0f);
+        const glm::vec3 v1 = ps.Alive()[0].velocity;
+        assert(nearf(v1.x, v0.x * expected, 1e-4f));
+        assert(nearf(v1.z, v0.z * expected, 1e-4f));
+    }
+}
+
 // Sem alocação em tempo de jogo: depois de muitas emissões e atualizações o
 // armazenamento interno continua no mesmo endereço (o vetor nunca realoca).
 void Test_ParticlesNoReallocation()
@@ -4190,6 +4213,7 @@ int main()
     Test_ParticlesNoReallocation();
     Test_ParticlesFullPoolReplacesShortestLived();
     Test_ParticlesBounceOnFloor();
+    Test_ParticlesGroundFrictionScalesWithDt();
     Test_ParticlesMoveWithDt();
     Test_ParticlesDeterministic();
     Test_CoinPickupEmitsEvent();

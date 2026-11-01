@@ -99,8 +99,11 @@ void ParticleSystem::Update(float dt)
             p.position.y = rest_y;
             if (p.velocity.y < 0.0f)
                 p.velocity.y = -PARTICLE_BOUNCE * p.velocity.y;
-            p.velocity.x *= PARTICLE_GROUND_FRICTION;
-            p.velocity.z *= PARTICLE_GROUND_FRICTION;
+            // Atrito por quadro de referência (60 Hz): escalado por dt para a
+            // perda de velocidade horizontal não depender da taxa de quadros.
+            const float friction = std::pow(PARTICLE_GROUND_FRICTION, dt * 60.0f);
+            p.velocity.x *= friction;
+            p.velocity.z *= friction;
         }
         ++i;
     }

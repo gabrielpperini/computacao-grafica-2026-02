@@ -1852,6 +1852,10 @@ static void Hook_PerfHeavy()
     g_PerfSawTunnel = g_PerfSawTunnel || g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back());
 }
 
+// Limite da média de tempo de quadro do cenário perf_heavy (ms); vale também
+// para o build Debug.
+static const float PERF_MAX_AVG_MS = 16.0f;
+
 static bool Check_perf_heavy(std::string* why)
 {
     char buf[200];
@@ -1872,6 +1876,15 @@ static bool Check_perf_heavy(std::string* why)
     printf("E2E perf_heavy: %d quadros, media %.2f ms (%.0f fps), 1%% mais lento %.2f ms (%.0f fps), "
            "pior %.2f ms, particulas max %d\n",
            (int)ms.size(), avg, 1000.0f / avg, p99, 1000.0f / p99, ms.back(), g_PerfMaxAlive);
+    // Teste de regressão (Tarefa 7.2): mesmo no build Debug (o pior caso) a média
+    // precisa ficar abaixo de 16 ms (~60 fps); medido ~6.7 ms numa GTX 1070.
+    if (avg > PERF_MAX_AVG_MS)
+    {
+        snprintf(buf, sizeof(buf), "media de %.2f ms por quadro acima do limite de %.1f ms (%.0f fps)",
+                 avg, PERF_MAX_AVG_MS, 1000.0f / avg);
+        *why = buf;
+        return false;
+    }
     return true;
 }
 

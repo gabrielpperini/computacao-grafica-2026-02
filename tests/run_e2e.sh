@@ -20,6 +20,16 @@ if [ ! -x "$BIN_DIR/$EXE" ]; then
 fi
 
 TIMEOUT_S=60
+# macOS não traz o comando "timeout" (só com coreutils): sem ele os cenários rodam
+# sem limite de tempo (um cenário travado precisa ser interrompido com Ctrl+C).
+if command -v timeout >/dev/null 2>&1; then
+    run_with_timeout() { timeout "$TIMEOUT_S" "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_with_timeout() { gtimeout "$TIMEOUT_S" "$@"; }
+else
+    echo "E2E: aviso: comando 'timeout' ausente; rodando sem limite de tempo." >&2
+    run_with_timeout() { "$@"; }
+fi
 cd "$BIN_DIR" || exit 1
 
 if [ "$#" -gt 0 ]; then
@@ -35,7 +45,7 @@ total=0
 for name in $SCENARIOS; do
     total=$((total + 1))
     echo "--- cenario: $name"
-    out="$(timeout "$TIMEOUT_S" $EXE --autotest "$name" 2>&1)"
+    out="$(run_with_timeout $EXE --autotest "$name" 2>&1)"
     code=$?
     printf '%s\n' "$out" | tr -d '\r' | grep -E '^E2E|ERROR' 
     if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q "^E2E $name OK"; then

@@ -37,7 +37,8 @@ const float  PARTICLE_MIN_SIZE      = 0.20f;  // m
 const float  PARTICLE_MAX_SIZE      = 0.45f;
 // Chão (Tarefa 7.1b): ao chegar a meio tamanho do chão (o sprite não é cortado
 // por ele), a partícula quica: v.y troca de sinal e é multiplicada por
-// PARTICLE_BOUNCE, e a velocidade horizontal por PARTICLE_GROUND_FRICTION.
+// PARTICLE_BOUNCE, e a velocidade horizontal por PARTICLE_GROUND_FRICTION a
+// cada 1/60 s no chão (o fator aplicado é PARTICLE_GROUND_FRICTION^(dt*60)).
 const float  PARTICLE_BOUNCE          = 0.35f;
 const float  PARTICLE_GROUND_FRICTION = 0.6f;
 const float  PARTICLE_NO_FLOOR        = -1e30f; // floor_y padrão: cai sem chão

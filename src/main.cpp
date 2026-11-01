@@ -437,7 +437,7 @@ bool Gui_ClickButton(const char* label);
 bool Gui_ButtonOnScreen(const char* label);
 
 // Variável que controla se o texto informativo será mostrado na tela.
-bool g_ShowInfoText = true;
+bool g_ShowInfoText = false;
 
 // Variáveis que definem um programa de GPU (shaders). Veja função LoadShadersFromFiles().
 GLuint g_GpuProgramID = 0;
