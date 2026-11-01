@@ -1,3 +1,37 @@
 https://polyhaven.com/a/rocky_terrain_02
 https://polyhaven.com/a/red_brick
 https://polyhaven.com/a/metal_plate (licenca CC0)
+
+Fontes e licencas de todos os assets em data/ (todos permitem redistribuicao).
+Os arquivos de terceiros estao sem modificacao (copiados como vieram no pacote).
+
+== Poly Haven (texturas; licenca CC0, https://polyhaven.com/license) ==
+rocky_terrain_02_diff_1k.jpg   https://polyhaven.com/a/rocky_terrain_02   terreno dos lados da pista
+red_brick_diff_1k.jpg          https://polyhaven.com/a/red_brick          (sem uso no momento)
+metal_plate_diff_1k.jpg        https://polyhaven.com/a/metal_plate        trilhos
+gravel_stones_diff_1k.jpg      https://polyhaven.com/a/gravel_stones      brita do leito da pista
+  download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gravel_stones/gravel_stones_diff_1k.jpg
+rough_wood_diff_1k.jpg         https://polyhaven.com/a/rough_wood         dormentes
+  download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_wood/rough_wood_diff_1k.jpg
+
+== Kenney (modelos OBJ + textura; licenca CC0, ver License.txt em cada pasta) ==
+kenney/train-kit/              Train Kit (1.1)            https://kenney.nl/assets/train-kit
+  train-electric-subway-a/b/c.obj + .mtl, Textures/colormap.png   trem (3 carros de metro)
+kenney/blocky-characters/      Blocky Characters          https://kenney.nl/assets/blocky-characters
+  character-b.obj + .mtl, Textures/texture-b.png                   personagem do jogador
+kenney/city-kit-commercial/    City Kit (Commercial)      https://kenney.nl/assets/city-kit-commercial
+  building-a/d/f/h.obj, building-skyscraper-a/e.obj (+ .mtl), Textures/colormap.png   predios
+kenney/city-kit-roads/         City Kit (Roads)           https://kenney.nl/assets/city-kit-roads
+  light-curved.obj + .mtl, Textures/colormap.png                    postes de luz
+
+== Proprios (gerados por tools/gen_models.py; licenca CC0) ==
+procedural/atlas.png           atlas de textura das malhas abaixo (listras, moeda, x2, placa, cores)
+procedural/barrier_low.obj, barrier_high.obj, sign_board.obj       barreiras e placa de bloqueio
+procedural/coin.obj                                                 moeda
+procedural/powerup_magnet.obj, powerup_sneaker.obj, powerup_multiplier.obj, piggy_bank.obj   power-ups
+procedural/flying_pig.obj                                           porco voador (corpo + 2 asas)
+Para regerar: python tools/gen_models.py (na raiz do repositorio).
+
+== Codigo base da disciplina ==
+bunny.obj, sphere.obj, plane.obj   arquivos do codigo base de INF01047 (sem uso no momento)
+cube.obj                           cubo unitario escrito para o trabalho (cabeca emissiva dos postes)

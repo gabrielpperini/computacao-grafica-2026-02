@@ -1,0 +1,759 @@
+#!/usr/bin/env python3
+"""Gera as malhas procedurais do Rail Rush e o atlas de textura que elas usam.
+
+Uso (na raiz do repositório):   python tools/gen_models.py
+Saída: data/procedural/*.obj e data/procedural/atlas.png (sobrescreve).
+
+Só biblioteca padrão (math, struct, zlib). Tudo é determinístico: rodar de novo
+gera exatamente os mesmos arquivos.
+
+Convenções dos modelos (as mesmas que main.cpp espera):
+  - metros, +Y para cima, base apoiada em y = 0, centrados em x = z = 0;
+  - "frente" voltada para +Z (o lado que o jogador vê ao se aproximar);
+  - todo objeto tem nome ("o <nome>"), normais (vn) e coordenadas de textura (vt);
+  - triângulos em sentido anti-horário vistos de fora (há backface culling).
+Os obstáculos são modelados exatamente do tamanho da caixa de colisão de
+include/game.h (OBSTACLE_SIZE), então a escala aplicada no jogo é ~1.
+
+As coordenadas de textura apontam para regiões de data/procedural/atlas.png:
+faixas listradas, o rosto da moeda, o emblema "x2", a placa de "proibido
+passar" e quadrados de cor lisa (swatches).
+
+Licença dos arquivos gerados: CC0 (criados para este trabalho).
+"""
+
+import math
+import os
+import struct
+import zlib
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT_DIR = os.path.join(ROOT, "data", "procedural")
+
+# ---------------------------------------------------------------------------
+# Atlas de textura (512 x 512, RGB)
+# ---------------------------------------------------------------------------
+
+ATLAS = 512
+PPM = 64.0  # pixels do atlas por metro nas faces com padrão (listras não esticam)
+
+# Regiões (x0, y0, x1, y1) em pixels, origem no canto superior esquerdo da imagem.
+REGION_STRIPES = (0, 0, 256, 256)      # listras vermelho/branco a 45 graus
+REGION_HAZARD = (256, 0, 512, 128)     # listras amarelo/preto a 45 graus
+REGION_COIN = (256, 128, 384, 256)     # face da moeda (disco dourado com estrela)
+REGION_X2 = (384, 128, 512, 256)       # emblema do multiplicador "x2"
+REGION_SIGN = (0, 256, 160, 448)       # placa "proibido passar" (2.0 x 2.4 m)
+REGION_CONCRETE = (0, 448, 160, 512)   # concreto com ruído
+SWATCH_X0, SWATCH_Y0, SWATCH = 160, 256, 32  # quadrados de cor lisa, 11 por linha
+
+SWATCH_COLORS = [
+    ("white", (240, 240, 236)), ("red", (214, 44, 40)), ("dark_red", (150, 28, 26)),
+    ("orange", (246, 142, 32)), ("yellow", (252, 206, 44)), ("gold", (244, 184, 44)),
+    ("dark_gold", (196, 132, 26)), ("silver", (205, 210, 220)), ("steel", (118, 124, 136)),
+    ("dark", (46, 46, 52)), ("black", (18, 18, 20)), ("pink", (246, 158, 176)),
+    ("dark_pink", (214, 100, 128)), ("light_pink", (252, 204, 214)), ("blue", (48, 110, 214)),
+    ("light_blue", (150, 196, 244)), ("green", (60, 172, 84)), ("purple", (132, 78, 204)),
+    ("light_purple", (196, 160, 240)), ("brown", (122, 80, 44)), ("concrete", (168, 168, 162)),
+    ("glow", (255, 232, 150)), ("navy", (36, 52, 110)),
+]
+SWATCH_INDEX = {name: i for i, (name, _) in enumerate(SWATCH_COLORS)}
+
+
+def swatch_uv(name):
+    """UV do centro do quadrado de cor 'name' (v cresce para cima, como no OBJ)."""
+    i = SWATCH_INDEX[name]
+    col, row = i % 11, i // 11
+    px = SWATCH_X0 + col * SWATCH + SWATCH * 0.5
+    py = SWATCH_Y0 + row * SWATCH + SWATCH * 0.5
+    return (px / ATLAS, 1.0 - py / ATLAS)
+
+
+def region_uv(region, fx, fy):
+    """UV de um ponto da região: fx em [0,1] da esquerda para a direita, fy em
+    [0,1] de baixo para cima."""
+    x0, y0, x1, y1 = region
+    px = x0 + fx * (x1 - x0)
+    py = y1 - fy * (y1 - y0)
+    return (px / ATLAS, 1.0 - py / ATLAS)
+
+
+def region_uv_metric(region, x_m, y_m):
+    """UV de um ponto (em metros a partir do canto inferior esquerdo da região)
+    com densidade fixa PPM: o padrão tem o mesmo tamanho em qualquer face."""
+    x0, y0, x1, y1 = region
+    return region_uv(region, x_m * PPM / (x1 - x0), y_m * PPM / (y1 - y0))
+
+
+def lerp_color(a, b, t):
+    return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
+
+
+# Glifos 5x7 para o emblema "x2" ('#' = pixel aceso).
+GLYPHS = {
+    "x": ["     ", "     ", "#   #", " # # ", "  #  ", " # # ", "#   #"],
+    "2": [" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####"],
+}
+
+
+def star_inside(x, y, r_outer, r_inner, points=5):
+    """Ponto (x, y) dentro de uma estrela centrada na origem, ponta para cima."""
+    ang = math.atan2(x, y)  # 0 = para cima
+    r = math.hypot(x, y)
+    sector = 2.0 * math.pi / points
+    a = (ang % sector) / sector  # 0..1 dentro do setor
+    t = abs(a - 0.5) * 2.0       # 1 nas pontas, 0 entre pontas
+    # Raio da borda interpolado linearmente entre ponta e vale.
+    edge = r_inner + (r_outer - r_inner) * t
+    return r <= edge
+
+
+def atlas_color(px, py):
+    """Cor (r, g, b) em [0,255] do ponto (px, py) do atlas (floats, subpixel)."""
+    def inside(region):
+        return region[0] <= px < region[2] and region[1] <= py < region[3]
+
+    if inside(REGION_STRIPES):
+        return (214, 44, 40) if ((px + py) % 64.0) < 32.0 else (244, 244, 240)
+    if inside(REGION_HAZARD):
+        return (252, 200, 30) if ((px - py) % 48.0) < 24.0 else (34, 34, 38)
+    if inside(REGION_COIN):
+        cx, cy, R = 320.0, 192.0, 64.0
+        x, y = px - cx, -(py - cy)
+        r = math.hypot(x, y) / R
+        if r > 0.88:
+            return (214, 150, 30)
+        if r > 0.80:
+            return (178, 118, 22)                # sulco do aro interno
+        if star_inside(x / R, y / R, 0.55, 0.24):
+            return lerp_color((255, 238, 140), (250, 210, 70), r / 0.55)
+        return lerp_color((250, 200, 60), (226, 160, 34), r / 0.8)
+    if inside(REGION_X2):
+        cx, cy, R = 448.0, 192.0, 64.0
+        x, y = px - cx, py - cy
+        r = math.hypot(x, y) / R
+        if r > 0.9:
+            return (90, 50, 160)
+        if r > 0.82:
+            return (196, 160, 240)
+        base = lerp_color((150, 96, 226), (110, 62, 186), r / 0.82)
+        # Texto "x2" centralizado: 2 glifos 5x7 com 1 coluna de espaço, célula de 8 px.
+        cell = 8.0
+        text_w, text_h = 11 * cell, 7 * cell
+        gx = (x + text_w / 2) / cell
+        gy = (y + text_h / 2) / cell
+        if 0 <= gx < 11 and 0 <= gy < 7:
+            col, row = int(gx), int(gy)
+            if col < 5 and GLYPHS["x"][row][col] == "#":
+                return (255, 255, 255)
+            if col >= 6 and GLYPHS["2"][row][col - 6] == "#":
+                return (255, 255, 255)
+        return base
+    if inside(REGION_SIGN):
+        x0, y0, x1, y1 = REGION_SIGN
+        lx, ly = px - x0, py - y0
+        w, h = x1 - x0, y1 - y0
+        if lx < 10 or ly < 10 or lx > w - 10 or ly > h - 10:
+            return (214, 44, 40)                  # moldura vermelha
+        if lx < 14 or ly < 14 or lx > w - 14 or ly > h - 14:
+            return (244, 244, 240)
+        cx, cy = w / 2.0, h / 2.0
+        r = math.hypot(lx - cx, ly - cy)
+        if r < 62:
+            if abs(ly - cy) < 12 and abs(lx - cx) < 44:
+                return (250, 250, 250)            # barra branca do "proibido"
+            return (214, 44, 40) if r < 58 else (120, 20, 20)
+        return (244, 244, 240)
+    if inside(REGION_CONCRETE):
+        # Ruído determinístico (hash inteiro) em blocos de 2 px.
+        ix, iy = int(px) // 2, int(py) // 2
+        h = (ix * 73856093) ^ (iy * 19349663)
+        h = (h ^ (h >> 13)) * 1274126177 & 0xFFFFFFFF
+        n = (h & 0xFF) / 255.0
+        g = 150 + 30 * n
+        return (g, g, g * 0.97)
+    # Swatches de cor lisa.
+    if px >= SWATCH_X0 and py >= SWATCH_Y0:
+        col = int((px - SWATCH_X0) // SWATCH)
+        row = int((py - SWATCH_Y0) // SWATCH)
+        i = row * 11 + col
+        if col < 11 and i < len(SWATCH_COLORS):
+            return SWATCH_COLORS[i][1]
+    return (128, 128, 128)
+
+
+def build_atlas():
+    rows = []
+    sub = [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)]  # 4x supersampling
+    for y in range(ATLAS):
+        row = bytearray([0])  # filtro PNG "None"
+        for x in range(ATLAS):
+            acc = [0.0, 0.0, 0.0]
+            for sx, sy in sub:
+                c = atlas_color(x + sx, y + sy)
+                acc[0] += c[0]
+                acc[1] += c[1]
+                acc[2] += c[2]
+            row.extend(int(max(0, min(255, round(a / 4.0)))) for a in acc)
+        rows.append(bytes(row))
+    return b"".join(rows)
+
+
+def write_png(path, width, height, raw_rgb_rows):
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw_rgb_rows, 9))
+    png += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+# ---------------------------------------------------------------------------
+# Malhas
+# ---------------------------------------------------------------------------
+
+def v_add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def v_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def v_scale(a, s):
+    return (a[0] * s, a[1] * s, a[2] * s)
+
+
+def v_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def v_cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def v_norm(a):
+    length = math.sqrt(v_dot(a, a))
+    if length < 1e-12:
+        return (0.0, 1.0, 0.0)
+    return (a[0] / length, a[1] / length, a[2] / length)
+
+
+def rot_x(p, ang):
+    c, s = math.cos(ang), math.sin(ang)
+    return (p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c)
+
+
+def rot_y(p, ang):
+    c, s = math.cos(ang), math.sin(ang)
+    return (p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c)
+
+
+def rot_z(p, ang):
+    c, s = math.cos(ang), math.sin(ang)
+    return (p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2])
+
+
+class Mesh:
+    """Um objeto nomeado do OBJ: vértices com posição, normal e UV próprios."""
+
+    def __init__(self, name):
+        self.name = name
+        self.pos = []
+        self.nrm = []
+        self.uv = []
+        self.tris = []
+
+    def vertex(self, p, n, uv):
+        self.pos.append(p)
+        self.nrm.append(v_norm(n))
+        self.uv.append(uv)
+        return len(self.pos) - 1
+
+    def tri(self, a, b, c):
+        # Garante sentido anti-horário visto de fora: a normal geométrica tem
+        # de concordar com a média das normais dos vértices.
+        pa, pb, pc = self.pos[a], self.pos[b], self.pos[c]
+        geo = v_cross(v_sub(pb, pa), v_sub(pc, pa))
+        avg = v_add(v_add(self.nrm[a], self.nrm[b]), self.nrm[c])
+        if v_dot(geo, geo) < 1e-16:
+            return  # triângulo degenerado (polos)
+        if v_dot(geo, avg) < 0.0:
+            b, c = c, b
+        self.tris.append((a, b, c))
+
+    def quad(self, a, b, c, d):
+        self.tri(a, b, c)
+        self.tri(a, c, d)
+
+    def transform(self, fn_point, fn_normal=None):
+        """Aplica fn_point às posições (e fn_normal, ou a parte linear, às normais)."""
+        fn_normal = fn_normal or fn_point
+        self.pos = [fn_point(p) for p in self.pos]
+        self.nrm = [v_norm(fn_normal(n)) for n in self.nrm]
+        return self
+
+    def append(self, other):
+        base = len(self.pos)
+        self.pos += other.pos
+        self.nrm += other.nrm
+        self.uv += other.uv
+        self.tris += [(a + base, b + base, c + base) for (a, b, c) in other.tris]
+        return self
+
+    def bbox(self):
+        mn = tuple(min(p[i] for p in self.pos) for i in range(3))
+        mx = tuple(max(p[i] for p in self.pos) for i in range(3))
+        return mn, mx
+
+
+def box(name, mn, mx, uv_face=None, color="white"):
+    """Caixa alinhada aos eixos com normais planas. uv_face(face, u_m, v_m, w_m,
+    h_m) -> uv permite mapear um padrão por face (face em 'px','nx','py','ny',
+    'pz','nz'; u_m/v_m em metros a partir do canto inferior esquerdo da face
+    vista de fora); por padrão, cor lisa 'color'."""
+    m = Mesh(name)
+    x0, y0, z0 = mn
+    x1, y1, z1 = mx
+    flat = swatch_uv(color)
+    # (normal, origem, eixo u, eixo v, largura, altura) vistos de fora.
+    faces = [
+        ("pz", (0, 0, 1), (x0, y0, z1), (1, 0, 0), (0, 1, 0), x1 - x0, y1 - y0),
+        ("nz", (0, 0, -1), (x1, y0, z0), (-1, 0, 0), (0, 1, 0), x1 - x0, y1 - y0),
+        ("px", (1, 0, 0), (x1, y0, z1), (0, 0, -1), (0, 1, 0), z1 - z0, y1 - y0),
+        ("nx", (-1, 0, 0), (x0, y0, z0), (0, 0, 1), (0, 1, 0), z1 - z0, y1 - y0),
+        ("py", (0, 1, 0), (x0, y1, z1), (1, 0, 0), (0, 0, -1), x1 - x0, z1 - z0),
+        ("ny", (0, -1, 0), (x0, y0, z0), (1, 0, 0), (0, 0, 1), x1 - x0, z1 - z0),
+    ]
+    for face, n, o, eu, ev, w, h in faces:
+        ids = []
+        for (fu, fv) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+            p = v_add(o, v_add(v_scale(eu, fu * w), v_scale(ev, fv * h)))
+            uv = uv_face(face, fu * w, fv * h, w, h) if uv_face else None
+            ids.append(m.vertex(p, n, uv if uv is not None else flat))
+        m.quad(*ids)
+    return m
+
+
+def parametric(name, fn, nu, nv, color, normal_fn=None, closed_u=True, uv_fn=None):
+    """Superfície paramétrica fn(u, v) com u em [0,1) (volta) e v em [0,1]
+    (polo a polo). Normais pela derivada numérica (ou normal_fn)."""
+    m = Mesh(name)
+    flat = swatch_uv(color)
+    eps = 1e-4
+    grid = []
+    for j in range(nv + 1):
+        v = j / nv
+        row = []
+        for i in range(nu + (0 if closed_u else 1)):
+            u = i / nu
+            p = fn(u, v)
+            if normal_fn:
+                n = normal_fn(u, v, p)
+            else:
+                du = v_sub(fn(u + eps, v), fn(u - eps, v))
+                dv = v_sub(fn(u, min(1.0, v + eps)), fn(u, max(0.0, v - eps)))
+                n = v_cross(du, dv)
+                if v_dot(n, n) < 1e-14:
+                    n = v_sub(p, fn(u, 0.5))  # polo: aponta para fora
+            uv = uv_fn(u, v) if uv_fn else flat
+            row.append(m.vertex(p, n, uv))
+        grid.append(row)
+    cols = nu if closed_u else nu + 1
+    for j in range(nv):
+        for i in range(nu if closed_u else nu):
+            i1 = (i + 1) % cols
+            m.quad(grid[j][i], grid[j][i1], grid[j + 1][i1], grid[j + 1][i])
+    return m
+
+
+def ellipsoid(name, center, radii, color, nu=28, nv=16):
+    cx, cy, cz = center
+    rx, ry, rz = radii
+
+    def fn(u, v):
+        th = 2 * math.pi * u
+        ph = math.pi * v - math.pi / 2
+        return (cx + rx * math.cos(ph) * math.sin(th), cy + ry * math.sin(ph), cz + rz * math.cos(ph) * math.cos(th))
+
+    def nf(u, v, p):
+        return ((p[0] - cx) / (rx * rx), (p[1] - cy) / (ry * ry), (p[2] - cz) / (rz * rz))
+
+    return parametric(name, fn, nu, nv, color, normal_fn=nf)
+
+
+def superellipsoid(name, center, radii, exponent, color, nu=32, nv=18):
+    """Caixa arredondada: |x/a|^e + |y/b|^e + |z/c|^e = 1 (e > 2 = mais quadrada)."""
+    cx, cy, cz = center
+    rx, ry, rz = radii
+    p_exp = 2.0 / exponent
+
+    def spow(x, e):
+        return math.copysign(abs(x) ** e, x)
+
+    def fn(u, v):
+        th = 2 * math.pi * u
+        ph = math.pi * min(1.0, max(0.0, v)) - math.pi / 2
+        cp, sp = math.cos(ph), math.sin(ph)
+        return (cx + rx * spow(cp, p_exp) * spow(math.sin(th), p_exp),
+                cy + ry * spow(sp, p_exp),
+                cz + rz * spow(cp, p_exp) * spow(math.cos(th), p_exp))
+
+    def nf(u, v, p):
+        # Gradiente da função implícita.
+        x, y, z = (p[0] - cx) / rx, (p[1] - cy) / ry, (p[2] - cz) / rz
+        e = exponent
+        g = (math.copysign(abs(x) ** (e - 1), x) / rx, math.copysign(abs(y) ** (e - 1), y) / ry,
+             math.copysign(abs(z) ** (e - 1), z) / rz)
+        if v_dot(g, g) < 1e-12:
+            return (0.0, 1.0 if v > 0.5 else -1.0, 0.0)
+        return g
+
+    return parametric(name, fn, nu, nv, color, normal_fn=nf)
+
+
+def cylinder(name, base, radius, height, color, segments=24, axis="y", caps=True,
+             cap_uv=None, side_color=None):
+    """Cilindro ao longo de +axis a partir de 'base'. cap_uv(x, y) -> uv mapeia
+    as tampas (x, y em [-1,1] no plano da tampa); senão cor lisa."""
+    m = Mesh(name)
+    flat = swatch_uv(color)
+    side_flat = swatch_uv(side_color or color)
+
+    def place(lx, ly, lz):
+        # Sistema local: (lx, lz) no plano da tampa, ly ao longo do eixo.
+        if axis == "y":
+            return v_add(base, (lx, ly, lz))
+        if axis == "z":
+            return v_add(base, (lx, lz, ly))
+        return v_add(base, (ly, lx, lz))  # axis == "x"
+
+    def dir_(lx, ly, lz):
+        if axis == "y":
+            return (lx, ly, lz)
+        if axis == "z":
+            return (lx, lz, ly)
+        return (ly, lx, lz)
+
+    ring0, ring1 = [], []
+    for i in range(segments):
+        a = 2 * math.pi * i / segments
+        c, s = math.cos(a), math.sin(a)
+        n = dir_(c, 0.0, s)
+        ring0.append(m.vertex(place(radius * c, 0.0, radius * s), n, side_flat))
+        ring1.append(m.vertex(place(radius * c, height, radius * s), n, side_flat))
+    for i in range(segments):
+        j = (i + 1) % segments
+        m.quad(ring0[i], ring0[j], ring1[j], ring1[i])
+    if caps:
+        for (h, sign) in ((0.0, -1.0), (height, 1.0)):
+            n = dir_(0.0, sign, 0.0)
+            center = m.vertex(place(0.0, h, 0.0), n, cap_uv(0.0, 0.0) if cap_uv else flat)
+            ids = []
+            for i in range(segments):
+                a = 2 * math.pi * i / segments
+                c, s = math.cos(a), math.sin(a)
+                uv = cap_uv(c, s * (1 if sign > 0 else -1)) if cap_uv else flat
+                ids.append(m.vertex(place(radius * c, h, radius * s), n, uv))
+            for i in range(segments):
+                m.tri(center, ids[i], ids[(i + 1) % segments])
+    return m
+
+
+def disc_token(name, radius, thickness, rim, recess, face_region, rim_color, segments=48):
+    """Ficha/moeda em pé (eixo Z), com aro saliente e face rebaixada que recebe
+    'face_region' do atlas (mapeamento planar, círculo inscrito na região).
+    Base em y = 0."""
+    m = Mesh(name)
+    rim_uv = swatch_uv(rim_color)
+    ri = radius - rim
+    zt = thickness / 2.0          # aro: z em [-zt, zt]
+    zf = zt - recess              # face rebaixada
+    cy = radius                   # centro do disco (base em y = 0)
+
+    def ring(r, z, n_fn, uv_fn):
+        ids = []
+        for i in range(segments):
+            a = 2 * math.pi * i / segments
+            c, s = math.cos(a), math.sin(a)
+            ids.append(m.vertex((r * c, cy + r * s, z), n_fn(c, s), uv_fn(c, s, r)))
+        return ids
+
+    def strip(r0, r1):
+        for i in range(segments):
+            j = (i + 1) % segments
+            m.quad(r0[i], r0[j], r1[j], r1[i])
+
+    def face_uv(c, s, r):
+        return region_uv(face_region, 0.5 + 0.5 * c * r / ri, 0.5 + 0.5 * s * r / ri)
+
+    for sign in (1.0, -1.0):
+        z_rim, z_face = sign * zt, sign * zf
+        nz = (0.0, 0.0, sign)
+        # Topo do aro (anel plano entre ri e radius).
+        a = ring(radius, z_rim, lambda c, s: nz, lambda c, s, r: rim_uv)
+        b = ring(ri, z_rim, lambda c, s: nz, lambda c, s, r: rim_uv)
+        strip(a, b)
+        # Parede interna do aro (desce até a face), normal para dentro.
+        c1 = ring(ri, z_rim, lambda c, s: (-c, -s, 0.0), lambda c, s, r: rim_uv)
+        c2 = ring(ri, z_face, lambda c, s: (-c, -s, 0.0), lambda c, s, r: rim_uv)
+        strip(c1, c2)
+        # Face (leque) com a imagem.
+        if sign > 0:
+            fuv = face_uv
+        else:
+            # Verso visto de trás: espelha U para a imagem não ficar invertida.
+            def fuv(c, s, r):
+                return region_uv(face_region, 0.5 - 0.5 * c * r / ri, 0.5 + 0.5 * s * r / ri)
+        f = ring(ri, z_face, lambda c, s: nz, fuv)
+        center = m.vertex((0.0, cy, z_face), nz, region_uv(face_region, 0.5, 0.5))
+        for i in range(segments):
+            m.tri(center, f[i], f[(i + 1) % segments])
+    # Borda externa (normais suaves em volta: realce contínuo no Gouraud).
+    e0 = ring(radius, zt, lambda c, s: (c, s, 0.0), lambda c, s, r: rim_uv)
+    e1 = ring(radius, -zt, lambda c, s: (c, s, 0.0), lambda c, s, r: rim_uv)
+    strip(e0, e1)
+    return m
+
+
+def torus_arc(name, center, major, minor, a0, a1, color, nu=24, nv=14, plane="xy"):
+    """Arco de toro de a0 a a1 (rad) no plano 'xy' em volta de 'center'."""
+    cx, cy, cz = center
+
+    def fn(u, v):
+        a = a0 + (a1 - a0) * u
+        b = 2 * math.pi * v
+        r = major + minor * math.cos(b)
+        return (cx + r * math.cos(a), cy + r * math.sin(a), cz + minor * math.sin(b))
+
+    def nf(u, v, p):
+        a = a0 + (a1 - a0) * u
+        b = 2 * math.pi * v
+        return (math.cos(b) * math.cos(a), math.cos(b) * math.sin(a), math.sin(b))
+
+    return parametric(name, fn, nu, nv, color, normal_fn=nf, closed_u=False)
+
+
+def merged(name, parts):
+    m = Mesh(name)
+    for p in parts:
+        m.append(p)
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Modelos
+# ---------------------------------------------------------------------------
+
+def stripes_uv(region):
+    """uv_face para box(): padrão da região nas faces ±Z, com densidade fixa."""
+    def fn(face, u_m, v_m, w, h):
+        if face in ("pz", "nz"):
+            return region_uv_metric(region, u_m, v_m)
+        return None
+    return fn
+
+
+def model_barrier_low():
+    """Barreira baixa (2.0 x 0.9 x 0.3 m): tábua listrada sobre dois cavaletes,
+    com pisca-alertas laranja no topo. Pula-se por cima."""
+    parts = []
+    for sx in (-1.0, 1.0):
+        x = sx * 0.82
+        parts.append(box("p", (x - 0.05, 0.0, -0.15), (x + 0.05, 0.06, 0.15), color="steel"))   # pé
+        parts.append(box("p", (x - 0.04, 0.06, -0.04), (x + 0.04, 0.80, 0.04), color="silver"))  # poste
+        parts.append(cylinder("p", (x, 0.80, 0.0), 0.05, 0.04, "dark", segments=16))
+        parts.append(ellipsoid("p", (x, 0.86, 0.0), (0.05, 0.04, 0.05), "orange", nu=16, nv=8))
+    parts.append(box("p", (-1.0, 0.40, -0.05), (1.0, 0.76, 0.05), stripes_uv(REGION_STRIPES)))
+    parts.append(box("p", (-0.9, 0.16, -0.035), (0.9, 0.26, 0.035), stripes_uv(REGION_STRIPES)))
+    return merged("barrier_low", parts)
+
+
+def model_barrier_high():
+    """Barreira alta (2.0 x 3.0 x 0.3 m): dois postes nas bordas (do chão ao
+    topo) e painéis de y = 1.1 a 3.0. Vão livre 0-1.1 m: passa-se rolando.
+    Os postes ocupam |x| em [0.88, 1.0] (BARRIER_POST_HALF_WIDTH = 0.06)."""
+    parts = []
+    for sx in (-1.0, 1.0):
+        x = sx * 0.94
+        parts.append(box("p", (x - 0.06, 0.0, -0.15), (x + 0.06, 0.06, 0.15), color="steel"))
+        parts.append(box("p", (x - 0.06, 0.06, -0.06), (x + 0.06, 2.92, 0.06), color="silver"))
+        parts.append(ellipsoid("p", (x, 2.96, 0.0), (0.06, 0.04, 0.06), "orange", nu=16, nv=8))
+    # Painel listrado (embaixo) e placa de perigo (em cima).
+    parts.append(box("p", (-0.88, 1.10, -0.05), (0.88, 1.85, 0.05), stripes_uv(REGION_STRIPES)))
+    parts.append(box("p", (-0.88, 1.85, -0.03), (0.88, 1.97, 0.03), color="dark"))
+    parts.append(box("p", (-0.88, 1.97, -0.05), (0.88, 2.85, 0.05), stripes_uv(REGION_HAZARD)))
+    parts.append(box("p", (-0.88, 2.85, -0.06), (0.88, 2.92, 0.06), color="dark"))
+    return merged("barrier_high", parts)
+
+
+def model_sign():
+    """Placa de bloqueio (2.0 x 3.0 x 0.3 m): placa de "proibido passar" de
+    2.0 x 2.4 m sobre dois postes com sapatas de concreto. Só desviando."""
+    parts = []
+
+    def concrete_uv(face, u_m, v_m, w, h):
+        return region_uv_metric(REGION_CONCRETE, u_m * 0.5, v_m * 0.5)
+
+    for sx in (-1.0, 1.0):
+        x = sx * 0.7
+        parts.append(box("p", (x - 0.22, 0.0, -0.15), (x + 0.22, 0.35, 0.15), concrete_uv))
+        parts.append(box("p", (x - 0.07, 0.35, -0.07), (x + 0.07, 0.62, 0.07), color="steel"))
+
+    def sign_uv(face, u_m, v_m, w, h):
+        if face == "pz":
+            return region_uv(REGION_SIGN, u_m / w, v_m / h)
+        if face == "nz":
+            return swatch_uv("steel")
+        return swatch_uv("dark")
+
+    parts.append(box("p", (-1.0, 0.6, -0.06), (1.0, 3.0, 0.06), sign_uv))
+    # Travessa de reforço atrás da placa.
+    parts.append(box("p", (-0.9, 1.6, -0.14), (0.9, 1.75, -0.06), color="steel"))
+    return merged("sign_board", parts)
+
+
+def model_coin():
+    """Moeda (diâmetro 0.8 m, espessura 0.12 m) em pé, eixo Z, aro saliente."""
+    return disc_token("coin", 0.4, 0.12, 0.07, 0.025, REGION_COIN, "gold")
+
+
+def model_multiplier():
+    """Ficha "x2" (diâmetro 0.7 m)."""
+    return disc_token("powerup_multiplier", 0.35, 0.14, 0.05, 0.02, REGION_X2, "purple")
+
+
+def model_magnet():
+    """Ímã em ferradura: arco vermelho, braços vermelhos e pontas prateadas."""
+    major, minor = 0.24, 0.09
+    cy = 0.50
+    parts = [torus_arc("p", (0.0, cy, 0.0), major, minor, 0.0, math.pi, "red", nu=28, nv=16)]
+    for sx in (-1.0, 1.0):
+        x = sx * major
+        parts.append(cylinder("p", (x, 0.17, 0.0), minor, cy - 0.17, "red", segments=16, caps=False))
+        parts.append(cylinder("p", (x, 0.0, 0.0), minor, 0.17, "silver", segments=16))
+    return merged("powerup_magnet", parts)
+
+
+def model_sneaker():
+    """Tênis (comprimento 0.75 m, bico em +Z): solado branco, cabedal vermelho
+    com biqueira arredondada, cadarços brancos e gola escura."""
+    parts = [
+        superellipsoid("p", (0.0, 0.05, 0.0), (0.15, 0.05, 0.375), 4.0, "white"),          # solado
+        superellipsoid("p", (0.0, 0.20, -0.09), (0.135, 0.15, 0.25), 3.0, "red"),          # cabedal
+        ellipsoid("p", (0.0, 0.11, 0.17), (0.13, 0.10, 0.19), "red"),                      # biqueira
+        ellipsoid("p", (0.0, 0.07, 0.30), (0.12, 0.05, 0.07), "white", nu=20, nv=10),      # ponteira
+        cylinder("p", (0.0, 0.33, -0.17), 0.10, 0.04, "dark", segments=20),               # gola
+    ]
+    for k in range(3):
+        z = 0.02 + 0.07 * k
+        y = 0.27 - 0.045 * k
+        parts.append(box("p", (-0.09, y, z - 0.012), (0.09, y + 0.03, z + 0.012), color="white"))
+    # Faixa lateral azul.
+    parts.append(box("p", (-0.142, 0.12, -0.22), (0.142, 0.17, 0.02), color="blue"))
+    return merged("powerup_sneaker", parts)
+
+
+def pig_parts(with_slot):
+    """Partes do porco (corpo, focinho, orelhas, olhos, patas, rabo), cabeça em +Z."""
+    parts = [
+        ellipsoid("p", (0.0, 0.34, 0.0), (0.28, 0.25, 0.36), "pink", nu=32, nv=18),       # corpo
+        cylinder("p", (0.0, 0.36, 0.33), 0.10, 0.09, "dark_pink", segments=20, axis="z"),  # focinho
+        ellipsoid("p", (-0.035, 0.37, 0.425), (0.018, 0.028, 0.01), "dark", nu=10, nv=6),  # narinas
+        ellipsoid("p", (0.035, 0.37, 0.425), (0.018, 0.028, 0.01), "dark", nu=10, nv=6),
+        ellipsoid("p", (-0.11, 0.45, 0.28), (0.035, 0.04, 0.025), "black", nu=12, nv=8),   # olhos
+        ellipsoid("p", (0.11, 0.45, 0.28), (0.035, 0.04, 0.025), "black", nu=12, nv=8),
+        ellipsoid("p", (0.0, 0.40, -0.36), (0.04, 0.04, 0.04), "dark_pink", nu=12, nv=8),  # rabo
+    ]
+    for sx in (-1.0, 1.0):
+        # Orelhas: elipsoides achatados inclinados para a frente.
+        ear = ellipsoid("p", (0.0, 0.0, 0.0), (0.07, 0.09, 0.025), "dark_pink", nu=14, nv=8)
+        ear.transform(lambda p, sx=sx: v_add(rot_z(rot_x(p, 0.5), -0.35 * sx), (sx * 0.15, 0.56, 0.16)),
+                      lambda n, sx=sx: rot_z(rot_x(n, 0.5), -0.35 * sx))
+        parts.append(ear)
+        for sz in (-1.0, 1.0):
+            parts.append(cylinder("p", (sx * 0.15, 0.0, sz * 0.18), 0.065, 0.16, "dark_pink", segments=14))
+    if with_slot:
+        parts.append(box("p", (-0.10, 0.575, -0.03), (0.10, 0.595, 0.03), color="black"))
+    return parts
+
+
+def model_piggy_bank():
+    """Cofrinho (power-up): porco rosa com fenda de moeda no topo."""
+    return merged("piggy_bank", pig_parts(True))
+
+
+def model_flying_pig():
+    """Porco voador: corpo e duas asas como objetos separados (para bater as
+    asas em torno da raiz, em x = ±0.2, numa tarefa futura)."""
+    body = merged("flying_pig_body", pig_parts(False))
+    wings = []
+    for sx, name in ((-1.0, "flying_pig_wing_left"), (1.0, "flying_pig_wing_right")):
+        # Asa com a raiz em x = 0 e a ponta em x = sx*0.6 (sem espelhar a malha,
+        # o que inverteria o sentido dos triângulos).
+        w = merged(name, [
+            ellipsoid("p", (sx * 0.30, 0.0, 0.0), (0.30, 0.025, 0.14), "white", nu=24, nv=10),
+            ellipsoid("p", (sx * 0.38, 0.012, -0.06), (0.20, 0.03, 0.08), "light_blue", nu=20, nv=8),
+        ])
+        # Raiz nas costas, ponta para fora e um pouco para cima.
+        w.transform(lambda p, sx=sx: v_add(rot_z(p, 0.35 * sx), (sx * 0.16, 0.50, 0.02)),
+                    lambda n, sx=sx: rot_z(n, 0.35 * sx))
+        wings.append(w)
+    return [body] + wings
+
+
+# ---------------------------------------------------------------------------
+# Escrita
+# ---------------------------------------------------------------------------
+
+def write_obj(path, meshes, description):
+    lines = ["# %s" % description,
+             "# Gerado por tools/gen_models.py (Rail Rush, INF01047). Licenca: CC0.",
+             "# Textura: atlas.png (mesmo diretorio)."]
+    vbase = 0
+    total = 0
+    for m in meshes:
+        lines.append("o %s" % m.name)
+        for p in m.pos:
+            lines.append("v %.5f %.5f %.5f" % p)
+        for uv in m.uv:
+            lines.append("vt %.5f %.5f" % uv)
+        for n in m.nrm:
+            lines.append("vn %.5f %.5f %.5f" % n)
+        for (a, b, c) in m.tris:
+            ia, ib, ic = a + 1 + vbase, b + 1 + vbase, c + 1 + vbase
+            lines.append("f %d/%d/%d %d/%d/%d %d/%d/%d" % (ia, ia, ia, ib, ib, ib, ic, ic, ic))
+        vbase += len(m.pos)
+        total += len(m.tris)
+    with open(path, "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    return total
+
+
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+    write_png(os.path.join(OUT_DIR, "atlas.png"), ATLAS, ATLAS, build_atlas())
+    models = [
+        ("barrier_low.obj", [model_barrier_low()], "Barreira baixa (2.0 x 0.9 x 0.3 m)"),
+        ("barrier_high.obj", [model_barrier_high()], "Barreira alta (2.0 x 3.0 x 0.3 m, vao de 1.1 m)"),
+        ("sign_board.obj", [model_sign()], "Placa de bloqueio (2.0 x 3.0 x 0.3 m)"),
+        ("coin.obj", [model_coin()], "Moeda (0.8 m de diametro)"),
+        ("powerup_magnet.obj", [model_magnet()], "Power-up: ima"),
+        ("powerup_sneaker.obj", [model_sneaker()], "Power-up: tenis"),
+        ("powerup_multiplier.obj", [model_multiplier()], "Power-up: multiplicador x2"),
+        ("piggy_bank.obj", [model_piggy_bank()], "Power-up: cofrinho"),
+        ("flying_pig.obj", model_flying_pig(), "Porco voador (corpo + 2 asas)"),
+    ]
+    for filename, meshes, desc in models:
+        tris = write_obj(os.path.join(OUT_DIR, filename), meshes, desc)
+        mn = tuple(min(m.bbox()[0][i] for m in meshes) for i in range(3))
+        mx = tuple(max(m.bbox()[1][i] for m in meshes) for i in range(3))
+        print("%-26s %5d triangulos  bbox (%.3f, %.3f, %.3f) .. (%.3f, %.3f, %.3f)" % (
+            filename, tris, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]))
+
+
+if __name__ == "__main__":
+    main()
