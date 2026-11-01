@@ -36,7 +36,10 @@ procedural/ramp.obj                                                 rampa para s
   (usa metal_plate_diff_1k.jpg e rough_wood_diff_1k.jpg acima, nao o atlas)
 Para regerar: python tools/gen_models.py (na raiz do repositorio).
 
+== Proprios (escritos a mao para o trabalho; licenca CC0) ==
+cube.obj                           cubo unitario (24 vertices, UV e normal por face) escrito para o
+                                   trabalho: cabeca emissiva dos postes e luminarias do teto dos tuneis
+
 == Codigo base da disciplina ==
-cube.obj                           cubo unitario escrito para o trabalho (cabeca emissiva dos postes
-                                   e luminarias do teto dos tuneis)
-(bunny.obj, sphere.obj e plane.obj do codigo base foram removidos na Tarefa 7.1b: sem uso.)
+(bunny.obj, sphere.obj e plane.obj do codigo base foram removidos na Tarefa 7.1b: sem uso.
+ Nenhum asset do codigo base continua em data/.)
