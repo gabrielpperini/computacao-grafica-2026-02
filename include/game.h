@@ -89,6 +89,9 @@ glm::vec3 CoinCenter(const Coin& c);
 // moeda, nunca em cima de obstáculo ou moeda.
 enum class PowerUpType { MAGNET, SNEAKERS, MULTIPLIER, PIGGY };
 const int POWERUP_TYPE_COUNT = 4;
+// Tipos com duração (todos menos o cofrinho, que é sempre o último do enum).
+const int POWERUP_TIMED_TYPE_COUNT = POWERUP_TYPE_COUNT - 1;
+static_assert((int)PowerUpType::PIGGY == POWERUP_TYPE_COUNT - 1, "PIGGY deve ser o último PowerUpType");
 
 // Esfera de coleta de raio POWERUP_RADIUS centrada em (lane*LANE_WIDTH,
 // POWERUP_HEIGHT, s).

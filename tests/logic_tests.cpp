@@ -3494,13 +3494,22 @@ void Test_PigCoinsAvoidObstacles()
 // sequência de power-ups é determinística (o cofrinho só troca de tipo).
 void Test_PigNoSpawnBeforeTunnel()
 {
+    // O remap do cofrinho perto de túnel deriva do enum (Tarefa 7.1a): o PIGGY
+    // é o último tipo e os demais (com duração) são os POWERUP_TIMED_TYPE_COUNT
+    // primeiros.
+    assert((int)PowerUpType::PIGGY == POWERUP_TYPE_COUNT - 1);
+    assert(POWERUP_TIMED_TYPE_COUNT == POWERUP_TYPE_COUNT - 1);
     int piggies = 0, near_tunnel = 0;
+    int near_by_type[POWERUP_TYPE_COUNT] = {0};
     for (unsigned seed = 1; seed <= 60; seed++) {
         Game g(seed);
         g.GenerateChunksUntil(400 * CHUNK_LENGTH);
         for (size_t i = 0; i < g.powerups.size(); i++) {
             const PowerUp& p = g.powerups[i];
-            if (g.track.TunnelOverlaps(p.s, p.s + PIGGY_SPAWN_TUNNEL_CLEARANCE)) near_tunnel++;
+            if (g.track.TunnelOverlaps(p.s, p.s + PIGGY_SPAWN_TUNNEL_CLEARANCE)) {
+                near_tunnel++;
+                near_by_type[(int)p.type]++;
+            }
             if (p.type != PowerUpType::PIGGY) continue;
             piggies++;
             assert(!g.track.TunnelOverlaps(p.s, p.s + PIGGY_SPAWN_TUNNEL_CLEARANCE));
@@ -3513,6 +3522,10 @@ void Test_PigNoSpawnBeforeTunnel()
     }
     assert(piggies > 50);
     assert(near_tunnel > 0); // há power-ups perto de túnel: a regra foi exercida
+    // Perto de túnel, o cofrinho some e os outros tipos (todos) aparecem.
+    assert(near_by_type[(int)PowerUpType::PIGGY] == 0);
+    for (int t = 0; t < POWERUP_TIMED_TYPE_COUNT; t++)
+        assert(near_by_type[t] > 0);
 }
 
 // Rede de segurança: com o porco sobrevoando um túnel, nenhuma moeda cai

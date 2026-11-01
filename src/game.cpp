@@ -970,7 +970,8 @@ void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_c
             // sorteios do chunk já foram consumidos).
             track.EnsureGeneratedUntil(s + PIGGY_SPAWN_TUNNEL_CLEARANCE);
             if (track.TunnelOverlaps(s, s + PIGGY_SPAWN_TUNNEL_CLEARANCE))
-                type = (PowerUpType)std::min((int)(u * 3.0f), 2);
+                type = (PowerUpType)std::min((int)(u * (float)POWERUP_TIMED_TYPE_COUNT),
+                                             POWERUP_TIMED_TYPE_COUNT - 1);
         }
         PowerUp p = {type, safe, s, false};
         powerups.push_back(p);
