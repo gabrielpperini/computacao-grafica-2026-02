@@ -2,6 +2,7 @@
 # Roda os cenários E2E (main --autotest <cenario>) a partir de bin/<plataforma>/.
 # Uso (na raiz do repositório, depois de compilar):  bash tests/run_e2e.sh [cenario...]
 # Sem argumentos roda todos os cenários listados por "main --autotest-list".
+# No Windows, E2E_BIN_DIR=bin/Release testa o build Release (padrão: bin/Debug).
 # Screenshots ficam em bin/<plataforma>/e2e/. Sai com status != 0 se algum falhar.
 
 set -u
@@ -9,7 +10,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) BIN_DIR="bin/Debug";  EXE="./main.exe" ;;
+    MINGW*|MSYS*|CYGWIN*) BIN_DIR="${E2E_BIN_DIR:-bin/Debug}"; EXE="./main.exe" ;;
     Darwin*)              BIN_DIR="bin/macOS";  EXE="./main" ;;
     *)                    BIN_DIR="bin/Linux";  EXE="./main" ;;
 esac
