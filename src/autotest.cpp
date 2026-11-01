@@ -51,6 +51,8 @@ void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
 // Clique no botão da GUI com esse rótulo (main.cpp; false se não está na tela).
 bool Gui_ClickButton(const char* label);
 
+// Dispara as partículas dos eventos de coleta e limpa a lista (main.cpp).
+void EmitCollectParticles(Game& game);
 // Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
 extern Game g_Game;
 // Câmera em 3ª pessoa e rampa de escurecimento do túnel (main.cpp).
@@ -1407,6 +1409,158 @@ static bool Check_pause_freeze(std::string* why)
     return true;
 }
 
+// marathon (Tarefa 7.1a): partida longa, com spawn ligado e um piloto
+// automático que segue a faixa segura de cada chunk e pula/rola as barreiras
+// dela, ocupando 600 s de JOGO. Para caber no tempo do E2E (cada quadro
+// desenhado custa ~10 ms), cada quadro renderizado roda MARATHON_SUBSTEPS
+// passos de lógica a mais (dt = 1/60 s cada, a mesma sequência do jogo normal,
+// com partículas e eventos de coleta): 60 s de quadros x 10 = 600 s de jogo.
+// Confere sem erro de GL (o harness faz), jogo vivo, e que o que o jogo
+// mantém (obstáculos, moedas, power-ups, partículas, segmentos da pista,
+// eventos) fica LIMITADO, ou seja, não vaza ao longo de ~17 km de pista.
+static const int   MARATHON_SUBSTEPS   = 9;
+static const float MARATHON_DURATION   = 60.0f; // s de quadros (x10 = 600 s de jogo)
+static size_t g_MaraMaxObstacles  = 0;
+static size_t g_MaraMaxCoins      = 0;
+static size_t g_MaraMaxPowerups   = 0;
+static size_t g_MaraMaxParticles  = 0;
+static size_t g_MaraMaxSegments   = 0;
+static size_t g_MaraMaxEvents     = 0;
+static int    g_MaraDeaths        = 0;
+static int    g_MaraBarriersDodged = 0;
+static bool   g_MaraNonFinite     = false;
+
+// Piloto: faixa segura do chunk (a troca acontece na emenda livre entre
+// chunks), pulo na barreira baixa e rolamento na alta da faixa em que está.
+static void MarathonPilot()
+{
+    Player& p = g_Game.player;
+    const int c = (int)std::floor(p.s / CHUNK_LENGTH);
+    const float end = (c + 1) * CHUNK_LENGTH;
+    const int target = g_Game.SafeLaneOfChunk(p.s >= end - CHUNK_CLEAR_TAIL ? c + 1 : c);
+    if (target >= -1 && target <= 1)
+        p.lane = target;
+    // Só a barreira mais próxima à frente, na faixa (placas e trens não entram:
+    // a faixa segura não os tem).
+    const float nose = p.s + PLAYER_HALF_DEPTH;
+    const Obstacle* next = NULL;
+    for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
+    {
+        const Obstacle& o = g_Game.obstacles[i];
+        if (o.lane != p.lane || o.box.min.z < nose)
+            continue;
+        if (o.type != ObstacleType::BARRIER_LOW && o.type != ObstacleType::BARRIER_HIGH)
+            continue;
+        if (next == NULL || o.box.min.z < next->box.min.z)
+            next = &o;
+    }
+    if (next == NULL)
+        return;
+    const float t = (next->box.min.z - nose) / p.speed; // s até o contato
+    if (next->type == ObstacleType::BARRIER_LOW)
+    {
+        if (p.grounded && t <= 0.30f)
+        {
+            g_Game.HandleInput(Input::JUMP);
+            ++g_MaraBarriersDodged;
+        }
+    }
+    else
+    {
+        // Rola colada à viga (renovando o rolamento a cada passo); no ar, depois
+        // de uma barreira baixa, rola antes para descer a tempo.
+        if (t <= 0.25f || (!p.grounded && t <= 0.5f))
+        {
+            if (p.roll_timer <= 0.0f)
+                ++g_MaraBarriersDodged;
+            g_Game.HandleInput(Input::ROLL);
+        }
+    }
+}
+
+static void MarathonObserve()
+{
+    g_MaraMaxObstacles = std::max(g_MaraMaxObstacles, g_Game.obstacles.size());
+    g_MaraMaxCoins     = std::max(g_MaraMaxCoins, g_Game.coins.size());
+    g_MaraMaxPowerups  = std::max(g_MaraMaxPowerups, g_Game.powerups.size());
+    g_MaraMaxParticles = std::max(g_MaraMaxParticles, g_Particles.Alive().size());
+    g_MaraMaxSegments  = std::max(g_MaraMaxSegments, g_Game.track.Segments().size());
+    g_MaraMaxEvents    = std::max(g_MaraMaxEvents, g_Game.events.size());
+    if (!std::isfinite(g_Game.player.s) || !std::isfinite(g_Game.player.y) ||
+        !std::isfinite(g_Game.score) || !std::isfinite(g_Game.player.x))
+        g_MaraNonFinite = true;
+    if (g_Game.mode == GameMode::GAME_OVER)
+    {
+        ++g_MaraDeaths;
+        g_Game.mode = GameMode::PLAYING; // segue a corrida: conta e continua
+    }
+}
+
+static void Hook_Marathon()
+{
+    if (g_Game.mode != GameMode::PLAYING)
+        return;
+    const float dt = Autotest_FixedDt();
+    for (int k = 0; k < MARATHON_SUBSTEPS; ++k)
+    {
+        MarathonPilot();
+        g_Game.Update(dt);
+        g_Particles.Update(dt);
+        EmitCollectParticles(g_Game); // (main.cpp) dispara as partículas e limpa os eventos
+        MarathonObserve();
+    }
+    MarathonPilot(); // para o passo que o laço principal dá em seguida
+    MarathonObserve();
+}
+
+static bool Check_marathon(std::string* why)
+{
+    char buf[260];
+    snprintf(buf, sizeof(buf),
+             "[marathon] jogo %.0f s, %.1f km, v = %.1f m/s, mortes %d, barreiras %d; maximos: obstaculos %d, "
+             "moedas %d, power-ups %d, particulas %d, segmentos %d, eventos %d",
+             g_Game.elapsed, g_Game.player.s / 1000.0f, g_Game.player.speed, g_MaraDeaths,
+             g_MaraBarriersDodged, (int)g_MaraMaxObstacles, (int)g_MaraMaxCoins, (int)g_MaraMaxPowerups,
+             (int)g_MaraMaxParticles, (int)g_MaraMaxSegments, (int)g_MaraMaxEvents);
+    printf("%s\n", buf);
+    if (g_MaraNonFinite)
+    {
+        *why = "posicao/pontuacao nao finita durante a partida";
+        return false;
+    }
+    if (g_Game.mode != GameMode::PLAYING || g_MaraDeaths != 0)
+    {
+        snprintf(buf, sizeof(buf), "o piloto morreu (%d vez(es)); modo no fim = %d", g_MaraDeaths, (int)g_Game.mode);
+        *why = buf;
+        return false;
+    }
+    const float expected = MARATHON_DURATION * (float)(MARATHON_SUBSTEPS + 1);
+    if (g_Game.elapsed < expected - 2.0f || g_Game.player.s < 10000.0f ||
+        std::fabs(g_Game.player.speed - PLAYER_MAX_SPEED) > 1e-3f)
+    {
+        snprintf(buf, sizeof(buf), "partida curta: %.1f s de jogo (>= %.0f), s = %.0f m (>= 10000), v = %.2f (max)",
+                 g_Game.elapsed, expected - 2.0f, g_Game.player.s, g_Game.player.speed);
+        *why = buf;
+        return false;
+    }
+    // Limites do que fica na memória: a janela é DESPAWN_BEHIND + SPAWN_AHEAD
+    // (~170 m = ~6 chunks de ate 4 obstaculos); moedas: ate 7 por chunk mais as
+    // do porco (ate 27 por voo); particulas: o pool (nunca passa da capacidade).
+    if (g_MaraMaxObstacles > 40 || g_MaraMaxCoins > 120 || g_MaraMaxPowerups > 8 ||
+        g_MaraMaxParticles > g_Particles.Capacity() || g_MaraMaxSegments > 16 ||
+        g_MaraMaxEvents > COLLECT_EVENT_CAPACITY)
+    {
+        *why = "contagem fora do limite (vazamento?): veja a linha [marathon] acima";
+        return false;
+    }
+    if (g_Game.obstacles.size() < 3 || g_Game.coins.empty())
+    {
+        *why = "o spawn parou de gerar obstaculos/moedas";
+        return false;
+    }
+    return true;
+}
+
 // gui_keys (Tarefa 7.1a): teclado fora da corrida. Setas/WASD no MENU e no
 // PAUSED não pulam, rolam nem trocam de faixa (o jogador fica como estava);
 // Enter no MENU inicia a corrida sem pular; P e ESC saem da câmera livre
@@ -1957,6 +2111,20 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{2.5f, 0, 0, "still_paused"});
         s.steps.push_back(AutotestStep{2.6f, GLFW_KEY_P, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{2.9f, 0, 0, "resumed"});
+        scenarios.push_back(s);
+    }
+
+    // marathon (Tarefa 7.1a): 600 s de jogo com piloto automático e spawn ligado;
+    // conferem-se os limites de memória (veja Check_marathon).
+    {
+        AutotestScenario s;
+        s.name        = "marathon";
+        s.duration    = MARATHON_DURATION;
+        s.final_check = Check_marathon;
+        s.frame_hook  = Hook_Marathon;
+        s.steps.push_back(AutotestStep{1.0f, 0, 0, "start"});
+        s.steps.push_back(AutotestStep{30.0f, 0, 0, "middle"});
+        s.steps.push_back(AutotestStep{59.0f, 0, 0, "end"});
         scenarios.push_back(s);
     }
 
