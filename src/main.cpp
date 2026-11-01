@@ -50,6 +50,7 @@
 #include "matrices.h"
 #include "game_config.h"
 #include "object_ids.h"
+#include "autotest.h"
 
 // Estrutura que representa um modelo geométrico carregado a partir de um
 // arquivo ".obj". Veja https://en.wikipedia.org/wiki/Wavefront_.obj_file .
@@ -155,6 +156,9 @@ void TextRendering_ShowFramesPerSecond(GLFWwindow* window);
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 void ErrorCallback(int error, const char* description);
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mode);
+// Tratamento das teclas, separado do KeyCallback para que o harness E2E (autotest.cpp)
+// possa injetar teclas sem passar pelo Correcao_KeyCallback.
+void HandleKey(GLFWwindow* window, int key, int action, int mods);
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
@@ -222,6 +226,10 @@ GLint g_bbox_max_uniform;
 
 int main(int argc, char* argv[])
 {
+    // Modo de teste ponta a ponta: "--autotest <cenario>" (ou "--autotest-list").
+    // Deve vir antes de qualquer outra coisa, pois pode encerrar o processo.
+    bool autotest = Autotest_Begin(argc, argv);
+
     // Inicializamos a biblioteca GLFW, utilizada para criar uma janela do
     // sistema operacional, onde poderemos renderizar com OpenGL.
     int success = glfwInit();
@@ -316,7 +324,7 @@ int main(int argc, char* argv[])
     ComputeNormals(&cubemodel);
     BuildTrianglesAndAddToVirtualScene(&cubemodel);
 
-    if ( argc > 1 )
+    if ( argc > 1 && !autotest && argv[1][0] != '-' )
     {
         ObjModel model(argv[1]);
         BuildTrianglesAndAddToVirtualScene(&model);
@@ -336,12 +344,18 @@ int main(int argc, char* argv[])
     // Instante do quadro anterior, usado para calcular o Δt de cada quadro.
     double last_frame_time = glfwGetTime();
 
+    // No autotest o dt é fixo (determinístico) e o tempo simulado é acumulado.
+    float autotest_time = 0.0f;
+    if (autotest)
+        glfwSwapInterval(0); // sem vsync: o cenário não precisa esperar o monitor
+
     // Ficamos em um loop infinito, renderizando, até que o usuário feche a janela
     while (!glfwWindowShouldClose(window))
     {
         // Δt do quadro, limitado a MAX_DT para que um quadro muito longo (janela
         // arrastada, breakpoint, carregamento) não "teleporte" a simulação.
-        float dt = ComputeFrameDt(glfwGetTime(), &last_frame_time);
+        float dt = autotest ? Autotest_FixedDt()
+                            : ComputeFrameDt(glfwGetTime(), &last_frame_time);
 
         g_SphereSpin += 0.1f * dt;
         g_BunnySpin  += 0.1f * dt;
@@ -454,6 +468,14 @@ int main(int argc, char* argv[])
         // por segundo (frames per second).
         TextRendering_ShowFramesPerSecond(window);
 
+        // Harness E2E: injeta teclas, tira screenshots e checa erros de GL
+        // (precisa ser depois de desenhar e antes do swap).
+        if (autotest)
+        {
+            autotest_time += dt;
+            Autotest_AfterFrame(window, autotest_time);
+        }
+
         // O framebuffer onde OpenGL executa as operações de renderização não
         // é o mesmo que está sendo mostrado para o usuário, caso contrário
         // seria possível ver artefatos conhecidos como "screen tearing". A
@@ -473,7 +495,7 @@ int main(int argc, char* argv[])
     glfwTerminate();
 
     // Fim do programa
-    return 0;
+    return autotest ? Autotest_ExitCode() : 0;
 }
 
 // Retorna o tempo (s) decorrido desde o quadro anterior, limitado a MAX_DT, e
@@ -1185,6 +1207,12 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mod)
     Correcao_KeyCallback(key, action, mod);
     // =======================
 
+    HandleKey(window, key, action, mod);
+}
+
+// Tratamento das teclas (chamado pelo KeyCallback e pelo harness E2E).
+void HandleKey(GLFWwindow* window, int key, int action, int mods)
+{
     // Se o usuário pressionar a tecla ESC, fechamos a janela.
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);

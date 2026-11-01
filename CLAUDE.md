@@ -193,6 +193,18 @@ Rodar o binário de outro diretório falha com "Cannot open image file" ou erro 
 Editar `src/shader_vertex.glsl` ou `src/shader_fragment.glsl` **não exige recompilar**: basta
 apertar `R` com a janela em foco (`LoadShadersFromFiles()` é chamada de novo).
 
+### Testes E2E (`--autotest`)
+
+`src/autotest.cpp` roda o executável real com dt fixo (1/60 s), teclas injetadas, screenshots
+PNG e checagem de `glGetError`. Depois de compilar, na raiz do repo: `bash tests/run_e2e.sh`
+(todos os cenários, ou `bash tests/run_e2e.sh smoke`); sai com código ≠ 0 se algum falhar.
+Manualmente: `cd bin/<plataforma> && ./main --autotest <cenario>` (`--autotest-list` lista os
+nomes). Screenshots em `bin/<plataforma>/e2e/<cenario>_<rotulo>.png`: abra com a ferramenta
+Read para conferir visualmente. **Para criar um cenário** edite só `BuildScenarios()` em
+`src/autotest.cpp` (o roteiro está documentado no topo do arquivo). Toda tarefa que muda
+comportamento visível deve acrescentar um cenário. As teclas do harness passam por
+`HandleKey()` (em `main.cpp`), nunca por `Correcao_KeyCallback()`.
+
 ### Ao adicionar um novo arquivo `.cpp`
 
 É preciso registrá-lo em **dois** lugares independentes:
@@ -276,7 +288,8 @@ documentado no manual dentro do `README.md`.
 
 `Correcao_KeyCallback()` (`src/correcao.cpp`) deve continuar sendo o primeiro comando de
 `KeyCallback()`: `Shift+0..9` encerra o processo com código `100+N` para a correção automatizada.
-Não altere esse trecho.
+Não altere esse trecho. O restante do tratamento de teclas fica em `HandleKey()` (chamada logo
+em seguida pelo `KeyCallback()`), que o harness E2E também usa; novos atalhos entram em `HandleKey()`.
 
 ---
 

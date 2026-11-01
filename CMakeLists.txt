@@ -7,6 +7,7 @@
 # ser compilados.
 set(SOURCES
   src/main.cpp
+  src/autotest.cpp
   src/correcao.cpp
   src/textrendering.cpp
   src/tiny_obj_loader.cpp
@@ -103,6 +104,13 @@ if(WIN32)
   endif()
 
   message(STATUS "LIBGLFW = ${LIBGLFW}")
+
+  if(MINGW)
+    # Linka o runtime do MinGW estaticamente: sem isso o main.exe pode carregar
+    # uma libstdc++/libgcc DLL de outro MinGW que esteja antes no PATH (ex.: o
+    # do Git Bash) e quebrar com segfault ao iniciar fora do ambiente do compilador.
+    target_link_libraries(${EXECUTABLE_NAME} -static-libgcc -static-libstdc++)
+  endif()
 
   target_link_libraries(${EXECUTABLE_NAME} ${LIBGLFW} gdi32 opengl32)
 

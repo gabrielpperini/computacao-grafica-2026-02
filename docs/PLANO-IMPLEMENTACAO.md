@@ -231,9 +231,9 @@ acrescentam cenários aqui.
   automatizada). A janela continua visível (ler o framebuffer de janela oculta é indefinido).
 - Cenário inicial `smoke`: 3 s de simulação, screenshot em 1 s, sem erro de GL.
 
-- [ ] **Passo 1:** implementar; `tests/run_e2e.sh` roda `smoke`.
-- [ ] **Passo 2:** rodar; esperado: `E2E smoke OK`, exit 0, PNG legível mostrando a cena.
-- [ ] **Passo 3:** commit `IA: harness E2E com cenários scriptados e screenshots`.
+- [x] **Passo 1:** implementar; `tests/run_e2e.sh` roda `smoke`.
+- [x] **Passo 2:** rodar; esperado: `E2E smoke OK`, exit 0, PNG legível mostrando a cena.
+- [x] **Passo 3:** commit `IA: harness E2E com cenários scriptados e screenshots`.
 
 **A partir daqui, toda tarefa que muda comportamento visível acrescenta pelo menos um cenário E2E**
 (por exemplo, `lane_jump_roll` na 1.3, `game_over` na 2.2, `curve` na 4.1, `free_camera` na 5.1,
