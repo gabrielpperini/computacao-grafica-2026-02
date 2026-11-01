@@ -135,16 +135,16 @@ implementado** — o base é só um visualizador.
 | Iluminação **não-trivial** em todos os objetos | ⚠️ só Lambert difuso com luz fixa; precisa de Phong/Blinn-Phong, especular, etc. |
 | Texturas em todos os objetos, ≥3 imagens distintas | ⚠️ só 2 imagens carregadas; `TextureImage2` está declarado no shader mas nunca é preenchido |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
-| Animações baseadas em Δt | ⚠️ usa `glfwGetTime()` absoluto; não há acumulação de Δt por frame |
+| Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
 | Objetivo e lógica de controle não-triviais | ❌ |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
 
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
 movimentação travada ou com flickering, e qualquer crash durante a demonstração.
 
-**Restos do laboratório anterior, atualmente sem efeito:** `g_AngleZ`, `g_ForearmAngleX/Z` e
-`g_TorsoPositionX/Y` são atualizados pelos callbacks mas não entram em nenhuma matriz de
-modelagem. `src/buildtriangles.cpp` não é compilado por nenhum build.
+**Resto do laboratório anterior, sem efeito:** `src/buildtriangles.cpp` não é compilado por
+nenhum build. (As variáveis `g_AngleX/Y/Z`, `g_ForearmAngle*` e `g_TorsoPosition*` e as teclas
+`X`/`Y`/`Z` foram removidas na Tarefa 0.1.)
 
 ---
 
@@ -198,10 +198,8 @@ apertar `R` com a janela em foco (`LoadShadersFromFiles()` é chamada de novo).
    listado não existir);
 2. a linha do `g++` em `Makefile.macOS` (ela lista os fontes explicitamente).
 
-**Divergência conhecida entre os dois builds:** `Makefile.macOS` não compila `src/correcao.cpp`,
-que é onde `Correcao_KeyCallback()` — chamada em `main.cpp:1218` — está definida. No macOS isso
-resulta em símbolo indefinido no link; adicione `src/correcao.cpp` à linha do `g++`.
-(Não verificado por build local: `glfw` não estava instalado no ambiente.)
+`Makefile.macOS` já lista `src/correcao.cpp` (onde `Correcao_KeyCallback()` está definida).
+(Não verificado por build local no macOS.)
 
 ---
 
@@ -263,9 +261,8 @@ pilha de matrizes de modelagem para hierarquias de objetos.
 ### Estado e entrada
 
 Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW. Controles
-atuais: botão esquerdo do mouse orbita a câmera; direito controla `g_ForearmAngle*`; do meio
-controla `g_TorsoPosition*`; scroll dá zoom; `X`/`Y`/`Z` (com Shift para inverter) mexem nos
-ângulos de Euler; `Espaço` reseta; `P`/`O` alternam projeção perspectiva/ortográfica; `H` liga e
+atuais: botão esquerdo do mouse orbita a câmera; scroll dá zoom; `Espaço` reseta a rotação
+da esfera e do coelho; `P`/`O` alternam projeção perspectiva/ortográfica; `H` liga e
 desliga o texto informativo; `R` recarrega shaders; `ESC` fecha. Todo atalho precisa acabar
 documentado no manual dentro do `README.md`.
 

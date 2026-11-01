@@ -154,16 +154,16 @@ const float PIGGY_COIN_INTERVAL = 0.15f;  // s entre moedas soltas
 - Produz: constantes de `game_config.h`; `float ComputeFrameDt(double now, double* last)` em
   `main.cpp` (retorna `min(now - *last, MAX_DT)` e atualiza `*last`); alvo `logic_tests`.
 
-- [ ] **Passo 1:** criar `tests/logic_tests.cpp` com `main()` que só imprime `OK`, e o alvo
+- [x] **Passo 1:** criar `tests/logic_tests.cpp` com `main()` que só imprime `OK`, e o alvo
   `add_executable(logic_tests tests/logic_tests.cpp)` no CMake (mesmo `include/`, sem GLFW).
-- [ ] **Passo 2:** `cmake -B build -S . && cmake --build build --target logic_tests` e rodar —
+- [x] **Passo 2:** `cmake -B build -S . && cmake --build build --target logic_tests` e rodar —
   esperado: imprime `OK`.
-- [ ] **Passo 3:** criar `game_config.h` com as constantes da seção acima.
-- [ ] **Passo 4:** em `main.cpp`, remover as variáveis/controles de laboratório sem efeito
+- [x] **Passo 3:** criar `game_config.h` com as constantes da seção acima.
+- [x] **Passo 4:** em `main.cpp`, remover as variáveis/controles de laboratório sem efeito
   (`g_AngleZ`, `g_ForearmAngle*`, `g_TorsoPosition*`, teclas X/Y/Z) e substituir
   `glfwGetTime()` nas animações por `dt` de `ComputeFrameDt`.
-- [ ] **Passo 5:** compilar e rodar `main`; esperado: cena do lab funcionando, sem warnings novos.
-- [ ] **Passo 6:** commit `IA: adiciona dt por frame, alvo de testes e remove restos do lab` +
+- [x] **Passo 5:** compilar e rodar `main`; esperado: cena do lab funcionando, sem warnings novos.
+- [x] **Passo 6:** commit `IA: adiciona dt por frame, alvo de testes e remove restos do lab` +
   entrada em `PROMPTS.md`.
 
 ### Tarefa 0.2: IDs de objeto, texturas por objeto e modo de UV

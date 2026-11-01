@@ -59,6 +59,11 @@ add_executable(${EXECUTABLE_NAME} ${SOURCES})
 
 target_include_directories(${EXECUTABLE_NAME} BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/include)
 
+# Testes unitários da lógica do jogo (sem OpenGL/GLFW).
+# Compile com: cmake --build build --target logic_tests
+add_executable(logic_tests tests/logic_tests.cpp)
+target_include_directories(logic_tests BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/include)
+
 if(WIN32)
 
   if(MINGW)
