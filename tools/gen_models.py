@@ -3,7 +3,9 @@
 
 Uso (na raiz do repositório):   python tools/gen_models.py
 Saída: data/procedural/*.obj e data/procedural/atlas.png (sobrescreve).
-(Os modelos do túnel usam data/red_brick_diff_1k.jpg em vez do atlas.)
+(Os modelos do túnel usam texturas do Poly Haven em vez do atlas: a abóbada,
+data/castle_wall_slates_diff_1k.jpg, e o portal, data/red_brick_diff_1k.jpg; as
+paredes dos prédios de tijolo, data/red_brick_diff_1k.jpg.)
 
 Só biblioteca padrão (math, struct, zlib). Tudo é determinístico: rodar de novo
 gera exatamente os mesmos arquivos.
@@ -721,7 +723,7 @@ TUNNEL_SECTION = 4.0            # TUNNEL_SECTION_LENGTH (= TRACK_TUNNEL_SECTION)
 TUNNEL_PORTAL_HALF_WIDTH = 7.5  # TUNNEL_PORTAL_HALF_WIDTH
 TUNNEL_PORTAL_HEIGHT = 9.0      # TUNNEL_PORTAL_HEIGHT
 TUNNEL_PORTAL_DEPTH = 1.0       # TUNNEL_PORTAL_DEPTH
-TUNNEL_TILE = 2.0               # m por repetição da textura de tijolos
+TUNNEL_TILE = 2.0               # m por repetição da textura (pedra na abóbada, tijolo no portal)
 TUNNEL_ARC_SEGMENTS = 24        # segmentos da abóbada (meia-volta)
 ARCHIVOLT_WIDTH = 0.7           # m: moldura em volta da abertura do portal
 ARCHIVOLT_DEPTH = 0.15          # m: quanto a moldura avança à frente da fachada
@@ -958,6 +960,115 @@ def model_ramp():
 
 
 # ---------------------------------------------------------------------------
+# Prédio de tijolos (Revisão final, item 3): SPEC, "prédios do ambiente com
+# texturas de tijolos". Medidas iguais às de include/scenery.h
+# (BUILDING_WIDTH, BRICK_BUILDING_MIN/MAX_FLOORS): alterar lá e aqui juntos.
+# ---------------------------------------------------------------------------
+BRICK_HALF = 3.0          # m: planta 6 x 6 (BUILDING_WIDTH), escala 1 no jogo
+BRICK_BASE = 0.6          # m: embasamento antes do 1º andar
+BRICK_FLOOR = 3.0         # m por andar
+BRICK_WIN_W = 1.2         # m: largura da janela
+BRICK_WIN_H = 1.6         # m: altura da janela
+BRICK_WIN_SILL = 0.9      # m do piso do andar ao peitoril
+BRICK_WIN_U = (0.9, 3.9)  # m: borda esquerda das 2 janelas de cada face (vista de fora)
+BRICK_REVEAL = 0.15       # m: profundidade do vão da janela (vidro recuado)
+BRICK_TILE = 2.0          # m por repetição de red_brick_diff_1k.jpg (como no túnel)
+BRICK_CORNICE_OVER = 0.15 # m: quanto a cornija avança além da parede
+BRICK_CORNICE_H = 0.4     # m
+BRICK_PLINTH_OVER = 0.05  # m: embasamento de concreto (avança além da parede)
+BRICK_SILL_OVER = 0.08    # m: peitoril (avança além da parede e da janela)
+
+
+def model_brick_building(floors):
+    """Prédio de tijolos de 'floors' andares, planta 6 x 6 m centrada em
+    x = z = 0, base em y = 0, fachada principal em +Z (como os modelos da
+    Kenney; o jogo gira +Z para a pista). Três objetos:
+      <nome>_walls   (red_brick, UV em metros / BRICK_TILE): as 4 paredes com
+                     2 janelas por andar em cada face, e os vãos das janelas;
+      <nome>_windows (atlas: vidro azul) vidraças recuadas BRICK_REVEAL;
+      <nome>_trim    (atlas: concreto) embasamento, peitoris e a cornija, cujo
+                     topo é o telhado plano.
+    Altura da parede: BRICK_BASE + floors * BRICK_FLOOR."""
+    name = "brick_building_%d" % floors
+    walls, wins, trim = Mesh(name + "_walls"), Mesh(name + "_windows"), Mesh(name + "_trim")
+    hw = BRICK_HALF
+    top = BRICK_BASE + floors * BRICK_FLOOR
+    W = 2.0 * hw
+    # Faces vistas de fora: (normal, origem = canto inferior esquerdo, eixo u).
+    faces = [
+        ((0.0, 0.0, 1.0), (-hw, 0.0, hw), (1.0, 0.0, 0.0)),
+        ((0.0, 0.0, -1.0), (hw, 0.0, -hw), (-1.0, 0.0, 0.0)),
+        ((1.0, 0.0, 0.0), (hw, 0.0, hw), (0.0, 0.0, -1.0)),
+        ((-1.0, 0.0, 0.0), (-hw, 0.0, -hw), (0.0, 0.0, 1.0)),
+    ]
+    up = (0.0, 1.0, 0.0)
+    rows = [(BRICK_BASE + f * BRICK_FLOOR + BRICK_WIN_SILL,
+             BRICK_BASE + f * BRICK_FLOOR + BRICK_WIN_SILL + BRICK_WIN_H) for f in range(floors)]
+    cols = [(u, u + BRICK_WIN_W) for u in BRICK_WIN_U]
+    us = sorted({0.0, W} | {c for col in cols for c in col})
+    vs = sorted({0.0, top} | {r for row in rows for r in row})
+
+    def is_window(u0, u1, v0, v1):
+        return any(abs(u0 - c[0]) < 1e-6 and abs(u1 - c[1]) < 1e-6 for c in cols) and \
+               any(abs(v0 - r[0]) < 1e-6 and abs(v1 - r[1]) < 1e-6 for r in rows)
+
+    def brick_quad(m, pts, n):
+        """Quadrilátero de tijolo com UV planar em metros no plano da face
+        (normal n): (x, z) nas horizontais, (x, y) com normal em z, (z, y) com
+        normal em x. Nada estica, nem nos vãos estreitos."""
+        if abs(n[1]) > 0.5:
+            uv = lambda p: (p[0] / BRICK_TILE, p[2] / BRICK_TILE)
+        elif abs(n[2]) > 0.5:
+            uv = lambda p: (p[0] / BRICK_TILE, p[1] / BRICK_TILE)
+        else:
+            uv = lambda p: (p[2] / BRICK_TILE, p[1] / BRICK_TILE)
+        ids = [m.vertex(p, n, uv(p)) for p in pts]
+        m.quad(*ids)
+
+    for n, o, eu in faces:
+        inward = v_scale(n, -BRICK_REVEAL)
+
+        def at(u, v, depth=(0.0, 0.0, 0.0)):
+            return v_add(v_add(o, v_add(v_scale(eu, u), v_scale(up, v))), depth)
+
+        # Parede: a grade de células entre as bordas das janelas, menos as janelas.
+        for i in range(len(us) - 1):
+            for j in range(len(vs) - 1):
+                u0, u1, v0, v1 = us[i], us[i + 1], vs[j], vs[j + 1]
+                if is_window(u0, u1, v0, v1):
+                    continue
+                brick_quad(walls, [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)], n)
+        for (u0, u1) in cols:
+            for (v0, v1) in rows:
+                # Vão (4 faces de tijolo voltadas para o centro da janela).
+                brick_quad(walls, [at(u0, v0), at(u0, v1), at(u0, v1, inward), at(u0, v0, inward)], eu)
+                brick_quad(walls, [at(u1, v0), at(u1, v1), at(u1, v1, inward), at(u1, v0, inward)],
+                           v_scale(eu, -1.0))
+                brick_quad(walls, [at(u0, v0), at(u1, v0), at(u1, v0, inward), at(u0, v0, inward)], up)
+                brick_quad(walls, [at(u0, v1), at(u1, v1), at(u1, v1, inward), at(u0, v1, inward)],
+                           (0.0, -1.0, 0.0))
+                # Vidraça recuada.
+                glass = swatch_uv("light_blue")
+                ids = [wins.vertex(at(u, v, inward), n, glass) for (u, v) in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
+                wins.quad(*ids)
+                # Peitoril: caixa de concreto sob a janela, saliente; o topo
+                # fica 2 cm acima da base do vão (sem faces coplanares).
+                out = v_scale(n, BRICK_SILL_OVER)
+                p0 = at(u0 - BRICK_SILL_OVER, v0 - 0.08, v_scale(n, -0.02))
+                p1 = at(u1 + BRICK_SILL_OVER, v0 + 0.02, out)
+                trim.append(box("sill", tuple(min(p0[k], p1[k]) for k in range(3)),
+                                tuple(max(p0[k], p1[k]) for k in range(3)), color="concrete"))
+    # Embasamento e cornija (o topo da cornija é o telhado plano).
+    po, co = hw + BRICK_PLINTH_OVER, hw + BRICK_CORNICE_OVER
+    plinth = box("plinth", (-po, 0.0, -po), (po, BRICK_BASE * 0.5, po), color="concrete")
+    plinth.tris = plinth.tris[:10]  # sem a face de baixo
+    trim.append(plinth)
+    cornice = box("cornice", (-co, top, -co), (co, top + BRICK_CORNICE_H, co), color="concrete")
+    trim.append(cornice)
+    return [walls, wins, trim]
+
+
+# ---------------------------------------------------------------------------
 # Escrita
 # ---------------------------------------------------------------------------
 
@@ -999,9 +1110,13 @@ def main():
         ("piggy_bank.obj", [model_piggy_bank()], "Power-up: cofrinho"),
         ("flying_pig.obj", model_flying_pig(), "Porco voador (corpo + 2 asas)"),
         ("tunnel_section.obj", [model_tunnel_section()], "Tunel: modulo de 4 m (abobada)",
-         "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
+         "data/castle_wall_slates_diff_1k.jpg (UV em metros / 2)"),
         ("tunnel_portal.obj", [model_tunnel_portal()], "Tunel: portal de entrada/saida",
          "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
+        ("brick_building.obj",
+         model_brick_building(2) + model_brick_building(3) + model_brick_building(4),
+         "Predios de tijolo de 2, 3 e 4 andares (planta 6 x 6 m)",
+         "*_walls: data/red_brick_diff_1k.jpg (UV em metros / 2); *_windows e *_trim: atlas.png"),
         ("ramp.obj", model_ramp(), "Rampa para subir no trem (2.2 x 3.2 x 8 m)",
          "ramp_frame: data/metal_plate_diff_1k.jpg (UV em metros / 2); "
          "ramp_deck: data/rough_wood_diff_1k.jpg (UV em metros / 1.5)"),

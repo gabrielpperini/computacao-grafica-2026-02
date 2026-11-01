@@ -7,12 +7,16 @@ Os arquivos de terceiros estao sem modificacao (copiados como vieram no pacote).
 
 == Poly Haven (texturas; licenca CC0, https://polyhaven.com/license) ==
 rocky_terrain_02_diff_1k.jpg   https://polyhaven.com/a/rocky_terrain_02   terreno dos lados da pista
-red_brick_diff_1k.jpg          https://polyhaven.com/a/red_brick          tuneis (abobada e portais)
+red_brick_diff_1k.jpg          https://polyhaven.com/a/red_brick          portais dos tuneis e predios de tijolo
 metal_plate_diff_1k.jpg        https://polyhaven.com/a/metal_plate        trilhos
 gravel_stones_diff_1k.jpg      https://polyhaven.com/a/gravel_stones      brita do leito da pista
   download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gravel_stones/gravel_stones_diff_1k.jpg
 rough_wood_diff_1k.jpg         https://polyhaven.com/a/rough_wood         dormentes
   download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_wood/rough_wood_diff_1k.jpg
+stone_wall_diff_1k.jpg         https://polyhaven.com/a/stone_wall         muros de pedra ao lado da pista
+  download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_wall/stone_wall_diff_1k.jpg
+castle_wall_slates_diff_1k.jpg https://polyhaven.com/a/castle_wall_slates abobada dos tuneis (pedra)
+  download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/castle_wall_slates/castle_wall_slates_diff_1k.jpg
 
 == Kenney (modelos OBJ + textura; licenca CC0, ver License.txt em cada pasta) ==
 kenney/train-kit/              Train Kit (1.1)            https://kenney.nl/assets/train-kit
@@ -31,7 +35,10 @@ procedural/coin.obj                                                 moeda
 procedural/powerup_magnet.obj, powerup_sneaker.obj, powerup_multiplier.obj, piggy_bank.obj   power-ups
 procedural/flying_pig.obj                                           porco voador (corpo + 2 asas)
 procedural/tunnel_section.obj, tunnel_portal.obj                    tunel: modulo de abobada (4 m) e portal
-  (estes dois usam a textura red_brick_diff_1k.jpg acima, nao o atlas)
+  (estes dois tem UV em metros e usam castle_wall_slates_diff_1k.jpg (abobada) e red_brick_diff_1k.jpg
+   (portal) acima, nao o atlas)
+procedural/brick_building.obj                                       predios de tijolo de 2, 3 e 4 andares
+  (*_walls com UV em metros: red_brick_diff_1k.jpg; *_windows e *_trim: atlas)
 procedural/ramp.obj                                                 rampa para subir no trem (ramp_frame + ramp_deck)
   (usa metal_plate_diff_1k.jpg e rough_wood_diff_1k.jpg acima, nao o atlas)
 Para regerar: python tools/gen_models.py (na raiz do repositorio).

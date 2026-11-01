@@ -1,6 +1,6 @@
 # Tunel: modulo de 4 m (abobada)
 # Gerado por tools/gen_models.py (Rail Rush, INF01047). Licenca: CC0.
-# Textura: data/red_brick_diff_1k.jpg (UV em metros / 2).
+# Textura: data/castle_wall_slates_diff_1k.jpg (UV em metros / 2).
 o tunnel_section
 v 5.00000 0.00000 -2.00000
 v 5.00000 2.00000 -2.00000
