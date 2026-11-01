@@ -274,7 +274,7 @@ registrar `src/track.cpp` nos dois builds e no alvo de testes.
   `curvature = 1/R` (0 = reta; sinal positivo = curva à esquerda). Nesta fase só gera retas
   (`curvature = 0`, `tunnel = false`, comprimento 60 m).
 
-- [ ] **Passo 1: testes**
+- [x] **Passo 1: testes**
   ```cpp
   void Test_TrackStraightFrame() {
       Track t(1); t.EnsureGeneratedUntil(200);
@@ -294,14 +294,14 @@ registrar `src/track.cpp` nos dois builds e no alvo de testes.
   }
   ```
   (`near` com tolerância `1e-4`, definido no arquivo de testes.)
-- [ ] **Passo 2:** rodar `logic_tests` — esperado: falha de link/compilação (Track inexistente).
-- [ ] **Passo 3:** implementar `track.cpp`. Fórmula fechada por segmento, com `u = s - s_start`,
+- [x] **Passo 2:** rodar `logic_tests` — esperado: falha de link/compilação (Track inexistente).
+- [x] **Passo 3:** implementar `track.cpp`. Fórmula fechada por segmento, com `u = s - s_start`,
   `h = start_heading + curvature*u`:
   - reta: `p = p0 + u * forward(h0)`
   - curva: `x = x0 + (cos h - cos h0)/k`, `z = z0 - (sin h - sin h0)/k`
   O próximo segmento começa no `FrameAt` do fim do anterior.
-- [ ] **Passo 4:** rodar `logic_tests` — esperado: `OK`.
-- [ ] **Passo 5:** commit `IA: pista procedural com referencial local`.
+- [x] **Passo 4:** rodar `logic_tests` — esperado: `OK`.
+- [x] **Passo 5:** commit `IA: pista procedural com referencial local`.
 
 ### Tarefa 1.2: Jogador, faixas, pulo e rolamento
 
