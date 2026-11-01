@@ -2267,38 +2267,51 @@ void Test_RampSideEntryDeltaY()
 }
 
 // Na emenda rampa/trem o resultado de uma entrada lateral pelo chão não
-// depende da fase do quadro: com a pegada ainda tocando a rampa, é sempre
-// barrada (faixa desfeita, altura 0, sem game over), em velocidades e dt
-// variados, com o jogador posto a 1 cm da lateral e s varrido de 1 em 1 cm.
+// depende da fase do quadro e nunca é "subir no teto": com o jogador posto a
+// 1 cm da lateral e s varrido de 1 em 1 cm (traseira da pegada no fim do passo
+// de 32.0 até ramp.max.z + passo + 0.5 m), em velocidades e dt variados:
+//  - se durante o passo a pegada tocou a rampa em s (traseira no começo do
+//    passo <= ramp.max.z): barrado (faixa desfeita, altura 0, sem game over,
+//    e segue 1 s ao lado do trem sem morrer);
+//  - senão: batida de lado no trem (game over), ainda no chão.
+// Em nenhum caso a altura sobe mais que RAMP_STEP_HEIGHT no quadro.
 void Test_RampTrainJunctionSideEntryConsistent()
 {
     const float dts[3] = {1.0f / 240.0f, 1.0f / 60.0f, MAX_DT};
     const float speeds[2] = {PLAYER_START_SPEED, PLAYER_MAX_SPEED};
-    int blocked = 0;
     for (int d = 0; d < 3; d++) {
         for (int v = 0; v < 2; v++) {
             const float step = speeds[v] * dts[d];
-            for (int k = 0; k < 150; k++) {
+            int blocked = 0, hits = 0;
+            const int n = (int)((1.5f + step + 0.5f) / 0.01f);
+            for (int k = 0; k <= n; k++) {
                 Game g = StraightGame();
                 AddTrain(g, 1, 40.0f, true); // emenda em s = 33.5
                 const AABB ramp = g.obstacles[0].box;
                 g.player.speed = speeds[v];
-                // Depois do passo a traseira da pegada fica em [32.0, 33.49].
                 g.player.s = 32.0f + PLAYER_HALF_DEPTH - step + 0.01f * k;
                 g.player.x = ramp.min.x - PLAYER_HALF_WIDTH - 0.01f;
                 g.player.lane = 1;
+                const AABB before = g.PlayerBox();
+                if (std::fabs(before.min.z - ramp.max.z) < 2e-3f)
+                    continue; // exatamente na fronteira (arredondamento de float)
                 g.Update(dts[d]);
-                assert(g.PlayerBox().min.z <= ramp.max.z + 1e-3f); // ainda tocando a rampa em s
-                assert(g.mode == GameMode::PLAYING);
-                assert(g.player.lane == 0 && g.player.y == 0.0f);
-                assert(g.PlayerBox().max.x < ramp.min.x);
-                blocked++;
-                Run(g, 1.0f, dts[d]); // segue ao lado do trem, sem morrer
-                assert(g.mode == GameMode::PLAYING && g.player.x == 0.0f);
+                assert(g.player.y <= RAMP_STEP_HEIGHT + 1e-3f); // nunca "teletransporta"
+                if (before.min.z <= ramp.max.z) {
+                    assert(g.mode == GameMode::PLAYING);
+                    assert(g.player.lane == 0 && g.player.y == 0.0f);
+                    assert(g.PlayerBox().max.x < ramp.min.x);
+                    blocked++;
+                    Run(g, 1.0f, dts[d]); // segue ao lado do trem, sem morrer
+                    assert(g.mode == GameMode::PLAYING && g.player.x == 0.0f && g.player.y == 0.0f);
+                } else {
+                    assert(g.mode == GameMode::GAME_OVER && g.player.y == 0.0f);
+                    hits++;
+                }
             }
+            assert(blocked > 100 && hits > 40);
         }
     }
-    assert(blocked == 3 * 2 * 150);
 }
 
 // Pular do teto não é cancelado pelo teste de pouso (só vale com vy <= 0).

@@ -199,9 +199,10 @@ private:
     // do trecho inicial livre, sem túnel até RAMP_TUNNEL_CLEARANCE depois do
     // fim do trem; veja GenerateChunk.)
     bool CanHaveRamp(const Obstacle& train, float chunk_start);
-    // Desfaz a troca de faixa do passo (x anterior: old_x) que entraria de
-    // lado numa rampa acima de RAMP_STEP_HEIGHT (RampSideBlocks).
-    void BlockRampSides(float old_x);
+    // Desfaz a troca de faixa do passo (caixa antes do passo: before; x
+    // anterior: old_x) que entraria de lado numa rampa acima de
+    // RAMP_STEP_HEIGHT (RampSideBlocks, com a pegada varrida em s no passo).
+    void BlockRampSides(const AABB& before, float old_x);
     // Movimento vertical do passo (veja Update): apoio, queda, pouso e teto
     // do túnel. 'before' = caixa do jogador antes do passo.
     void MoveVertically(const AABB& before, float dt);

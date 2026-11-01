@@ -140,7 +140,7 @@ void Game::Update(float dt)
         player.x = target_x;
     else
         player.x += (diff > 0.0f ? max_step : -max_step);
-    BlockRampSides(old_x);
+    BlockRampSides(before, old_x);
 
     // Rolamento
     player.roll_timer = std::max(player.roll_timer - dt, 0.0f);
@@ -247,7 +247,15 @@ AABB Game::PlayerBox() const
 // "teletransporte" para cima, sem game over). Como a rampa e o trem colado
 // nela têm a mesma faixa x, na emenda rampa/trem o resultado é sempre o mesmo
 // enquanto a pegada ainda toca a rampa, qualquer que seja a fase do quadro.
-void Game::BlockRampSides(float old_x)
+//
+// A pegada testada é a VARRIDA em s no passo (antes ∪ agora), a mesma faixa
+// de s com que SupportHeight mede as rampas: uma rampa que a pegada tocou em
+// algum momento do passo e que a troca de faixa faria entrar de lado é barrada
+// aqui, e por isso nunca pode erguer o jogador lá (a pegada barrada fica fora
+// da faixa x da rampa, antes e depois). Sem isto, na emenda rampa/trem, uma
+// pegada que deixa a rampa em s no mesmo passo em que entra de lado seria
+// erguida até o teto (3.2 m num quadro).
+void Game::BlockRampSides(const AABB& before, float old_x)
 {
     if (player.x == old_x)
         return;
@@ -255,7 +263,9 @@ void Game::BlockRampSides(float old_x)
         const Obstacle& o = obstacles[i];
         if (o.type != ObstacleType::RAMP)
             continue;
-        const AABB to = PlayerBox();
+        AABB to = PlayerBox();
+        to.min.z = std::min(to.min.z, before.min.z);
+        to.max.z = std::max(to.max.z, before.max.z);
         AABB from = to;
         from.min.x += old_x - player.x;
         from.max.x += old_x - player.x;
