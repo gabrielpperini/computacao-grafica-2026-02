@@ -392,6 +392,18 @@ void DrawFlyingPig(const Game& game);
 ParticleSystem g_Particles(PARTICLE_CAPACITY);
 unsigned g_ParticleSeed = 1;          // semente da próxima explosão (incrementa a cada evento)
 GLuint g_ParticleQuadVAO = 0;
+
+// Chão "até o horizonte" (Tarefa 7.1b): as faixas de terreno só vão até
+// TERRAIN_HALF_WIDTH (limitado pelo raio das curvas) e, além delas (entre os
+// prédios, do lado de fora das curvas, na câmera livre), aparecia o céu abaixo
+// do horizonte. Um quadrado horizontal centrado na câmera, GROUND_PLANE_DROP
+// abaixo das faixas (sem Z-fighting com elas), com a mesma textura de terreno
+// em coordenadas de mundo (UV_PLANAR_XZ, mesmo ladrilho: emenda invisível) e
+// grande o bastante para a névoa o cobrir antes da borda.
+GLuint g_GroundPlaneVAO = 0;
+const float GROUND_PLANE_DROP = 0.05f;  // m abaixo das faixas
+void CreateGroundPlane();
+void DrawGroundPlane(const glm::vec4& camera_position);
 const int PARTICLES_PER_COIN    = 30;
 const int PARTICLES_PER_POWERUP = 80;
 const glm::vec3 PARTICLE_COIN_COLOR = glm::vec3(1.00f, 0.78f, 0.20f); // dourado
@@ -645,6 +657,7 @@ int main(int argc, char* argv[])
 
     // Quad unitário das partículas (criado em código, sem arquivo .obj).
     CreateParticleQuad();
+    CreateGroundPlane();
 
     // Malhas dinâmicas do chão, dos trilhos e dos dormentes, com capacidade
     // para o trecho visível inteiro (veja MaxVerticesPerStrip() e
@@ -960,6 +973,10 @@ int main(int argc, char* argv[])
         // Porco voador do cofrinho, voando na curva de Bézier no céu.
         if (g_Game.pig.active)
             DrawFlyingPig(g_Game);
+
+        // Chão até o horizonte: por último entre os opacos (só os pixels que
+        // nenhum outro objeto cobriu passam pelo teste de profundidade).
+        DrawGroundPlane(pose.position);
 
         // Partículas da coleta: por último entre os objetos 3D (translúcidas,
         // aditivas, sem escrever no z-buffer).
@@ -1461,6 +1478,51 @@ void CreateParticleQuad()
         glEnableVertexAttribArray(i);
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+// Quadrado unitário [-0.5, 0.5]^2 no plano XZ (y = 0), normal +Y, como
+// GL_TRIANGLE_STRIP de 4 vértices (anti-horário visto de cima). As UV vêm da
+// posição de mundo no shader (UV_PLANAR_XZ), então o VBO de UV não é criado.
+void CreateGroundPlane()
+{
+    const float positions[16] = {-0.5f, 0.0f,  0.5f, 1.0f,   0.5f, 0.0f,  0.5f, 1.0f,
+                                 -0.5f, 0.0f, -0.5f, 1.0f,   0.5f, 0.0f, -0.5f, 1.0f};
+    const float normals[16]   = {0.0f, 1.0f, 0.0f, 0.0f,   0.0f, 1.0f, 0.0f, 0.0f,
+                                 0.0f, 1.0f, 0.0f, 0.0f,   0.0f, 1.0f, 0.0f, 0.0f};
+    const float* data[2] = {positions, normals};
+    glGenVertexArrays(1, &g_GroundPlaneVAO);
+    glBindVertexArray(g_GroundPlaneVAO);
+    for (GLuint i = 0; i < 2; ++i)
+    {
+        GLuint vbo;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(positions), data[i], GL_STATIC_DRAW);
+        glVertexAttribPointer(i, 4, GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(i);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+// Desenha o chão até o horizonte centrado na câmera (no chão da pista, que é
+// plano em y = 0), com lado 2 * FOG_END + folga: além de FOG_END a névoa já
+// pinta tudo com a cor do céu, então a borda nunca aparece.
+void DrawGroundPlane(const glm::vec4& camera_position)
+{
+    const float side = 2.0f * FOG_END + 40.0f;
+    const glm::mat4 model = Matrix_Translate(camera_position.x, -GROUND_PLANE_DROP, camera_position.z)
+                          * Matrix_Scale(side, 1.0f, side);
+    glUniformMatrix4fv(g_model_uniform, 1, GL_FALSE, glm::value_ptr(model));
+    glUniform1i(g_object_id_uniform, GROUND);
+    glUniform1i(g_uv_mode_uniform, UV_PLANAR_XZ);
+    glUniform1f(g_uv_scale_uniform, 1.0f / GROUND_TEXTURE_TILE);
+    ApplyMaterial(GROUND, glm::vec3(1.0f, 1.0f, 1.0f));
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_Tex.terrain);
+    glBindVertexArray(g_GroundPlaneVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
 }
 
