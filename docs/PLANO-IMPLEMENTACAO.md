@@ -713,12 +713,19 @@ Parqueados (não fazer): moedas do ímã atravessando trens em linha reta; moeda
 
 ### Tarefa 7.2: Builds e documentação de apoio
 
-- [ ] Build limpo em Windows (MinGW e MSVC se possível), Linux (CMake) e macOS (Makefile).
-- [ ] `COMPILACAO.md` coerente com a realidade (dependências do ImGui, alvo `logic_tests`).
-- [ ] `CLAUDE.md`: checklist de requisitos atualizado, controles atualizados.
-- [ ] Atalhos finais listados para a dupla documentar no manual do `README.md`:
+- [x] Build limpo em Windows (MinGW e MSVC se possível), Linux (CMake) e macOS (Makefile).
+  (Windows MinGW UCRT Debug e Release: OK. Linux Ubuntu 24.04 em Docker, `make` e CMake: OK, `logic_tests` OK, E2E `smoke`
+  sob Xvfb. **MSVC: não testado — sem Visual Studio. macOS: não testado — sem macOS disponível**; só a lista de fontes e as
+  flags do `Makefile.macOS` foram conferidas contra o `CMakeLists.txt` e compiladas no Linux com `-lGL` no lugar do framework.)
+- [x] `COMPILACAO.md` coerente com a realidade (dependências do ImGui, alvo `logic_tests`).
+- [x] `CLAUDE.md`: checklist de requisitos atualizado, controles atualizados.
+- [x] Atalhos finais listados para a dupla documentar no manual do `README.md`:
   `←/→` ou `A/D` faixa, `↑`/`W` pula, `↓`/`S` rola, `P`/`ESC` pausa, `C` câmera livre
   (`WASD`, `Espaço`/`Shift`, mouse), `H` info, `R` recarrega shaders.
+  (Lista completa na seção "Controles (para o manual do README)" do `CLAUDE.md`.)
+- [x] Extras: rastreabilidade dos prompts (tabela Tarefa → commits em `PROMPTS.md`; listas 7.1a/7.1b acima), atrito das
+  partículas por `dt`, texto de depuração (`H`) desligado por padrão, `perf_heavy` falha com média > 16 ms, `run_e2e.sh` sem
+  `timeout` e com `E2E_BIN_DIR`.
 
 ### Tarefa 7.3: Entrega (humana)
 
