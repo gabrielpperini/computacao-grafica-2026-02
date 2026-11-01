@@ -1208,8 +1208,11 @@ void DrawObstacle(const Obstacle& o)
 
     if (o.type == ObstacleType::TRAIN)
     {
-        // Largura pela AABB do carro do meio (a das cabines inclui os
-        // retrovisores, que ficam um pouco para fora da caixa). Altura: o
+        // Largura pela AABB do carro do meio; as cabines, que têm retrovisores
+        // um pouco para fora da caixa, são afinadas (escala lateral própria,
+        // Tarefa 7.1a) até o ponto mais largo caber em size.x: assim nada
+        // do trem sai da caixa de colisão e o jogador não atravessa um
+        // retrovisor antes de morrer. Altura: o
         // teto PLANO do carro (TRAIN_MODEL_ROOF_Y) vai para o topo da caixa
         // de colisão, que é onde o jogador anda e onde a rampa termina
         // (Tarefa 4.4); só as nervuras do teto passam dele.
@@ -1222,8 +1225,10 @@ void DrawObstacle(const Obstacle& o)
             const SceneObject& car = FindSceneObject(TRAIN_CAR_MODELS[i]);
             const float cs = box.min.z + (i + 0.5f) * car_len;
             const float car_cz = 0.5f * (car.bbox_min.z + car.bbox_max.z);
+            const float widest = std::max(std::fabs(car.bbox_min.x), std::fabs(car.bbox_max.x));
+            const float sx = std::min(size.x / msize.x, 0.5f * size.x / widest);
             glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(cs), cx, box.min.y, 0.0f)
-                            * Matrix_Scale(size.x / msize.x, size.y / msize.y, car_len / msize.z)
+                            * Matrix_Scale(sx, size.y / msize.y, car_len / msize.z)
                             * Matrix_Translate(0.0f, -car.bbox_min.y, -car_cz);
             DrawObject(TRAIN_CAR_MODELS[i], model, id, g_Tex.train, UV_OBJ);
         }
