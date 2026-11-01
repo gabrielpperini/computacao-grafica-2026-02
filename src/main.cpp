@@ -140,7 +140,10 @@ float ComputeFrameDt(double now, double* last);
 // grupo e usam nomes genéricos como "wheels-front" em vários arquivos).
 void BuildTrianglesAndAddToVirtualScene(ObjModel*, const char* merge_as = NULL);
 // Carrega um OBJ (com normais calculadas se faltarem) para g_VirtualScene.
-void LoadObjToScene(const char* filename, const char* merge_as = NULL);
+// max_y: achata (em coordenadas do modelo, só na memória: o .obj não muda)
+// todo vértice acima dessa altura; padrão = não mexe.
+void LoadObjToScene(const char* filename, const char* merge_as = NULL,
+                    float max_y = std::numeric_limits<float>::max());
 void ComputeNormals(ObjModel* model); // Computa normais de um ObjModel, caso não existam.
 void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, criando um programa de GPU
 GLuint LoadTextureImage(const char* filename); // Carrega uma imagem de textura e devolve o id da textura OpenGL
@@ -307,6 +310,11 @@ const char* const TRAIN_CAR_MODELS[TRAIN_CARS] = {"train_front", "train_middle",
 // escalando pela AABB, o jogador em pé no topo da caixa de colisão flutuaria
 // 0.2 m acima do teto desenhado.
 const float TRAIN_MODEL_ROOF_Y = 1.471196f;
+// As nervuras (8 vértices por carro, uma caixa que não é um objeto separado no
+// OBJ) são achatadas ao carregar (Tarefa 7.1b): viram uma placa a
+// TRAIN_ROOF_RIB_HEIGHT acima do teto (~1 cm no mundo, sem Z-fighting com ele).
+// Sem isso o pé do jogador que anda no teto entrava 0.2 m nelas.
+const float TRAIN_ROOF_RIB_HEIGHT = 0.004f;
 const int OBSTACLE_OBJECT_ID[OBSTACLE_TYPE_COUNT] = {BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP};
 // Tom das tábuas da rampa sobre rough_wood (madeira envelhecida, como os dormentes).
 const glm::vec3 RAMP_DECK_TINT(0.85f, 0.70f, 0.55f);
@@ -594,9 +602,11 @@ int main(int argc, char* argv[])
     // "arm-right" e "head" (nomes do OBJ da Kenney), desenhadas separadas.
     LoadObjToScene("../../data/kenney/blocky-characters/character-b.obj");
     // Trem: três carros de metrô (cabine da frente, meio, cabine de trás).
-    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-a.obj", "train_front");
-    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-b.obj", "train_middle");
-    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-c.obj", "train_rear");
+    // As nervuras do teto são achatadas (veja TRAIN_ROOF_RIB_HEIGHT).
+    const float train_max_y = TRAIN_MODEL_ROOF_Y + TRAIN_ROOF_RIB_HEIGHT;
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-a.obj", "train_front", train_max_y);
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-b.obj", "train_middle", train_max_y);
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-c.obj", "train_rear", train_max_y);
     // Prédios e poste de luz.
     LoadObjToScene("../../data/kenney/city-kit-commercial/building-a.obj", "building_a");
     LoadObjToScene("../../data/kenney/city-kit-commercial/building-d.obj", "building_d");
@@ -2335,9 +2345,11 @@ void ComputeNormals(ObjModel* model)
 // Carrega um OBJ para g_VirtualScene: leitura (tinyobjloader), normais por
 // vértice se o arquivo não as tiver, e VAO/VBOs. Veja
 // BuildTrianglesAndAddToVirtualScene() sobre merge_as.
-void LoadObjToScene(const char* filename, const char* merge_as)
+void LoadObjToScene(const char* filename, const char* merge_as, float max_y)
 {
     ObjModel model(filename);
+    for (size_t i = 1; i < model.attrib.vertices.size(); i += 3)
+        model.attrib.vertices[i] = std::min(model.attrib.vertices[i], max_y);
     ComputeNormals(&model);
     BuildTrianglesAndAddToVirtualScene(&model, merge_as);
 }

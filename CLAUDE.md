@@ -362,8 +362,9 @@ usada **tanto na colisão quanto no desenho**. As medidas vêm de **uma única t
 `OBSTACLE_SIZE` em `game.h` (extensões padrão do `Game`); `DrawObstacle()` escala o modelo do tipo
 para a união das partes, então a AABB do modelo desenhado **coincide** com a caixa de colisão (os
 modelos procedurais já são feitos nessas medidas; o trem são 3 carros em fila, escala
-≈ 2.0 × 2.2 × 1.7, com o **teto plano** dos carros — `TRAIN_MODEL_ROOF_Y`, abaixo de pequenas
-nervuras que passam 0.2 m da caixa — no topo da caixa, onde o jogador anda). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
+≈ 2.0 × 2.2 × 1.7, com o **teto plano** dos carros — `TRAIN_MODEL_ROOF_Y` — no topo da caixa, onde o jogador anda; as
+nervuras do teto, que passavam 0.2 m da caixa, são achatadas ao carregar o OBJ (`LoadObjToScene(..., max_y)`,
+Tarefa 7.1b) e viram uma placa de ~1 cm). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
 `tools/gen_models.py`). A colisão usa a caixa varrida do jogador (antes ∪ depois do passo, `SweepAABB`) e a do obstáculo que andou (`SweepAABBAlongZ`) contra
 tunneling. A caixa do jogador (`PLAYER_HALF_WIDTH` 0.4 × `PLAYER_HALF_DEPTH` 0.27, Tarefa 7.1a) casa com o modelo
 (~0.53 m de profundidade; tronco 0.53 m de largura e 1.07 m com os braços): numa raspada lateral o braço pode
