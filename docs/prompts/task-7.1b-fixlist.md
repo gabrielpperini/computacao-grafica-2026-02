@@ -1,0 +1,13 @@
+# Tarefa 7.1b — qualidade visual (triagem dos minors adiados)
+
+1. Corte abrupto do cenário em s+150: adicionar névoa (fog) por distância no fragment shader (cor = céu, início ~90 m, fim ~145 m), coerente com o clear color; partículas/GUI não afetados. Garanta que túnel escuro não fique "esbranquiçado" de forma estranha (fog pode ser atenuada pela mesma visibilidade de céu, ou usar cor escura dentro do túnel — sua decisão, olhe as screenshots).
+2. UV do terreno em curva: v = s/tile para todo x comprime/estica no lado interno/externo da curva (critério "textura esticada"). Escalar o comprimento de arco por (R − x·sinal)/R ao gerar v (ou equivalente) para chão, cascalho, dormentes/trilhos se aplicável; teste unitário no BuildStrip para curva (densidade de textura ~constante ao longo de x).
+3. Anel claro de ~1 m nos portais do túnel (SkyVisibility não cobre a profundidade do portal): estender o volume no shader por TUNNEL_PORTAL_DEPTH nas duas pontas, ou escurecer as faces internas do portal. Unificar MAX_SHADER_TUNNELS com o valor do shader (comentário de sincronia ou um único define gerado).
+4. Respiros do teto do trem atravessam o pé ~0.2 m: escalar/posicionar para que o teto caminhável coincida com o topo visual, ou remover os respiros da malha usada no teto (sem mexer no OBJ do Kenney — pode desenhar o carro sem o grupo de respiros se ele for um shape separado; senão aceitar e documentar).
+5. Partículas: clamp no chão (morrem ou quicam em y≤0.02 no espaço de pista — usar a altura do chão local, ou simplesmente matar ao cruzar y do ponto de emissão − 1 m) e, com pool cheio, sobrescrever a de menor vida restante em vez de descartar a nova. Testes.
+6. GUI: janela "Controles" não pode cortar em janelas < 600 px de altura (escala mínima/scroll); FPS do debug só quando H estiver ligado ou nunca no MENU.
+7. Assets sem uso: remover data/bunny.obj, data/sphere.obj, data/plane.obj e red_brick SE não forem carregados (o túnel usa red_brick? verificar — se usa, manter) e atualizar data/FONTES.txt; garantir que nada os referencia.
+8. Varredura de Z-fighting e texturas esticadas: E2E `visual_audit` com câmera livre posicionada (rasante sobre trilhos/chão, perto de portal, prédios em curva, rampa) e screenshots; corrija o que encontrar.
+9. Desempenho: compilar Release (cmake -DCMAKE_BUILD_TYPE=Release num diretório build-release separado) e medir fps em cenário pesado (túnel + partículas + porco); reportar; se < 60 fps em Release, otimizar (ordem de desenho, culling por distância).
+10. Remover TODO/printf de debug remanescentes.
+11. Testes: limitar com contador+assert os while sem limite restantes em tests/logic_tests.cpp (~1936, ~2174, ~2219 Test_ObstaclesSameLaneNeverOverlap, ~2245).

@@ -65,14 +65,26 @@ revisam cada tarefa)
 **Como os commits seguintes foram gerados:** cada commit `IA: ...` a partir daqui implementa uma
 tarefa de `docs/PLANO-IMPLEMENTACAO.md`. O coordenador extrai o texto da tarefa do plano e o
 entrega a um subagente implementador junto com as restrições globais; um subagente revisor
-confere o diff. O "prompt" de cada commit é, portanto, este prompt acima mais o texto da tarefa
-correspondente no plano (citada no corpo do commit como `Tarefa X.Y`).
+confere o diff. O "prompt" de cada commit é, portanto:
+
+1. este prompt do usuário (acima);
+2. o texto **exato** entregue ao subagente, versionado em [`docs/prompts/`](docs/prompts/):
+   `task-X.Y-brief.md` (contexto global do plano + texto da tarefa, gerado por `mkbrief.sh`),
+   `env.md` (ambiente de build/teste/commit desta máquina), as listas `task-7.1a-fixlist.md`,
+   `task-7.1b-fixlist.md`, `task-7.2-extra.md` e `final-fixlist.md` (+ `final-wave-dispatch.md`),
+   e as instruções dos revisores (`reviewer-instructions.md`, `rereview-instructions.md`);
+3. as decisões do coordenador repassadas nos despachos (`docs/prompts/rulings.md`);
+4. nas rodadas de correção pós-revisão, os achados enviados ao implementador
+   (`docs/prompts/rodadas-de-correcao.md`).
+
+Cada commit cita a tarefa no corpo (`Tarefa X.Y`, ou `Revisão final, item N` na onda final).
 
 **Primeiro ajuste (este commit):** plano ganhou a Tarefa 0.3 (harness E2E com `--autotest`) e a
 regra de obtenção de assets CC0/procedurais na Tarefa 3.2.
 
 **Tarefa → commits (Tarefa 7.2, rastreabilidade):** todos os commits `IA: ...` das tarefas
-executadas até aqui, com o hash curto. Cada commit cita a tarefa no corpo da mensagem
+executadas até aqui, com o hash curto. **Se o histórico for reescrito (rebase, squash, amend),
+regenere esta tabela** com `git log --format='%h %s%n%b'` (o corpo de cada commit cita a tarefa). Cada commit cita a tarefa no corpo da mensagem
 (`git log --grep "Tarefa 4.4"` lista os de uma tarefa). O prompt de cada um é o prompt desta
 entrada mais o texto da tarefa em `docs/PLANO-IMPLEMENTACAO.md`; as Tarefas 7.1a e 7.1b têm a
 lista de correções entregue ao implementador copiada na íntegra no próprio plano (subseções da
@@ -103,3 +115,4 @@ Tarefa 7.1).
 | 7.1a | `b62aeb7`, `041df36`, `8c5d68c`, `99504ef`, `7548316`, `a917cea`, `ad46e51`, `f97c1b6`, `c03ed66`, `e139af5` |
 | 7.1b | `7321849`, `046ce1e`, `cc37c90`, `c4da3e6`, `8d6cc85`, `7576b9f`, `af91574`, `47fdc05`, `3e6c56b`, `1cb2e11`, `dbbba11`, `31e4706`, `582bfc4` |
 | 7.2 | `c3d7efb` e os demais commits `Tarefa 7.2` (`git log --grep "Tarefa 7.2"`) |
+| Revisão final (onda de correção, `docs/prompts/final-fixlist.md`) | `ccbfb4d`, `9ccc85e`, `1b128a5`, `42861b8`, `f326a9b`, `f0ada16`, `7faa9b6`, `2bda2c9`, `a44a4eb`, `92c6297` e os seguintes com `Revisão final` no corpo (`git log --grep "Revisão final"`: docs/prompts, CLAUDE.md) |
