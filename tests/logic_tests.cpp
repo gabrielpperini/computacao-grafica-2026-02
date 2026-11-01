@@ -6,6 +6,8 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <map>
+#include <utility>
 #include <vector>
 
 #include <glm/geometric.hpp>
@@ -1061,6 +1063,135 @@ void Test_PickNearestLampsAroundPlayer()
         assert(dist < 0.5f * (DESPAWN_BEHIND + SPAWN_AHEAD));
         prev = dist;
     }
+}
+
+static Track TunnelTrack(float* ts, float* te); // abaixo, com os testes dos túneis
+
+// Revisão final, item 5: peso das luzes pontuais. 1 longe do corte, 0 a
+// partir dele, contínuo e monótono no meio (smoothstep).
+void Test_PointLightWeight()
+{
+    const float W = POINT_LIGHT_FADE_WIDTH;
+    assert(nearf(PointLightWeight(10.0f, 40.0f, W), 1.0f));
+    assert(nearf(PointLightWeight(40.0f - W, 40.0f, W), 1.0f));
+    assert(nearf(PointLightWeight(40.0f, 40.0f, W), 0.0f));
+    assert(nearf(PointLightWeight(55.0f, 40.0f, W), 0.0f));
+    assert(nearf(PointLightWeight(40.0f - 0.5f * W, 40.0f, W), 0.5f));
+    float prev = 1.0f;
+    for (float d = 30.0f; d <= 42.0f; d += 0.01f) {
+        const float w = PointLightWeight(d, 40.0f, W);
+        assert(w <= prev + 1e-6f && w >= 0.0f && w <= 1.0f);
+        assert(prev - w < 0.01f); // sem degrau
+        prev = w;
+    }
+    // Sem corte (menos luzes que a capacidade): peso 1.
+    assert(nearf(PointLightWeight(30.0f, 1e30f, W), 1.0f));
+    // Penalidade da borda de trás do trecho visível: 0 longe dela, máxima na
+    // borda (a luz sai do conjunto das mais próximas antes de sumir).
+    assert(nearf(LightEdgePenalty(100.0f, 100.0f), 0.0f));
+    assert(nearf(LightEdgePenalty(130.0f, 100.0f), 0.0f)); // à frente
+    assert(nearf(LightEdgePenalty(100.0f - DESPAWN_BEHIND, 100.0f), 0.0f)); // trecho visível: nada
+    assert(nearf(LightEdgePenalty(100.0f - LIGHT_CANDIDATE_BEHIND + LIGHT_EDGE_FADE_LENGTH, 100.0f), 0.0f));
+    assert(nearf(LightEdgePenalty(100.0f - LIGHT_CANDIDATE_BEHIND, 100.0f), LIGHT_EDGE_PENALTY));
+    assert(LightEdgePenalty(100.0f - LIGHT_CANDIDATE_BEHIND - 1.0f, 100.0f) >= LIGHT_EDGE_PENALTY - 1e-3f);
+    // A pista mantida para trás cobre as luzes candidatas (FrameAt delas).
+    assert(DESPAWN_BEHIND + TRACK_KEEP_MARGIN >= LIGHT_CANDIDATE_BEHIND);
+    // Na ponta de trás a luz já está além do corte máximo (peso 0), mesmo
+    // numa curva (a corda é menor que o arco: folga de 30%).
+    assert(0.7f * LIGHT_CANDIDATE_BEHIND + LIGHT_EDGE_PENALTY > POINT_LIGHT_MAX_DIST);
+}
+
+// Simula o jogador andando de 5 em 5 cm por uma pista (com túnel, ou com
+// curvas) e, a cada passo, escolhe as MAX_POINT_LIGHTS luzes e os pesos como
+// main.cpp faz, com postes e lâmpadas de túnel reais (ComputeLamps,
+// ComputeTunnelLamps). A intensidade efetiva de cada luz (peso, ou 0 se não
+// escolhida) nunca dá um salto entre dois passos: nem quando a 9ª entra no
+// lugar da 8ª, nem quando uma luz sai do trecho visível por trás. Devolve o
+// maior salto visto.
+static float MaxLightWeightJump(const Track& t, float s0, float s1, bool use_fade)
+{
+    std::map<std::pair<int, int>, float> prev; // (s em cm, x em cm) -> intensidade
+    std::vector<LampInstance> lamps;
+    std::vector<float> tunnel_lamps;
+    std::vector<glm::vec3> pos;
+    std::vector<float> extra;
+    std::vector<std::pair<int, int>> keys;
+    std::vector<PointDistance> scratch;
+    std::vector<int> idx;
+    std::vector<float> weight;
+    float worst = 0.0f;
+    int steps = 0;
+    for (float ps = s0; ps < s1; ps += 0.05f) {
+        assert(++steps < kLoopGuard * 10);
+        ComputeLamps(t, ps, &lamps, LIGHT_CANDIDATE_BEHIND);
+        ComputeTunnelLamps(t, ps, &tunnel_lamps, LIGHT_CANDIDATE_BEHIND);
+        pos.clear();
+        extra.clear();
+        keys.clear();
+        for (size_t i = 0; i < lamps.size(); i++) {
+            const TrackFrame f = t.FrameAt(lamps[i].s);
+            const vec4 p = f.position + f.right * lamps[i].x;
+            pos.push_back(glm::vec3(p.x, LAMP_HEIGHT, p.z));
+            extra.push_back(LightEdgePenalty(lamps[i].s, ps));
+            keys.push_back(std::make_pair((int)std::lround(lamps[i].s * 100), (int)std::lround(lamps[i].x * 100)));
+        }
+        for (size_t i = 0; i < tunnel_lamps.size(); i++) {
+            const TrackFrame f = t.FrameAt(tunnel_lamps[i]);
+            pos.push_back(glm::vec3(f.position.x, TUNNEL_LAMP_HEIGHT, f.position.z));
+            extra.push_back(LightEdgePenalty(tunnel_lamps[i], ps));
+            keys.push_back(std::make_pair((int)std::lround(tunnel_lamps[i] * 100), 999999));
+        }
+        const vec4 pp = t.FrameAt(ps).position;
+        const glm::vec3 from(pp.x, pp.y, pp.z);
+        if (use_fade) {
+            PickPointLights(pos, extra, from, MAX_POINT_LIGHTS, &scratch, &idx, &weight);
+        } else {
+            PickNearestPoints(pos, from, MAX_POINT_LIGHTS, &scratch, &idx);
+            weight.assign(idx.size(), 1.0f);
+        }
+        assert(idx.size() == weight.size() && (int)idx.size() <= MAX_POINT_LIGHTS);
+        std::map<std::pair<int, int>, float> now;
+        for (size_t k = 0; k < idx.size(); k++)
+            now[keys[idx[k]]] = weight[k];
+        if (steps > 1) {
+            for (std::map<std::pair<int, int>, float>::const_iterator it = prev.begin(); it != prev.end(); ++it) {
+                const std::map<std::pair<int, int>, float>::const_iterator n = now.find(it->first);
+                worst = std::max(worst, std::fabs((n == now.end() ? 0.0f : n->second) - it->second));
+            }
+            for (std::map<std::pair<int, int>, float>::const_iterator it = now.begin(); it != now.end(); ++it)
+                if (prev.find(it->first) == prev.end())
+                    worst = std::max(worst, it->second);
+        }
+        prev.swap(now);
+    }
+    return worst;
+}
+
+void Test_PointLightsNoPop()
+{
+    float ts, te;
+    const Track tunnel = TunnelTrack(&ts, &te);
+    Track curvy(7);
+    curvy.EnsureGeneratedUntil(1400.0f);
+    // Sem o fade (como era antes) a troca da 8ª/9ª luz acende/apaga de uma vez.
+    assert(MaxLightWeightJump(tunnel, 20.0f, 300.0f, false) > 0.9f);
+    const float a = MaxLightWeightJump(tunnel, 20.0f, 300.0f, true);
+    const float b = MaxLightWeightJump(curvy, 20.0f, 1200.0f, true);
+    printf("  [luzes] maior salto de intensidade por passo de 5 cm: tunel %.4f, curvas %.4f\n", a, b);
+    fflush(stdout);
+    assert(a < 0.05f && b < 0.05f);
+
+    // As luzes perto do jogador ficam com peso 1 (o fade só age perto do corte).
+    std::vector<LampInstance> lamps;
+    ComputeLamps(StraightTrack(), 100.0f, &lamps);
+    std::vector<glm::vec3> pos;
+    for (size_t i = 0; i < lamps.size(); i++)
+        pos.push_back(glm::vec3(lamps[i].x, LAMP_HEIGHT, -lamps[i].s));
+    std::vector<PointDistance> scratch;
+    std::vector<int> idx;
+    std::vector<float> w;
+    PickPointLights(pos, std::vector<float>(), glm::vec3(0, 0, -100.0f), MAX_POINT_LIGHTS, &scratch, &idx, &w);
+    assert((int)idx.size() == MAX_POINT_LIGHTS && nearf(w[0], 1.0f) && nearf(w[1], 1.0f));
 }
 
 // ------------------------------------------- Cenário dos túneis (4.2)
@@ -4229,6 +4360,8 @@ int main()
     Test_LampsCoverVisibleRange();
     Test_PickNearestPoints();
     Test_PickNearestLampsAroundPlayer();
+    Test_PointLightWeight();
+    Test_PointLightsNoPop();
     // Túneis (4.2)
     Test_SceneryAvoidsTunnels();
     Test_TunnelPiecesAndLamps();

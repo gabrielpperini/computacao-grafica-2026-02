@@ -6,6 +6,7 @@
 
 #include <glm/vec3.hpp>
 
+#include "game_config.h"
 #include "track.h"
 
 // Geometria do cenário derivada da pista: faixas (triangle strips) de chão e
@@ -121,8 +122,11 @@ struct LampInstance {
 
 // Limpa *out e lista os postes em s = k*LAMP_SPACING no trecho visível, dos
 // dois lados, exceto ao longo dos túneis e junto aos portais (o poste em
-// x = ±LAMP_OFFSET_X atravessaria a parede do túnel).
-void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out);
+// x = ±LAMP_OFFSET_X atravessaria a parede do túnel). 'behind' = quantos
+// metros para trás do jogador a lista começa (padrão: o trecho visível; as
+// luzes usam LIGHT_CANDIDATE_BEHIND, veja o fade das luzes abaixo).
+void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out,
+                  float behind = DESPAWN_BEHIND);
 
 // Par (distância², índice) usado por PickNearestPoints.
 struct PointDistance {
@@ -139,6 +143,50 @@ struct PointDistance {
 void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& from,
                        int max_count, std::vector<PointDistance>* scratch,
                        std::vector<int>* out_indices);
+
+// ---------------------------------------------------------------------------
+// Fade das luzes pontuais (Revisão final, item 5)
+// ---------------------------------------------------------------------------
+// Só as MAX_POINT_LIGHTS luzes mais próximas vão para o shader. Sem cuidado,
+// uma luz "acende" de uma vez quando entra nesse conjunto (e apaga quando
+// sai). Por isso cada luz escolhida tem um peso que multiplica a sua cor: 1
+// longe do corte e caindo suavemente até 0 quando a distância dela chega à
+// da 1ª luz que ficou de fora (o "raio de corte"; no máximo
+// POINT_LIGHT_MAX_DIST). Na troca da 8ª pela 9ª as duas estão no corte, com
+// peso 0. Uma luz que sai da lista por trás teria o mesmo problema; por
+// isso as candidatas vão até LIGHT_CANDIDATE_BEHIND m para trás (bem além do
+// trecho visível: lá atrás uma luz quase nunca está entre as 9 mais
+// próximas) e, nos últimos LIGHT_EDGE_FADE_LENGTH m, a "distância efetiva"
+// ganha LightEdgePenalty(), que cresce continuamente até LIGHT_EDGE_PENALTY:
+// quando a luz sai da lista ela já está além do corte (peso 0).
+const float POINT_LIGHT_FADE_WIDTH = 8.0f;  // m antes do corte em que o peso vai de 1 a 0
+const float POINT_LIGHT_MAX_DIST   = 60.0f; // m: corte máximo (uma luz a 60 m quase não ilumina)
+const float LIGHT_CANDIDATE_BEHIND = 60.0f; // m atrás do jogador em que ainda há luzes candidatas
+const float LIGHT_EDGE_FADE_LENGTH = 25.0f; // m (antes da ponta de trás) em que a penalidade cresce
+const float LIGHT_EDGE_PENALTY     = 60.0f; // m somados à distância na ponta de trás
+// A pista precisa existir até onde há luzes candidatas (FrameAt delas):
+// DESPAWN_BEHIND + TRACK_KEEP_MARGIN >= LIGHT_CANDIDATE_BEHIND (conferido em
+// logic_tests, Test_PointLightWeight).
+
+// Peso (0..1) de uma luz a 'dist' m do jogador com o corte em 'cutoff' m:
+// smoothstep de 0 (dist >= cutoff) a 1 (dist <= cutoff - fade_width).
+float PointLightWeight(float dist, float cutoff, float fade_width);
+
+// Penalidade (m) somada à distância de uma luz em light_s: 0 até
+// LIGHT_CANDIDATE_BEHIND - LIGHT_EDGE_FADE_LENGTH m atrás do jogador,
+// crescendo linearmente até LIGHT_EDGE_PENALTY em LIGHT_CANDIDATE_BEHIND m
+// atrás (onde a luz sai da lista de candidatas) e além.
+float LightEdgePenalty(float light_s, float player_s);
+
+// Escolhe as (no máximo) max_count luzes de menor distância efetiva
+// (|points[i] - from| + extra_dist[i]; extra_dist vazio = 0) e o peso de cada
+// uma (PointLightWeight com o corte = distância efetiva da 1ª que ficou de
+// fora, limitada a POINT_LIGHT_MAX_DIST, e POINT_LIGHT_FADE_WIDTH). Limpa e
+// preenche *out_indices (da mais perto para a mais longe) e *out_weights
+// (mesma ordem). *scratch: memória de trabalho reaproveitada (sem alocar).
+void PickPointLights(const std::vector<glm::vec3>& points, const std::vector<float>& extra_dist,
+                     const glm::vec3& from, int max_count, std::vector<PointDistance>* scratch,
+                     std::vector<int>* out_indices, std::vector<float>* out_weights);
 
 // ---------------------------------------------------------------------------
 // Túneis (Tarefa 4.2)
@@ -203,8 +251,10 @@ void ComputeVisibleTunnels(const Track& track, float player_s, std::vector<Tunne
 // da entrada, mais os dois portais) que cruzam o trecho visível.
 void ComputeTunnelPieces(const Track& track, float player_s, std::vector<TunnelPiece>* out);
 
-// Limpa *out_s e lista o s das lâmpadas de teto do trecho visível.
-void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s);
+// Limpa *out_s e lista o s das lâmpadas de teto do trecho visível (a partir
+// de 'behind' m atrás do jogador, como em ComputeLamps).
+void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s,
+                        float behind = DESPAWN_BEHIND);
 
 // Um passo da rampa de escurecimento (0 = fora, 1 = câmera dentro do túnel):
 // anda dt / TUNNEL_DIM_TIME em direção ao alvo, sem passar dele.

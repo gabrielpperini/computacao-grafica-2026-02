@@ -231,10 +231,10 @@ void ComputeBuildings(const Track& track, float player_s, std::vector<BuildingIn
     }
 }
 
-void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out)
+void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out, float behind)
 {
     out->clear();
-    const int k0 = (int)std::ceil((player_s - DESPAWN_BEHIND) / LAMP_SPACING);
+    const int k0 = (int)std::ceil((player_s - behind) / LAMP_SPACING);
     const int k1 = (int)std::floor((player_s + SPAWN_AHEAD) / LAMP_SPACING);
     const float reach = TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
     for (int k = k0; k <= k1; ++k) {
@@ -280,6 +280,50 @@ void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& fr
     const size_t n = std::min(all.size(), (size_t)max_count);
     for (size_t i = 0; i < n; ++i)
         out_indices->push_back(all[i].index);
+}
+
+// ------------------------------------- Fade das luzes (Revisão final, item 5)
+
+float PointLightWeight(float dist, float cutoff, float fade_width)
+{
+    if (!(fade_width > 0.0f))
+        return dist < cutoff ? 1.0f : 0.0f;
+    const float x = std::min(std::max((cutoff - dist) / fade_width, 0.0f), 1.0f);
+    return x * x * (3.0f - 2.0f * x); // smoothstep: sem degrau nem quina
+}
+
+float LightEdgePenalty(float light_s, float player_s)
+{
+    const float ramp_start = LIGHT_CANDIDATE_BEHIND - LIGHT_EDGE_FADE_LENGTH; // m atrás do jogador
+    const float u = (player_s - light_s - ramp_start) / LIGHT_EDGE_FADE_LENGTH;
+    return std::min(std::max(u, 0.0f), 1.0f) * LIGHT_EDGE_PENALTY;
+}
+
+void PickPointLights(const std::vector<glm::vec3>& points, const std::vector<float>& extra_dist,
+                     const glm::vec3& from, int max_count, std::vector<PointDistance>* scratch,
+                     std::vector<int>* out_indices, std::vector<float>* out_weights)
+{
+    out_indices->clear();
+    out_weights->clear();
+    if (max_count <= 0)
+        return;
+    // Aqui o campo dist2 guarda a distância EFETIVA (não ao quadrado).
+    std::vector<PointDistance>& all = *scratch;
+    all.resize(points.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        const glm::vec3 d = points[i] - from;
+        const float extra = (i < extra_dist.size()) ? extra_dist[i] : 0.0f;
+        all[i].dist2 = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) + extra;
+        all[i].index = (int)i;
+    }
+    std::sort(all.begin(), all.end(), CloserFirst);
+    const size_t n = std::min(all.size(), (size_t)max_count);
+    float cutoff = (all.size() > n) ? all[n].dist2 : POINT_LIGHT_MAX_DIST;
+    cutoff = std::min(cutoff, POINT_LIGHT_MAX_DIST);
+    for (size_t i = 0; i < n; ++i) {
+        out_indices->push_back(all[i].index);
+        out_weights->push_back(PointLightWeight(all[i].dist2, cutoff, POINT_LIGHT_FADE_WIDTH));
+    }
 }
 
 // ---------------------------------------------------------------- Túneis (4.2)
@@ -343,10 +387,10 @@ void ComputeTunnelPieces(const Track& track, float player_s, std::vector<TunnelP
     }
 }
 
-void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s)
+void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s, float behind)
 {
     out_s->clear();
-    const float v0 = player_s - DESPAWN_BEHIND;
+    const float v0 = player_s - behind;
     const float v1 = player_s + SPAWN_AHEAD;
     const std::vector<TrackSegment>& segs = track.Segments();
     for (size_t i = 0; i < segs.size(); ++i) {

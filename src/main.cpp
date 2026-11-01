@@ -693,7 +693,9 @@ int main(int argc, char* argv[])
     std::vector<LampInstance> lamps;
     std::vector<glm::vec3> lamp_positions;
     std::vector<glm::vec3> lamp_colors;   // cor de cada luz de lamp_positions
+    std::vector<float> lamp_extra;        // penalidade de distância (borda de trás; LightEdgePenalty)
     std::vector<int> picked_lamps;
+    std::vector<float> picked_weights;    // peso (fade) de cada luz escolhida
     std::vector<PointDistance> pick_scratch;
 
     // Túneis do trecho visível: peças (módulos e portais), lâmpadas do teto
@@ -851,31 +853,40 @@ int main(int argc, char* argv[])
         // (as demais ficam longe demais para fazer diferença), entre as dos
         // postes de rua (centro da cabeça do poste desenhado, LampHeadPosition)
         // e as do teto dos túneis (TUNNEL_LAMP_HEIGHT acima da pista).
-        ComputeLamps(g_Game.track, player.s, &lamps);
-        ComputeTunnelLamps(g_Game.track, player.s, &tunnel_lamps);
+        // As listas começam LIGHT_CANDIDATE_BEHIND m atrás (luzes candidatas,
+        // veja o fade abaixo); só se DESENHA o que está no trecho visível.
+        ComputeLamps(g_Game.track, player.s, &lamps, LIGHT_CANDIDATE_BEHIND);
+        ComputeTunnelLamps(g_Game.track, player.s, &tunnel_lamps, LIGHT_CANDIDATE_BEHIND);
+        const float draw_from_s = player.s - DESPAWN_BEHIND;
         lamp_positions.clear();
         lamp_colors.clear();
+        lamp_extra.clear();
         for (size_t i = 0; i < lamps.size(); ++i)
         {
             glm::vec4 h = LampHeadPosition(g_Game.track, lamps[i]);
             lamp_positions.push_back(glm::vec3(h.x, h.y, h.z));
             lamp_colors.push_back(LAMP_LIGHT_COLOR);
+            lamp_extra.push_back(LightEdgePenalty(lamps[i].s, player.s));
         }
         for (size_t i = 0; i < tunnel_lamps.size(); ++i)
         {
             glm::vec4 c = g_Game.track.FrameAt(tunnel_lamps[i]).position;
             lamp_positions.push_back(glm::vec3(c.x, c.y + TUNNEL_LAMP_HEIGHT, c.z));
             lamp_colors.push_back(TUNNEL_LAMP_LIGHT_COLOR);
+            lamp_extra.push_back(LightEdgePenalty(tunnel_lamps[i], player.s));
         }
+        // Escolha com fade (Revisão final, item 5): cada luz tem um peso que
+        // cai suavemente a 0 perto do raio de corte, então nenhuma acende ou
+        // apaga de uma vez ao entrar/sair das MAX_POINT_LIGHTS mais próximas.
         glm::vec4 player_pos = player_frame.position + player_frame.right * player.x;
-        PickNearestPoints(lamp_positions, glm::vec3(player_pos.x, player_pos.y, player_pos.z),
-                          MAX_POINT_LIGHTS, &pick_scratch, &picked_lamps);
+        PickPointLights(lamp_positions, lamp_extra, glm::vec3(player_pos.x, player_pos.y, player_pos.z),
+                        MAX_POINT_LIGHTS, &pick_scratch, &picked_lamps, &picked_weights);
         float light_pos[4 * MAX_POINT_LIGHTS] = {0};
         float light_col[3 * MAX_POINT_LIGHTS] = {0};
         for (size_t i = 0; i < picked_lamps.size(); ++i)
         {
             const glm::vec3& lp = lamp_positions[picked_lamps[i]];
-            const glm::vec3& lc = lamp_colors[picked_lamps[i]];
+            const glm::vec3 lc = lamp_colors[picked_lamps[i]] * picked_weights[i];
             light_pos[4 * i + 0] = lp.x;
             light_pos[4 * i + 1] = lp.y;
             light_pos[4 * i + 2] = lp.z;
@@ -937,7 +948,8 @@ int main(int argc, char* argv[])
         for (size_t i = 0; i < tunnel_pieces.size(); ++i)
             DrawTunnelPiece(g_Game.track, tunnel_pieces[i]);
         for (size_t i = 0; i < tunnel_lamps.size(); ++i)
-            DrawTunnelLamp(g_Game.track, tunnel_lamps[i]);
+            if (tunnel_lamps[i] >= draw_from_s)
+                DrawTunnelLamp(g_Game.track, tunnel_lamps[i]);
 
         // Chão, dormentes e trilhos: faixas reconstruídas a partir da pista no
         // trecho visível em torno do jogador. As UV das faixas já estão em
@@ -968,7 +980,8 @@ int main(int argc, char* argv[])
 
         // Postes de luz: modelo do poste + cabeça emissiva.
         for (size_t i = 0; i < lamps.size(); ++i)
-            DrawLamp(g_Game.track, lamps[i]);
+            if (lamps[i].s >= draw_from_s)
+                DrawLamp(g_Game.track, lamps[i]);
 
         // Obstáculos: cada um é o seu modelo escalado para a caixa de colisão.
         for (size_t i = 0; i < g_Game.obstacles.size(); ++i)

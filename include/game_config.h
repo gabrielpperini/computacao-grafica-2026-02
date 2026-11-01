@@ -26,6 +26,12 @@ const float MAX_DT              = 0.05f;  // s
 const float CHUNK_LENGTH        = 30.0f;  // m por bloco de spawn
 const float SPAWN_AHEAD         = 150.0f; // m gerados à frente do jogador
 const float DESPAWN_BEHIND      = 20.0f;  // m mantidos atrás do jogador
+// A pista (segmentos) é mantida TRACK_KEEP_MARGIN além de DESPAWN_BEHIND para
+// trás: o cenário começa as faixas na grade de 1 m (até 1 m antes), as luzes
+// pontuais candidatas vão até LIGHT_CANDIDATE_BEHIND (scenery.h; Revisão
+// final, item 5) e FrameAt fora dos segmentos mantidos extrapolaria o
+// primeiro deles (errado numa curva).
+const float TRACK_KEEP_MARGIN   = 45.0f;  // m
 const float COIN_RADIUS         = 0.5f;
 const float COIN_HEIGHT         = 1.0f;
 const float POWERUP_DURATION    = 10.0f;  // s

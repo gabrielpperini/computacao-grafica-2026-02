@@ -174,10 +174,6 @@ const float BARRIER_HIGH_CLEARANCE  = 1.1f;  // vão livre (m) sob a barreira al
 const float BARRIER_POST_HALF_WIDTH = 0.06f; // postes da barreira alta (m)
 const float COIN_SPACING            = 2.0f;  // m entre moedas de uma fileira
 const int   WELCOME_COIN_COUNT      = 8;     // fileira de moedas do 1º chunk (faixa 0)
-// A pista é mantida um pouco além de DESPAWN_BEHIND para trás: o cenário
-// começa as faixas na grade de 1 m (até 1 m antes) e FrameAt fora dos
-// segmentos mantidos extrapolaria o primeiro deles (errado numa curva).
-const float TRACK_KEEP_MARGIN       = 5.0f;  // m
 
 // dt de um quadro, sanitizado (Tarefa 7.1a): NaN, zero e negativo viram 0 (a
 // simulação não anda nem recua); o resto é limitado a MAX_DT. Usado pelo laço
