@@ -26,6 +26,8 @@ const int POWERUP_MULTIPLIER = 13;
 const int POWERUP_PIGGY     = 14;
 const int FLYING_PIG        = 15;
 const int PARTICLE          = 16;
+const int LAMP              = 17; // cabeça emissiva do poste de luz
+const int LAMP_POLE         = 18; // haste do poste de luz
 
 // ---- Modos de geração de coordenadas de textura (uniform "uv_mode") ----
 const int UV_OBJ        = 0; // UV vindas do arquivo OBJ (atributo texcoords)

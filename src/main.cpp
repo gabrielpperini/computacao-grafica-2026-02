@@ -272,6 +272,43 @@ GLint g_uv_mode_uniform;
 GLint g_uv_scale_uniform;
 GLint g_bbox_min_uniform;
 GLint g_bbox_max_uniform;
+// Iluminação (Blinn-Phong) e material do objeto atual. Veja shader_fragment.glsl.
+GLint g_sun_direction_uniform;
+GLint g_sun_color_uniform;
+GLint g_ambient_color_uniform;
+GLint g_num_point_lights_uniform;
+GLint g_point_light_position_uniform;
+GLint g_point_light_color_uniform;
+GLint g_shading_mode_uniform;
+GLint g_material_kd_tint_uniform;
+GLint g_material_ks_uniform;
+GLint g_material_q_uniform;
+GLint g_material_emissive_uniform;
+
+// Cena: sol (luz direcional) e luzes pontuais dos postes.
+// SUN_DIRECTION aponta da superfície PARA o sol: de cima, um pouco de lado e
+// de TRÁS do jogador (+Z com heading 0), para que as faces dos obstáculos
+// voltadas para a câmera (normal +Z) também recebam luz direta.
+const glm::vec4 SUN_DIRECTION    = glm::vec4(0.30f, 1.00f, 0.70f, 0.0f);
+const glm::vec3 SUN_COLOR        = glm::vec3(0.95f, 0.92f, 0.82f);
+const glm::vec3 AMBIENT_COLOR    = glm::vec3(0.22f, 0.25f, 0.32f); // céu azulado
+const glm::vec3 LAMP_LIGHT_COLOR = glm::vec3(2.8f, 2.0f, 1.0f);   // luz quente, intensidade > 1
+
+// Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
+// ks/q = especular de Blinn-Phong; emissive = cor somada sem depender das luzes.
+struct Material
+{
+    glm::vec3 kd_tint;
+    glm::vec3 ks;
+    float     q;
+    glm::vec3 emissive;
+    int       shading_mode; // 0 = Phong (por fragmento), 1 = Gouraud (por vértice)
+};
+
+// Material (Kd/Ks/q/emissivo/modo de sombreamento) de cada tipo de objeto.
+Material MaterialFor(int object_id);
+// Envia o material do tipo de objeto para os uniforms do shader.
+void ApplyMaterial(int object_id);
 
 int main(int argc, char* argv[])
 {
@@ -389,6 +426,12 @@ int main(int argc, char* argv[])
     StripBatch rails_batch;
     std::vector<BuildingInstance> buildings;
 
+    // Postes de luz: lista do trecho visível, posição de mundo da luz de cada
+    // um e os índices dos mais próximos do jogador (reaproveitados por quadro).
+    std::vector<LampInstance> lamps;
+    std::vector<glm::vec3> lamp_positions;
+    std::vector<int> picked_lamps;
+
     // Corrida: no autotest a semente fixa (12345) de g_Game é mantida para que
     // o cenário seja determinístico; no jogo normal, semente pelo relógio.
     if (!autotest)
@@ -485,6 +528,39 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
+        // Luzes: sol fixo + as MAX_POINT_LIGHTS lâmpadas de poste mais próximas
+        // do jogador (as demais ficam longe demais para fazer diferença).
+        ComputeLamps(player.s, &lamps);
+        lamp_positions.clear();
+        for (size_t i = 0; i < lamps.size(); ++i)
+        {
+            TrackFrame f = g_Game.track.FrameAt(lamps[i].s);
+            glm::vec4 p = f.position + f.right * lamps[i].x;
+            lamp_positions.push_back(glm::vec3(p.x, LAMP_HEIGHT, p.z));
+        }
+        glm::vec4 player_pos = player_frame.position + player_frame.right * player.x;
+        PickNearestPoints(lamp_positions, glm::vec3(player_pos.x, player_pos.y, player_pos.z),
+                          MAX_POINT_LIGHTS, &picked_lamps);
+        float light_pos[4 * MAX_POINT_LIGHTS] = {0};
+        float light_col[3 * MAX_POINT_LIGHTS] = {0};
+        for (size_t i = 0; i < picked_lamps.size(); ++i)
+        {
+            const glm::vec3& lp = lamp_positions[picked_lamps[i]];
+            light_pos[4 * i + 0] = lp.x;
+            light_pos[4 * i + 1] = lp.y;
+            light_pos[4 * i + 2] = lp.z;
+            light_pos[4 * i + 3] = 1.0f;
+            light_col[3 * i + 0] = LAMP_LIGHT_COLOR.x;
+            light_col[3 * i + 1] = LAMP_LIGHT_COLOR.y;
+            light_col[3 * i + 2] = LAMP_LIGHT_COLOR.z;
+        }
+        glUniform4f(g_sun_direction_uniform, SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z, 0.0f);
+        glUniform3f(g_sun_color_uniform, SUN_COLOR.x, SUN_COLOR.y, SUN_COLOR.z);
+        glUniform3f(g_ambient_color_uniform, AMBIENT_COLOR.x, AMBIENT_COLOR.y, AMBIENT_COLOR.z);
+        glUniform1i(g_num_point_lights_uniform, (GLint)picked_lamps.size());
+        glUniform4fv(g_point_light_position_uniform, MAX_POINT_LIGHTS, light_pos);
+        glUniform3fv(g_point_light_color_uniform, MAX_POINT_LIGHTS, light_col);
+
         // Chão e trilhos: faixas reconstruídas a partir da pista no trecho
         // visível em torno do jogador. As UV das faixas já estão em
         // "ladrilhos" de tamanho fixo em metros (sem esticar).
@@ -529,6 +605,29 @@ int main(int argc, char* argv[])
                                               b.height / cube_size.y,
                                               b.depth  / cube_size.z);
             DrawObject("the_cube", model, BUILDING, tex_brick, UV_BOX, 1.0f / 3.0f);
+        }
+
+        // Postes de luz: mais duas instâncias do cubo por poste, a haste fina e
+        // a cabeça emissiva (a luz pontual fica no centro da cabeça).
+        for (size_t i = 0; i < lamps.size(); ++i)
+        {
+            TrackFrame f = g_Game.track.FrameAt(lamps[i].s);
+            glm::vec4 p = f.position + f.right * lamps[i].x;
+            const float head_bottom = LAMP_HEIGHT - 0.5f * LAMP_HEAD_HEIGHT;
+            glm::mat4 pole = Matrix_Translate(p.x, p.y, p.z)
+                           * Matrix_Rotate_Y(f.heading)
+                           * Matrix_OnGround("the_cube",
+                                             LAMP_POLE_WIDTH / cube_size.x,
+                                             head_bottom     / cube_size.y,
+                                             LAMP_POLE_WIDTH / cube_size.z);
+            DrawObject("the_cube", pole, LAMP_POLE, tex_metal, UV_BOX, 0.5f);
+            glm::mat4 head = Matrix_Translate(p.x, p.y + head_bottom, p.z)
+                           * Matrix_Rotate_Y(f.heading)
+                           * Matrix_OnGround("the_cube",
+                                             LAMP_HEAD_SIZE   / cube_size.x,
+                                             LAMP_HEAD_HEIGHT / cube_size.y,
+                                             LAMP_HEAD_SIZE   / cube_size.z);
+            DrawObject("the_cube", head, LAMP, tex_metal, UV_BOX, 0.5f);
         }
 
         // Obstáculos: instâncias do cubo (um VAO para todos), uma matriz de
@@ -689,11 +788,50 @@ void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint 
     glUniform1i(g_object_id_uniform, object_id);
     glUniform1i(g_uv_mode_uniform, uv_mode);
     glUniform1f(g_uv_scale_uniform, uv_scale);
+    ApplyMaterial(object_id);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
 
     DrawVirtualObject(name);
+}
+
+// Material de cada tipo de objeto: tom sobre a textura (kd_tint), especular
+// (ks, q), emissivo e modo de sombreamento. Concentra aqui o "visual" de cada
+// tipo, em vez de ramificar por object_id no shader. Metais (barreiras, placas,
+// trem, trilhos, moedas) têm Ks alto; chão e tijolo quase não brilham.
+Material MaterialFor(int object_id)
+{
+    const glm::vec3 white(1.0f, 1.0f, 1.0f);
+    const glm::vec3 none(0.0f, 0.0f, 0.0f);
+    Material m = { white, glm::vec3(0.3f), 16.0f, none, 0 }; // padrão
+    switch (object_id)
+    {
+    case PLAYER:      m = { white, glm::vec3(0.35f), 32.0f, none, 0 }; break;
+    case GROUND:      m = { white, glm::vec3(0.04f),  8.0f, none, 0 }; break;
+    case RAIL:        m = { white, glm::vec3(0.90f), 96.0f, none, 0 }; break;
+    case BUILDING:    m = { white, glm::vec3(0.05f),  8.0f, none, 0 }; break;
+    case BARRIER_LOW:
+    case BARRIER_HIGH:m = { glm::vec3(1.0f, 0.55f, 0.15f), glm::vec3(0.70f), 128.0f, none, 0 }; break; // laranja de obra
+    case SIGN:        m = { glm::vec3(0.35f, 0.55f, 1.0f), glm::vec3(0.70f), 128.0f, none, 0 }; break;  // placa azul
+    case TRAIN:       m = { glm::vec3(0.75f, 0.25f, 0.20f), glm::vec3(0.80f), 128.0f, none, 0 }; break; // vagão vermelho
+    case RAMP:        m = { white, glm::vec3(0.35f), 24.0f, none, 0 }; break;
+    case COIN:        m = { glm::vec3(2.2f, 1.7f, 0.25f), glm::vec3(0.90f), 32.0f, none, 1 }; break;    // dourado; Gouraud
+    case LAMP_POLE:   m = { glm::vec3(0.45f), glm::vec3(0.60f), 32.0f, none, 0 }; break;
+    case LAMP:        m = { glm::vec3(0.10f), none, 1.0f, glm::vec3(1.5f, 1.15f, 0.65f), 0 }; break;    // lâmpada acesa
+    default: break;
+    }
+    return m;
+}
+
+void ApplyMaterial(int object_id)
+{
+    Material m = MaterialFor(object_id);
+    glUniform3f(g_material_kd_tint_uniform, m.kd_tint.x, m.kd_tint.y, m.kd_tint.z);
+    glUniform3f(g_material_ks_uniform, m.ks.x, m.ks.y, m.ks.z);
+    glUniform1f(g_material_q_uniform, m.q);
+    glUniform3f(g_material_emissive_uniform, m.emissive.x, m.emissive.y, m.emissive.z);
+    glUniform1i(g_shading_mode_uniform, m.shading_mode);
 }
 
 // Objeto de g_VirtualScene pelo nome. Ao contrário de g_VirtualScene[name],
@@ -830,6 +968,7 @@ void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint te
     glUniform1f(g_uv_scale_uniform, uv_scale);
     glUniform4f(g_bbox_min_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
     glUniform4f(g_bbox_max_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
+    ApplyMaterial(object_id);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -918,6 +1057,17 @@ void LoadShadersFromFiles()
     g_uv_scale_uniform   = glGetUniformLocation(g_GpuProgramID, "uv_scale"); // Variável "uv_scale" em shader_fragment.glsl
     g_bbox_min_uniform   = glGetUniformLocation(g_GpuProgramID, "bbox_min");
     g_bbox_max_uniform   = glGetUniformLocation(g_GpuProgramID, "bbox_max");
+    g_sun_direction_uniform        = glGetUniformLocation(g_GpuProgramID, "sun_direction");
+    g_sun_color_uniform            = glGetUniformLocation(g_GpuProgramID, "sun_color");
+    g_ambient_color_uniform        = glGetUniformLocation(g_GpuProgramID, "ambient_color");
+    g_num_point_lights_uniform     = glGetUniformLocation(g_GpuProgramID, "num_point_lights");
+    g_point_light_position_uniform = glGetUniformLocation(g_GpuProgramID, "point_light_position");
+    g_point_light_color_uniform    = glGetUniformLocation(g_GpuProgramID, "point_light_color");
+    g_shading_mode_uniform         = glGetUniformLocation(g_GpuProgramID, "shading_mode");
+    g_material_kd_tint_uniform     = glGetUniformLocation(g_GpuProgramID, "material_kd_tint");
+    g_material_ks_uniform          = glGetUniformLocation(g_GpuProgramID, "material_ks");
+    g_material_q_uniform           = glGetUniformLocation(g_GpuProgramID, "material_q");
+    g_material_emissive_uniform    = glGetUniformLocation(g_GpuProgramID, "material_emissive");
 
     // Variável em "shader_fragment.glsl" para acesso da textura do objeto (unidade 0)
     glUseProgram(g_GpuProgramID);

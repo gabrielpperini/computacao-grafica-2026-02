@@ -40,6 +40,8 @@ const int POWERUP_MULTIPLIER = 13;
 const int POWERUP_PIGGY     = 14;
 const int FLYING_PIG        = 15;
 const int PARTICLE          = 16;
+const int LAMP              = 17; // cabeça emissiva do poste de luz
+const int LAMP_POLE         = 18; // haste do poste de luz
 
 const int UV_OBJ        = 0; // UV vindas do arquivo OBJ
 const int UV_PLANAR_XZ  = 1; // Projeção planar em XZ do mundo
@@ -58,6 +60,74 @@ uniform vec4 bbox_max;
 // Textura do objeto atual: sempre ligada na unidade 0 antes de cada desenho
 // (veja DrawObject() em main.cpp).
 uniform sampler2D TextureImage0;
+
+// Iluminação por vértice (Gouraud), vinda de shader_vertex.glsl.
+in vec3 gouraud_diffuse;
+in vec3 gouraud_specular;
+
+// Modo de sombreamento do objeto atual: 0 = Phong, 1 = Gouraud.
+uniform int shading_mode;
+
+// Material do objeto atual (ver MaterialFor() em main.cpp): multiplicador da
+// cor da textura (Kd = textura * material_kd_tint) e cor emissiva (lâmpadas).
+uniform vec3 material_kd_tint;
+uniform vec3 material_emissive;
+
+// ---------------------------------------------------------------------------
+// Iluminação Blinn-Phong: ambiente + difuso + especular, com um sol (luz
+// direcional) e até MAX_POINT_LIGHTS luzes pontuais (lâmpadas dos postes).
+//   cor = Kd * (ambiente + Σ I·max(0,n·l)) + Ks * Σ I·max(0,n·h)^q,
+//   h = normalize(l + v);  luzes pontuais atenuadas por 1/(1 + 0.09d + 0.032d²).
+// ATENÇÃO: este bloco (até o fim de BlinnPhong) é duplicado em
+// shader_vertex.glsl e shader_fragment.glsl (GLSL não tem include):
+// manter idêntico ao shader_vertex.glsl.
+// ---------------------------------------------------------------------------
+#define MAX_POINT_LIGHTS 8
+
+uniform vec4 sun_direction;   // sentido do ponto da superfície PARA o sol (w = 0)
+uniform vec3 sun_color;
+uniform vec3 ambient_color;
+uniform int  num_point_lights;
+uniform vec4 point_light_position[MAX_POINT_LIGHTS]; // coordenadas de mundo (w = 1)
+uniform vec3 point_light_color[MAX_POINT_LIGHTS];
+uniform vec3  material_ks;    // refletância especular Ks do objeto atual
+uniform float material_q;     // expoente especular q do objeto atual
+
+// Soma a contribuição de uma luz (l = sentido PARA a luz, normalizado; I = cor
+// já atenuada) aos termos difuso e especular. O especular só existe quando a
+// luz ilumina a face (n·l > 0), e h só é normalizado se não for degenerado
+// (l = -v daria h = 0 e NaN).
+void AddLight(vec3 l, vec3 I, vec3 n, vec3 v, inout vec3 diffuse, inout vec3 specular)
+{
+    float ndotl = dot(n, l);
+    if ( ndotl <= 0.0 )
+        return;
+    diffuse += I * ndotl;
+    vec3 h = l + v;
+    float hl = length(h);
+    if ( hl > 1e-5 )
+        specular += material_ks * I * pow(max(0.0, dot(n, h / hl)), material_q);
+}
+
+// p, n, v em coordenadas de mundo (n e v normalizados). diffuse já inclui o
+// termo ambiente; specular já inclui Ks.
+void BlinnPhong(vec3 p, vec3 n, vec3 v, out vec3 diffuse, out vec3 specular)
+{
+    diffuse  = ambient_color;
+    specular = vec3(0.0);
+
+    AddLight(normalize(sun_direction.xyz), sun_color, n, v, diffuse, specular);
+
+    for ( int i = 0; i < num_point_lights && i < MAX_POINT_LIGHTS; ++i )
+    {
+        vec3 d = point_light_position[i].xyz - p;
+        float dist = length(d);
+        if ( dist < 1e-4 )
+            continue;
+        float attenuation = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+        AddLight(d / dist, point_light_color[i] * attenuation, n, v, diffuse, specular);
+    }
+}
 
 // O valor de saída ("out") de um Fragment Shader é a cor final do fragmento.
 out vec4 color;
@@ -82,15 +152,12 @@ void main()
 
     // Normal do fragmento atual, interpolada pelo rasterizador a partir das
     // normais de cada vértice.
-    vec4 n = normalize(normal);
-
-    // Vetor que define o sentido da fonte de luz em relação ao ponto atual.
-    // Com componente +Z, para que as faces dos obstáculos voltadas para o
-    // jogador (que corre para -Z) não fiquem só com o termo ambiente.
-    vec4 l = normalize(vec4(1.0,1.0,0.7,0.0));
+    vec4 n = normal;
 
     // Vetor que define o sentido da câmera em relação ao ponto atual.
-    vec4 v = normalize(camera_position - p);
+    vec4 v = camera_position - p;
+    float vlen = length(v);
+    v = (vlen > 1e-6) ? v / vlen : vec4(0.0, 0.0, 1.0, 0.0);
 
     // Coordenadas de textura U e V
     float U = 0.0;
@@ -163,23 +230,28 @@ void main()
     // GL_REPEAT, então uv_scale > 1 repete a imagem em vez de esticá-la.
     vec3 Kd0 = texture(TextureImage0, vec2(U,V) * uv_scale).rgb;
 
-    // Tons provisórios sobre a textura metálica, para distinguir os obstáculos
-    // e as moedas até os modelos/texturas finais (Tarefa 3.2).
-    if ( object_id == BARRIER_LOW || object_id == BARRIER_HIGH )
-        Kd0 *= vec3(1.0, 0.55, 0.15);  // laranja de obra
-    else if ( object_id == SIGN )
-        Kd0 *= vec3(0.35, 0.55, 1.0);  // placa azul
-    else if ( object_id == TRAIN )
-        Kd0 *= vec3(0.75, 0.25, 0.2);  // vagão vermelho
-    else if ( object_id == COIN )
-        Kd0 = vec3(1.0, 0.75, 0.15) * (0.7 + 0.8 * Kd0.r); // dourado (textura só como relevo)
+    // Kd do objeto: textura modulada pelo tom do material.
+    vec3 Kd = Kd0 * material_kd_tint;
 
-    // Equação de Iluminação (provisória até a Blinn-Phong da Tarefa 3.1):
-    // Lambert + um termo ambiente, para que as faces que não recebem a luz
-    // direta (ex.: fachadas dos prédios voltadas para a pista) não fiquem pretas.
-    float lambert = max(0,dot(n,l));
+    // Equação de iluminação (Blinn-Phong). Phong: ambiente, difuso e especular
+    // calculados aqui, por fragmento, com a normal interpolada. Gouraud: o
+    // vertex shader já calculou ambiente+difuso e especular por vértice.
+    vec3 diffuse;
+    vec3 specular;
+    if ( shading_mode == 1 )
+    {
+        diffuse  = gouraud_diffuse;
+        specular = gouraud_specular;
+    }
+    else
+    {
+        vec3 nn = n.xyz;
+        float nl = length(nn);
+        nn = (nl > 1e-6) ? nn / nl : vec3(0.0, 1.0, 0.0);
+        BlinnPhong(p.xyz, nn, v.xyz, diffuse, specular);
+    }
 
-    color.rgb = Kd0 * (lambert + 0.25);
+    color.rgb = Kd * diffuse + specular + material_emissive;
 
     // NOTE: Se você quiser fazer o rendering de objetos transparentes, é
     // necessário:
@@ -197,6 +269,6 @@ void main()
 
     // Cor final com correção gamma, considerando monitor sRGB.
     // Veja https://en.wikipedia.org/w/index.php?title=Gamma_correction&oldid=751281772#Windows.2C_Mac.2C_sRGB_and_TV.2Fvideo_standard_gammas
-    color.rgb = pow(color.rgb, vec3(1.0,1.0,1.0)/2.2);
+    color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0,1.0,1.0)/2.2);
 } 
 

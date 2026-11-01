@@ -471,10 +471,10 @@ bool  LandsOnTop(const AABB& player_prev, const AABB& player_now, const AABB& ob
   O cálculo de luz fica duplicado nos dois shaders (GLSL não tem include) — manter idênticos.
 - C++: luzes pontuais = as 8 lâmpadas mais próximas do jogador (por enquanto, postes a cada 20 m).
 
-- [ ] **Passo 1:** implementar; moedas com `shading_mode = 1`, resto `0`.
-- [ ] **Passo 2:** rodar e apertar `R` após cada ajuste. Esperado: brilho especular visível no
+- [x] **Passo 1:** implementar; moedas com `shading_mode = 1`, resto `0`.
+- [x] **Passo 2:** rodar e apertar `R` após cada ajuste. Esperado: brilho especular visível no
   trem/moedas, moedas com destaque facetado (Gouraud), lâmpadas iluminando o chão ao redor.
-- [ ] **Passo 3:** commit `IA: Blinn-Phong com Phong e Gouraud e luzes pontuais`.
+- [x] **Passo 3:** commit `IA: Blinn-Phong com Phong e Gouraud e luzes pontuais`.
 
 ### Tarefa 3.2: Assets finais (modelos e texturas)
 

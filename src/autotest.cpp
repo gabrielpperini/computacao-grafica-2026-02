@@ -173,7 +173,7 @@ static void SetupObstacleTypes()
     g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 14.0f));
     g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 18.0f));
     g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 14.0f));
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1, 30.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1, 24.0f));
     for (int i = 0; i < 4; ++i)
     {
         Coin c = {0, 8.0f + i * COIN_SPACING, COIN_HEIGHT, false};
@@ -343,6 +343,20 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = Check_coins;
         s.steps.push_back(AutotestStep{0.6f, 0, 0, "ahead"});
         s.steps.push_back(AutotestStep{2.0f, 0, 0, "collected"});
+        scenarios.push_back(s);
+    }
+
+    // lighting: spawn ligado (semente fixa), sem entrada; fotos em 2 s e 8 s para
+    // conferir a iluminação Blinn-Phong: faces voltadas para a câmera iluminadas,
+    // brilho especular em moedas/obstáculos, cabeças dos postes acesas e o chão
+    // clareado perto delas. Sem verificação de estado (só erros de GL).
+    {
+        AutotestScenario s;
+        s.name        = "lighting";
+        s.duration    = 6.5f;
+        s.final_check = NULL;
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "t2"});
+        s.steps.push_back(AutotestStep{6.0f, 0, 0, "t6"});
         scenarios.push_back(s);
     }
 

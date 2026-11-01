@@ -1,5 +1,6 @@
 #include "scenery.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "game_config.h"
@@ -87,4 +88,53 @@ void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out)
             out->push_back(b);
         }
     }
+}
+
+void ComputeLamps(float player_s, std::vector<LampInstance>* out)
+{
+    out->clear();
+    const int k0 = (int)std::ceil((player_s - DESPAWN_BEHIND) / LAMP_SPACING);
+    const int k1 = (int)std::floor((player_s + SPAWN_AHEAD) / LAMP_SPACING);
+    for (int k = k0; k <= k1; ++k) {
+        for (int side = -1; side <= 1; side += 2) {
+            LampInstance l;
+            l.s = k * LAMP_SPACING;
+            l.x = side * LAMP_OFFSET_X;
+            out->push_back(l);
+        }
+    }
+}
+
+namespace {
+
+struct IndexedDistance {
+    float dist2;
+    int index;
+};
+
+bool CloserFirst(const IndexedDistance& a, const IndexedDistance& b)
+{
+    if (a.dist2 != b.dist2)
+        return a.dist2 < b.dist2;
+    return a.index < b.index; // desempate estável
+}
+
+} // namespace
+
+void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& from,
+                       int max_count, std::vector<int>* out_indices)
+{
+    out_indices->clear();
+    if (max_count <= 0)
+        return;
+    std::vector<IndexedDistance> all(points.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        const glm::vec3 d = points[i] - from;
+        all[i].dist2 = d.x * d.x + d.y * d.y + d.z * d.z;
+        all[i].index = (int)i;
+    }
+    std::sort(all.begin(), all.end(), CloserFirst);
+    const size_t n = std::min(all.size(), (size_t)max_count);
+    for (size_t i = 0; i < n; ++i)
+        out_indices->push_back(all[i].index);
 }

@@ -473,6 +473,91 @@ void Test_BuildingsCoverVisibleRange()
     assert(matched > 10);
 }
 
+// ------------------------------------------------- Luzes pontuais (3.1)
+
+void Test_LampsCoverVisibleRange()
+{
+    std::vector<LampInstance> lamps;
+    ComputeLamps(100.0f, &lamps);
+    assert(!lamps.empty());
+    int left = 0, right = 0;
+    for (size_t i = 0; i < lamps.size(); i++) {
+        assert(lamps[i].s >= 100.0f - DESPAWN_BEHIND && lamps[i].s <= 100.0f + SPAWN_AHEAD);
+        assert(nearf(std::fmod(lamps[i].s, LAMP_SPACING), 0.0f));
+        assert(nearf(std::fabs(lamps[i].x), LAMP_OFFSET_X));
+        // Entre o leito da pista e os prédios (nunca dentro de um prédio).
+        assert(std::fabs(lamps[i].x) > TRACK_BED_HALF_WIDTH);
+        assert(std::fabs(lamps[i].x) + 0.5f * LAMP_HEAD_SIZE < BUILDING_OFFSET_X - 0.5f * BUILDING_WIDTH);
+        if (lamps[i].x < 0) left++; else right++;
+    }
+    assert(left == right);
+}
+
+void Test_PickNearestPoints()
+{
+    using glm::vec3;
+    std::vector<vec3> pts;
+    pts.push_back(vec3(10, 0, 0)); // 0: dist 10
+    pts.push_back(vec3(1, 0, 0));  // 1: dist 1
+    pts.push_back(vec3(0, 5, 0));  // 2: dist 5
+    pts.push_back(vec3(0, 0, -3)); // 3: dist 3
+    pts.push_back(vec3(-2, 0, 0)); // 4: dist 2
+    std::vector<int> idx;
+
+    PickNearestPoints(pts, vec3(0, 0, 0), 3, &idx);
+    assert(idx.size() == 3);
+    assert(idx[0] == 1 && idx[1] == 4 && idx[2] == 3);
+
+    // A origem de referência importa (distância em 3D, não só em s).
+    PickNearestPoints(pts, vec3(10, 0, 0), 2, &idx);
+    assert(idx.size() == 2 && idx[0] == 0 && idx[1] == 1);
+
+    // Menos pontos que o máximo: devolve todos, sem repetir, e limpa a saída anterior.
+    PickNearestPoints(pts, vec3(0, 0, 0), 8, &idx);
+    assert(idx.size() == 5);
+    assert(idx[4] == 0);
+    std::vector<int> seen(5, 0);
+    for (size_t i = 0; i < idx.size(); i++) seen[idx[i]]++;
+    for (int i = 0; i < 5; i++) assert(seen[i] == 1);
+
+    // Vazio e max_count <= 0.
+    PickNearestPoints(std::vector<vec3>(), vec3(0, 0, 0), 8, &idx);
+    assert(idx.empty());
+    PickNearestPoints(pts, vec3(0, 0, 0), 0, &idx);
+    assert(idx.empty());
+
+    // Empate de distância: estável (menor índice primeiro).
+    std::vector<vec3> tie;
+    tie.push_back(vec3(2, 0, 0));
+    tie.push_back(vec3(-2, 0, 0));
+    tie.push_back(vec3(0, 2, 0));
+    PickNearestPoints(tie, vec3(0, 0, 0), 2, &idx);
+    assert(idx.size() == 2 && idx[0] == 0 && idx[1] == 1);
+}
+
+void Test_PickNearestLampsAroundPlayer()
+{
+    // Com os postes reais, as MAX_POINT_LIGHTS luzes escolhidas ficam todas
+    // perto do jogador, em ordem crescente de distância.
+    std::vector<LampInstance> lamps;
+    const float ps = 100.0f;
+    ComputeLamps(ps, &lamps);
+    std::vector<glm::vec3> pos;
+    for (size_t i = 0; i < lamps.size(); i++)
+        pos.push_back(glm::vec3(lamps[i].x, LAMP_HEIGHT, -lamps[i].s)); // pista reta: s = -Z
+    std::vector<int> idx;
+    PickNearestPoints(pos, glm::vec3(0, 0, -ps), MAX_POINT_LIGHTS, &idx);
+    assert((int)idx.size() == MAX_POINT_LIGHTS);
+    float prev = 0.0f;
+    for (size_t i = 0; i < idx.size(); i++) {
+        glm::vec3 d = pos[idx[i]] - glm::vec3(0, 0, -ps);
+        float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        assert(dist >= prev);
+        assert(dist < 0.5f * (DESPAWN_BEHIND + SPAWN_AHEAD));
+        prev = dist;
+    }
+}
+
 // ------------------------------------------------------- Colisões (2.1)
 
 static AABB Box(float x0, float y0, float z0, float x1, float y1, float z1)
@@ -981,6 +1066,10 @@ int main()
     Test_SceneryFitsCapacity();
     Test_RailsAboveGroundAndInsideBed();
     Test_BuildingsCoverVisibleRange();
+    // Luzes pontuais (3.1)
+    Test_LampsCoverVisibleRange();
+    Test_PickNearestPoints();
+    Test_PickNearestLampsAroundPlayer();
     // Colisões (2.1)
     Test_MakeAABB();
     Test_AABBTouchingIsHit();

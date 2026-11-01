@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <vector>
 
+#include <glm/vec3.hpp>
+
 #include "track.h"
 
 // Geometria do cenário derivada da pista: faixas (triangle strips) de chão e
@@ -34,6 +36,16 @@ const float BUILDING_OFFSET_X      = 9.0f;   // m do centro da pista ao centro d
 const float BUILDING_WIDTH         = 6.0f;   // m (lateral)
 const float BUILDING_DEPTH         = 10.0f;  // m (ao longo da pista)
 const float BUILDING_MIN_HEIGHT    = 8.0f;   // m; alturas em {8, 10, 12, 14, 16}
+
+// Postes de luz: um de cada lado a cada 20 m, entre o leito da pista e os
+// prédios. A cabeça do poste (emissiva) é também uma luz pontual da cena.
+const float LAMP_SPACING           = 20.0f;  // m entre postes consecutivos (por lado)
+const float LAMP_OFFSET_X          = 5.5f;   // m do centro da pista ao poste
+const float LAMP_HEIGHT            = 4.5f;   // m do chão ao centro da cabeça (= posição da luz)
+const float LAMP_POLE_WIDTH        = 0.2f;   // m (seção quadrada da haste)
+const float LAMP_HEAD_SIZE         = 0.5f;   // m (lado da cabeça)
+const float LAMP_HEAD_HEIGHT       = 0.3f;   // m (altura da cabeça)
+const int   MAX_POINT_LIGHTS       = 8;      // luzes pontuais enviadas ao shader
 
 // Lote de faixas: vértices concatenados de várias faixas independentes, cada
 // uma desenhada com glDrawArrays(GL_TRIANGLE_STRIP, first[i], count[i]).
@@ -72,5 +84,23 @@ struct BuildingInstance {
 // dos dois lados. A altura depende só de (k, lado): o mesmo prédio mantém a
 // altura de um quadro para o outro.
 void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out);
+
+// Um poste de luz: posição na pista (s, x lateral).
+struct LampInstance {
+    float s;
+    float x;
+};
+
+// Limpa *out e lista os postes em s = k*LAMP_SPACING no trecho visível, dos
+// dois lados.
+void ComputeLamps(float player_s, std::vector<LampInstance>* out);
+
+// Escolhe os (no máximo) max_count pontos mais próximos de 'from' pela
+// distância euclidiana, do mais perto para o mais longe (empate: menor índice
+// primeiro). Limpa *out_indices e o preenche com índices de 'points'; se houver
+// menos de max_count pontos devolve todos. Usada para escolher as luzes
+// pontuais que cabem no shader.
+void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& from,
+                       int max_count, std::vector<int>* out_indices);
 
 #endif // _SCENERY_H
