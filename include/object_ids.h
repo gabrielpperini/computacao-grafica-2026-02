@@ -30,5 +30,6 @@
 #define UV_PLANAR_XZ  1 // Projeção planar em XZ do mundo: chão/paredes sem esticar
 #define UV_BBOX_XY    2 // Projeção planar em XY do modelo, normalizada pela AABB
 #define UV_SPHERICAL  3 // Projeção esférica em coordenadas do modelo (esferas sem UV)
+#define UV_BOX        4 // Projeção "caixa" em metros do objeto: caixas escaladas sem esticar
 
 #endif // _OBJECT_IDS_H

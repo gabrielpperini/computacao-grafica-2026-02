@@ -17,6 +17,8 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,13 +34,76 @@
 #include "stb_image_write.h"
 
 #include "autotest.h"
+#include "game.h"
 
 // Definida em main.cpp: o mesmo tratamento de teclas que o KeyCallback usa.
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
 
+// Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
+extern Game g_Game;
+
 // ---------------------------------------------------------------------------
 // Cenários
 // ---------------------------------------------------------------------------
+
+// lane_jump_roll: troca para a direita, pulo, rolamento e duas vezes para a
+// esquerda; no fim o jogador está na faixa -1, no chão, ainda jogando.
+static bool Check_lane_jump_roll(std::string* why)
+{
+    char buf[160];
+    const Player& p = g_Game.player;
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "modo de jogo diferente de PLAYING";
+        return false;
+    }
+    if (p.lane != -1 || std::fabs(p.x - (-LANE_WIDTH)) > 1e-3f)
+    {
+        snprintf(buf, sizeof(buf), "esperava faixa -1 em x = %.2f; faixa = %d, x = %.3f",
+                 -LANE_WIDTH, p.lane, p.x);
+        *why = buf;
+        return false;
+    }
+    if (p.s <= 60.0f)
+    {
+        snprintf(buf, sizeof(buf), "jogador nao correu: s = %.2f m (esperava > 60)", p.s);
+        *why = buf;
+        return false;
+    }
+    if (p.y != 0.0f || !p.grounded)
+    {
+        snprintf(buf, sizeof(buf), "jogador nao esta no chao: y = %.4f", p.y);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// long_run: 60 s sem entrada. A distância tem de bater com a integração da
+// velocidade (aceleração constante, sem atingir a máxima em 60 s).
+static bool Check_long_run(std::string* why)
+{
+    char buf[160];
+    const Player& p = g_Game.player;
+    float t = g_Game.elapsed;
+    float v = std::min(PLAYER_START_SPEED + PLAYER_ACCEL * t, PLAYER_MAX_SPEED);
+    float expected = PLAYER_START_SPEED * t + 0.5f * PLAYER_ACCEL * t * t;
+    if (g_Game.mode != GameMode::PLAYING || t < 59.9f)
+    {
+        snprintf(buf, sizeof(buf), "jogo parou antes do fim: tempo de jogo = %.2f s", t);
+        *why = buf;
+        return false;
+    }
+    if (p.s <= 700.0f || std::fabs(p.s - expected) > 0.01f * expected ||
+        std::fabs(p.speed - v) > 0.01f)
+    {
+        snprintf(buf, sizeof(buf), "s = %.2f m (esperava %.2f, > 700), v = %.3f (esperava %.3f)",
+                 p.s, expected, p.speed, v);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
 
 static std::vector<AutotestScenario> BuildScenarios()
 {
@@ -51,6 +116,37 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.duration    = 3.0f;
         s.final_check = NULL;
         s.steps.push_back(AutotestStep{1.0f, 0, 0, "t1"});
+        scenarios.push_back(s);
+    }
+
+    // lane_jump_roll: controles do jogador vistos pela câmera em 3ª pessoa.
+    {
+        AutotestScenario s;
+        s.name        = "lane_jump_roll";
+        s.duration    = 6.0f;
+        s.final_check = Check_lane_jump_roll;
+        s.steps.push_back(AutotestStep{0.5f, 0, 0, "start"});
+        s.steps.push_back(AutotestStep{1.0f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{1.6f, 0, 0, "right"});
+        s.steps.push_back(AutotestStep{2.5f, GLFW_KEY_UP, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.8f, 0, 0, "jump"});
+        s.steps.push_back(AutotestStep{4.0f, GLFW_KEY_DOWN, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{4.2f, 0, 0, "roll"});
+        s.steps.push_back(AutotestStep{5.0f, GLFW_KEY_LEFT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{5.0f, GLFW_KEY_A, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{5.9f, 0, 0, "left2"});
+        scenarios.push_back(s);
+    }
+
+    // long_run: 60 s de corrida sem entrada (estoura buffer das faixas? vaza
+    // recursos? erro de GL?), com fotos no meio e no fim.
+    {
+        AutotestScenario s;
+        s.name        = "long_run";
+        s.duration    = 60.0f;
+        s.final_check = Check_long_run;
+        s.steps.push_back(AutotestStep{30.0f, 0, 0, "t30"});
+        s.steps.push_back(AutotestStep{59.5f, 0, 0, "t60"});
         scenarios.push_back(s);
     }
 
@@ -71,8 +167,19 @@ static size_t           g_NextStep = 0;
 
 bool  Autotest_Active()    { return g_Active; }
 float Autotest_FixedDt()   { return AUTOTEST_DT; }
-// Se a janela foi fechada antes do fim do cenário, conta como falha.
-int   Autotest_ExitCode()  { return g_Finished ? g_ExitCode : 1; }
+
+// Se a janela foi fechada antes do fim do cenário (ESC, botão de fechar,
+// crash do contexto...), conta como falha e avisa no mesmo formato.
+int Autotest_ExitCode()
+{
+    if (g_Active && !g_Finished)
+    {
+        printf("E2E %s FAIL: janela fechada antes do fim\n", g_Scenario.name);
+        fflush(stdout);
+        return 1;
+    }
+    return g_ExitCode;
+}
 
 bool Autotest_Begin(int argc, char* argv[])
 {
@@ -160,6 +267,29 @@ static bool SaveScreenshot(GLFWwindow* window, const char* label, std::string* w
     return true;
 }
 
+// Esvazia TODOS os erros de GL pendentes (glGetError devolve um por vez).
+// Devolve false e descreve os erros em *why se havia algum.
+static bool DrainGlErrors(float sim_time, std::string* why)
+{
+    std::string codes;
+    // Limite de segurança: sem contexto válido, glGetError pode não "esvaziar".
+    for (int i = 0; i < 64; ++i)
+    {
+        GLenum err = glGetError();
+        if (err == GL_NO_ERROR)
+            break;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%s0x%04X", codes.empty() ? "" : ", ", (unsigned)err);
+        codes += buf;
+    }
+    if (codes.empty())
+        return true;
+    char buf[64];
+    snprintf(buf, sizeof(buf), " no tempo %.3f s", sim_time);
+    *why = "erro de GL " + codes + buf;
+    return false;
+}
+
 void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
 {
     if (!g_Active || g_Finished)
@@ -167,13 +297,10 @@ void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
 
     std::string why;
 
-    // Erro de GL gerado neste quadro (ou antes, desde o último glGetError).
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR)
+    // Erros de GL gerados neste quadro (ou antes, desde o último glGetError).
+    if (!DrainGlErrors(sim_time, &why))
     {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "erro de GL 0x%04X no tempo %.3f s", (unsigned)err, sim_time);
-        Finish(window, false, buf);
+        Finish(window, false, why);
         return;
     }
 
@@ -193,6 +320,23 @@ void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
 
     if (sim_time >= g_Scenario.duration)
     {
+        // Teclas injetadas neste último quadro podem ter gerado erros de GL
+        // (ex.: R recarrega shaders): checa de novo antes de encerrar.
+        if (!DrainGlErrors(sim_time, &why))
+        {
+            Finish(window, false, why);
+            return;
+        }
+        // Passos com tempo além da duração nunca rodariam: erro no cenário.
+        if (g_NextStep < g_Scenario.steps.size())
+        {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "passos nao executados (%d, o primeiro em %.3f s > duracao %.3f s)",
+                     (int)(g_Scenario.steps.size() - g_NextStep),
+                     g_Scenario.steps[g_NextStep].time, g_Scenario.duration);
+            Finish(window, false, buf);
+            return;
+        }
         if (g_Scenario.final_check != NULL && !g_Scenario.final_check(&why))
         {
             Finish(window, false, why);

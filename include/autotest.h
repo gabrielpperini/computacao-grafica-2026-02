@@ -42,9 +42,12 @@ float Autotest_FixedDt();   // 1/60 s: no autotest o dt é fixo (execução dete
 // 'sim_time' é o tempo simulado acumulado (soma dos dt). Injeta as teclas
 // vencidas, tira screenshots, checa glGetError e, ao fim do cenário, imprime
 // "E2E <nome> OK" / "E2E <nome> FAIL: <motivo>" e pede o fechamento da janela.
+// Falha também se, no fim, sobrar algum passo não executado (tempo > duração).
 void  Autotest_AfterFrame(GLFWwindow* window, float sim_time);
 
 // Código de saída do processo (0 = OK, 1 = falha). Retornar de main().
+// Se a janela fechou antes do fim do cenário, imprime
+// "E2E <nome> FAIL: janela fechada antes do fim" e devolve 1.
 int   Autotest_ExitCode();
 
 #endif // _AUTOTEST_H

@@ -127,10 +127,10 @@ implementado** — o base é só um visualizador.
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
 | Malhas poligonais complexas | ✅ `bunny.obj`; quanto mais variedade, melhor |
-| Interação por mouse **e** teclado | ✅ callbacks em `main.cpp` |
-| Transformações geométricas controladas pelo usuário | ❌ pendente até a Fase 1 — `g_SphereSpin`/`g_BunnySpin` giram sozinhos (acumulados por `dt`), sem controle do usuário |
-| Duas câmeras consideravelmente distintas | ❌ só look-at; falta câmera livre |
-| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ❌ cada objeto é desenhado uma vez |
+| Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
+| Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado |
+| Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`); falta a câmera livre |
+| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ prédios: o VAO de `the_cube` desenhado a cada 12 m nos dois lados, cada um com sua `model` |
 | Testes de intersecção com propósito, em `collisions.cpp` | ❌ inexistente |
 | Iluminação **não-trivial** em todos os objetos | ⚠️ só Lambert difuso com luz fixa; precisa de Phong/Blinn-Phong, especular, etc. |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 3 imagens (`red_brick`, `rocky_terrain_02`, `metal_plate`); revisar quando entrarem os modelos finais |
@@ -203,7 +203,10 @@ nomes). Screenshots em `bin/<plataforma>/e2e/<cenario>_<rotulo>.png`: abra com a
 Read para conferir visualmente. **Para criar um cenário** edite só `BuildScenarios()` em
 `src/autotest.cpp` (o roteiro está documentado no topo do arquivo). Toda tarefa que muda
 comportamento visível deve acrescentar um cenário. As teclas do harness passam por
-`HandleKey()` (em `main.cpp`), nunca por `Correcao_KeyCallback()`.
+`HandleKey()` (em `main.cpp`), nunca por `Correcao_KeyCallback()`. O `final_check` lê o estado
+do jogo pelo global `g_Game` (semente fixa 12345 no autotest). Um cenário falha também com
+passos além da duração ou se a janela fechar antes do fim. Cenários atuais: `smoke`,
+`lane_jump_roll` (faixa, pulo, rolamento) e `long_run` (60 s de corrida).
 
 ### Ao adicionar um novo arquivo `.cpp`
 
@@ -220,10 +223,19 @@ comportamento visível deve acrescentar um cenário. As teclas do harness passam
 
 ## Arquitetura
 
-Toda a aplicação vive em `src/main.cpp` (~1600 linhas). Os demais `.cpp` são bibliotecas de apoio:
-`textrendering.cpp` (texto na janela via `include/dejavufont.h`), `tiny_obj_loader.cpp`,
-`stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs, e `correcao.cpp` é
-infraestrutura de correção automatizada.
+`src/main.cpp` (~1600 linhas) cuida de janela, shaders, texturas, VAOs, desenho e callbacks. A
+lógica sem OpenGL fica em módulos testados por `tests/logic_tests.cpp`: `track.cpp` (pista e
+referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras; global `g_Game` em `main.cpp`),
+`camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
+`scenery.cpp` (faixas de chão/trilhos e prédios do trecho visível `[s-20, s+150]`). Os demais
+`.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
+`tiny_obj_loader.cpp`, `stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs,
+`autotest.cpp` é o harness E2E e `correcao.cpp` é infraestrutura de correção automatizada.
+
+**Faixas dinâmicas:** chão e trilhos não são OBJ: `DynamicStripMesh` (em `main.cpp`) cria VAO e
+VBOs uma vez com capacidade máxima (`GL_DYNAMIC_DRAW`), e a cada quadro `scenery.cpp` gera os
+vértices em coordenadas de mundo e `UpdateDynamicStripMesh()` os reenvia com `glBufferSubData`;
+o desenho é `GL_TRIANGLE_STRIP` com `model` = identidade.
 
 ### Pipeline de carga de geometria
 
@@ -235,8 +247,8 @@ ObjModel("../../data/x.obj")            // tinyobjloader; lança se algum shape 
   → DrawVirtualObject("<nome do shape>")// bind VAO, envia bbox_min/max, glDrawElements
 ```
 
-A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`the_sphere`,
-`the_bunny`, `the_plane`), não o nome do arquivo. Um OBJ com vários shapes vira várias entradas
+A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`the_bunny`,
+`the_cube`; hoje só esses dois são carregados), não o nome do arquivo. Um OBJ com vários shapes vira várias entradas
 compartilhando o mesmo VAO. Objetos sem nome no OBJ fazem o programa lançar exceção.
 
 Para **instâncias** (requisito obrigatório), basta chamar `DrawObject()` (ou `DrawVirtualObject()`)
@@ -255,7 +267,7 @@ Três pontos precisam ser mantidos em sincronia manualmente:
   locations cacheados nos globais `g_*_uniform` em `LoadShadersFromFiles()`. Um uniform novo
   precisa ser declarado no shader, ter o global criado e o `glGetUniformLocation()` adicionado ali.
 - **IDs de objeto e modos de UV**: os `#define` (`PLAYER`, `GROUND`, ..., `PARTICLE` e
-  `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`) vivem em `include/object_ids.h` e são
+  `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`/`UV_BOX`) vivem em `include/object_ids.h` e são
   **copiados** para o topo de `shader_fragment.glsl` — alterar um exige alterar o outro. O fragment
   shader usa `uv_mode` para gerar U,V (UV do OBJ, planar XZ em coordenadas de mundo, planar XY
   normalizado pela AABB, ou esférico) e multiplica por `uv_scale`; `object_id` fica reservado para
@@ -266,25 +278,34 @@ devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria
 object) e não depende mais da ordem das chamadas. Quem desenha usa
 `DrawObject(nome, model, object_id, textura, uv_mode, uv_scale)`, que liga a textura na unidade 0,
 envia os uniforms e chama `DrawVirtualObject()`. Para textura repetida (chão, paredes) use
-`uv_scale > 1` ou `UV_PLANAR_XZ`.
+`uv_scale > 1` ou `UV_PLANAR_XZ`. Para caixas escaladas de forma não uniforme (prédios) use
+`UV_BOX`: projeção por face em metros do objeto (escala lida das colunas de `model`), com
+`uv_scale` = repetições por metro — os tijolos não esticam.
 
 ### Matemática e câmera
 
 Além da proibição do item 6, note que `near`/`far` são **negativos** no sistema de coordenadas da
-câmera (`nearplane = -0.1f`, `farplane = -10.0f`), e que as matrizes de `matrices.h` são escritas
-em row-major no código mas armazenadas column-major.
+câmera (`nearplane = -0.3f`, `farplane = -250.0f`; o near maior evita Z-fighting dos trilhos a
+0.03 m do chão), e que as matrizes de `matrices.h` são escritas em row-major no código mas
+armazenadas column-major.
 
-A câmera é look-at em coordenadas esféricas, recomputada a cada frame a partir de
-`g_CameraTheta`, `g_CameraPhi` e `g_CameraDistance`. `PushMatrix()`/`PopMatrix()` implementam uma
-pilha de matrizes de modelagem para hierarquias de objetos.
+A câmera é a `ThirdPersonCamera` (`include/camera.h`): `Snap()` no início da corrida e
+`Update(frame, x, in_tunnel, dt)` a cada quadro; `Pose()` dá posição/view/up para
+`Matrix_Camera_View()`. Fica 6 m atrás e 3.5 m acima (4 m e 2.2 m no túnel), olha para
+jogador + forward·4 + up·1, segue 1/3 do deslocamento lateral e suaviza com
+`1 - exp(-6·dt)` no referencial da pista. Objetos na pista usam a matriz
+`T(frame.position + right·x + up·y) · R_y(heading) · <modelo>`; `Matrix_OnGround()` encaixa a
+AABB de um OBJ com a base em y = 0. `PushMatrix()`/`PopMatrix()` implementam uma pilha de
+matrizes de modelagem para hierarquias de objetos.
 
 ### Estado e entrada
 
-Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW. Controles
-atuais: botão esquerdo do mouse orbita a câmera; scroll dá zoom; `Espaço` reseta a rotação
-da esfera e do coelho; `P`/`O` alternam projeção perspectiva/ortográfica; `H` liga e
-desliga o texto informativo; `R` recarrega shaders; `ESC` fecha. Todo atalho precisa acabar
-documentado no manual dentro do `README.md`.
+Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW (o estado
+do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição): `←`/`→` ou
+`A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; `H` liga e desliga o
+texto informativo (distância, velocidade, faixa, FPS); `R` recarrega shaders; `ESC` fecha.
+Não há controle por mouse no momento. Todo atalho precisa acabar documentado no manual dentro
+do `README.md`.
 
 `Correcao_KeyCallback()` (`src/correcao.cpp`) deve continuar sendo o primeiro comando de
 `KeyCallback()`: `Shift+0..9` encerra o processo com código `100+N` para a correção automatizada.

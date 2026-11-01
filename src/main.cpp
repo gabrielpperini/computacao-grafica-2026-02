@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 // Headers abaixo são específicos de C++
 #include <set>
@@ -51,6 +52,9 @@
 #include "game_config.h"
 #include "object_ids.h"
 #include "autotest.h"
+#include "game.h"
+#include "camera.h"
+#include "scenery.h"
 
 // Estrutura que representa um modelo geométrico carregado a partir de um
 // arquivo ".obj". Veja https://en.wikipedia.org/wiki/Wavefront_.obj_file .
@@ -132,6 +136,11 @@ GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
 GLuint CreateGpuProgram(GLuint vertex_shader_id, GLuint fragment_shader_id); // Cria um programa de GPU
 void PrintObjModelInfo(ObjModel*); // Função para debugging
+// Dimensões (bbox_max - bbox_min) de um objeto de g_VirtualScene, em coordenadas de modelo.
+glm::vec3 ObjectSize(const char* name);
+// Escala o objeto por (sx,sy,sz) com a base da sua AABB centrada na origem e
+// apoiada em y = 0 (para posicionar "em pé" sobre a pista).
+glm::mat4 Matrix_OnGround(const char* name, float sx, float sy, float sz);
 
 // Declaração de funções auxiliares para renderizar texto dentro da janela
 // OpenGL. Estas funções estão definidas no arquivo "textrendering.cpp".
@@ -148,7 +157,7 @@ void TextRendering_PrintMatrixVectorProductDivW(GLFWwindow* window, glm::mat4 M,
 // Funções abaixo renderizam como texto na janela OpenGL algumas matrizes e
 // outras informações do programa. Definidas após main().
 void TextRendering_ShowModelViewProjection(GLFWwindow* window, glm::mat4 projection, glm::mat4 view, glm::mat4 model, glm::vec4 p_model);
-void TextRendering_ShowProjection(GLFWwindow* window);
+void TextRendering_ShowRunInfo(GLFWwindow* window);
 void TextRendering_ShowFramesPerSecond(GLFWwindow* window);
 
 // Funções callback para comunicação com o sistema operacional e interação do
@@ -159,9 +168,6 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mode
 // Tratamento das teclas, separado do KeyCallback para que o harness E2E (autotest.cpp)
 // possa injetar teclas sem passar pelo Correcao_KeyCallback.
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
-void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
-void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 
 // Definimos uma estrutura que armazenará dados necessários para renderizar
 // cada objeto da cena virtual.
@@ -190,25 +196,39 @@ std::stack<glm::mat4>  g_MatrixStack;
 // Razão de proporção da janela (largura/altura). Veja função FramebufferSizeCallback().
 float g_ScreenRatio = 1.0f;
 
-// Ângulos de rotação (radianos) da esfera e do coelho. Acumulados a cada quadro
-// proporcionalmente ao Δt, em vez de derivados do tempo absoluto.
-float g_SphereSpin = 0.0f;
-float g_BunnySpin  = 0.0f;
+// Estado do jogo (sem OpenGL; veja include/game.h). Global e não-static para
+// que o harness E2E (autotest.cpp) possa inspecioná-lo. A semente é fixa
+// (determinística) no autotest; no jogo normal, main() a troca por uma
+// semente baseada no relógio.
+Game g_Game(12345);
 
-// "g_LeftMouseButtonPressed = true" se o usuário está com o botão esquerdo do mouse
-// pressionado no momento atual. Veja função MouseButtonCallback().
-bool g_LeftMouseButtonPressed = false;
+// Câmera em 3ª pessoa que segue o jogador (veja include/camera.h).
+ThirdPersonCamera g_Camera;
 
-// Variáveis que definem a câmera em coordenadas esféricas, controladas pelo
-// usuário através do mouse (veja função CursorPosCallback()). A posição
-// efetiva da câmera é calculada dentro da função main(), dentro do loop de
-// renderização.
-float g_CameraTheta = 0.0f; // Ângulo no plano ZX em relação ao eixo Z
-float g_CameraPhi = 0.0f;   // Ângulo em relação ao eixo Y
-float g_CameraDistance = 3.5f; // Distância da câmera para a origem
+// Malha dinâmica de faixas (GL_TRIANGLE_STRIP): VAO e VBOs criados uma única
+// vez com capacidade máxima (GL_DYNAMIC_DRAW) e reenviados a cada quadro com
+// glBufferSubData. Os vértices já estão em coordenadas de mundo (model =
+// identidade). Usada pelo chão e pelos trilhos, gerados da pista a cada quadro.
+struct DynamicStripMesh
+{
+    GLuint vertex_array_object_id;
+    GLuint vbo_positions;
+    GLuint vbo_normals;
+    GLuint vbo_uvs;
+    size_t capacity;              // número máximo de vértices nos VBOs
+    std::vector<GLint>   first;   // vértice inicial de cada faixa
+    std::vector<GLsizei> count;   // número de vértices de cada faixa
+};
+void CreateDynamicStripMesh(DynamicStripMesh* mesh, size_t capacity);
+void UpdateDynamicStripMesh(DynamicStripMesh* mesh, const StripBatch& batch);
+void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode, float uv_scale = 1.0f);
 
-// Variável que controla o tipo de projeção utilizada: perspectiva ou ortográfica.
-bool g_UsePerspectiveProjection = true;
+DynamicStripMesh g_TrackGround; // leito da pista + terreno dos lados
+DynamicStripMesh g_TrackRails;  // 6 trilhos (2 por faixa)
+
+// Rotação em torno de Y que vira o coelho para o "forward" local -Z, isto é,
+// de costas para a câmera.
+const float PLAYER_MODEL_YAW = -1.5707963f;
 
 // Variável que controla se o texto informativo será mostrado na tela.
 bool g_ShowInfoText = true;
@@ -257,6 +277,10 @@ int main(int argc, char* argv[])
     // Criamos uma janela do sistema operacional, com 800 colunas e 600 linhas
     // de pixels, e com título "INF01047 ...".
     GLFWwindow* window;
+    // Multisampling 4x: suaviza as bordas finas (trilhos) ao longe, que de
+    // outra forma "piscam" (aliasing) com a câmera em movimento.
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
     window = glfwCreateWindow(800, 600, "INF01047 - Seu Cartao - Seu Nome", NULL, NULL);
     if (!window)
     {
@@ -266,14 +290,8 @@ int main(int argc, char* argv[])
     }
 
     // Definimos a função de callback que será chamada sempre que o usuário
-    // pressionar alguma tecla do teclado ...
+    // pressionar alguma tecla do teclado.
     glfwSetKeyCallback(window, KeyCallback);
-    // ... ou clicar os botões do mouse ...
-    glfwSetMouseButtonCallback(window, MouseButtonCallback);
-    // ... ou movimentar o cursor do mouse em cima da janela ...
-    glfwSetCursorPosCallback(window, CursorPosCallback);
-    // ... ou rolar a "rodinha" do mouse.
-    glfwSetScrollCallback(window, ScrollCallback);
 
     // Indicamos que as chamadas OpenGL deverão renderizar nesta janela
     glfwMakeContextCurrent(window);
@@ -307,18 +325,11 @@ int main(int argc, char* argv[])
     GLuint tex_rock  = LoadTextureImage("../../data/rocky_terrain_02_diff_1k.jpg");
     GLuint tex_metal = LoadTextureImage("../../data/metal_plate_diff_1k.jpg");
 
-    // Construímos a representação de objetos geométricos através de malhas de triângulos
-    ObjModel spheremodel("../../data/sphere.obj");
-    ComputeNormals(&spheremodel);
-    BuildTrianglesAndAddToVirtualScene(&spheremodel);
-
+    // Construímos a representação de objetos geométricos através de malhas de triângulos.
+    // Coelho: jogador provisório. Cubo: prédios provisórios (instâncias).
     ObjModel bunnymodel("../../data/bunny.obj");
     ComputeNormals(&bunnymodel);
     BuildTrianglesAndAddToVirtualScene(&bunnymodel);
-
-    ObjModel planemodel("../../data/plane.obj");
-    ComputeNormals(&planemodel);
-    BuildTrianglesAndAddToVirtualScene(&planemodel);
 
     ObjModel cubemodel("../../data/cube.obj");
     ComputeNormals(&cubemodel);
@@ -333,8 +344,29 @@ int main(int argc, char* argv[])
     // Inicializamos o código para renderização de texto.
     TextRendering_Init();
 
+    // Malhas dinâmicas do chão e dos trilhos, com capacidade para o trecho
+    // visível inteiro (veja MaxVerticesPerStrip() em scenery.cpp).
+    CreateDynamicStripMesh(&g_TrackGround, GROUND_STRIP_COUNT * MaxVerticesPerStrip());
+    CreateDynamicStripMesh(&g_TrackRails, RAIL_STRIP_COUNT * MaxVerticesPerStrip());
+
+    // Lotes de vértices das faixas e lista de prédios: reaproveitados a cada
+    // quadro (sem realocar memória).
+    StripBatch ground_batch;
+    StripBatch rails_batch;
+    std::vector<BuildingInstance> buildings;
+
+    // Corrida: no autotest a semente fixa (12345) de g_Game é mantida para que
+    // o cenário seja determinístico; no jogo normal, semente pelo relógio.
+    if (!autotest)
+        g_Game = Game((unsigned)time(NULL));
+    g_Camera.Snap(g_Game.track.FrameAt(g_Game.player.s), g_Game.player.x,
+                  g_Game.track.IsTunnelAt(g_Game.player.s));
+
     // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
     glEnable(GL_DEPTH_TEST);
+
+    // Multisampling (pedido com GLFW_SAMPLES acima).
+    glEnable(GL_MULTISAMPLE);
 
     // Habilitamos o Backface Culling. Veja slides 8-13 do documento Aula_02_Fundamentos_Matematicos.pdf, slides 23-34 do documento Aula_13_Clipping_and_Culling.pdf e slides 112-123 do documento Aula_14_Laboratorio_3_Revisao.pdf.
     glEnable(GL_CULL_FACE);
@@ -357,18 +389,22 @@ int main(int argc, char* argv[])
         float dt = autotest ? Autotest_FixedDt()
                             : ComputeFrameDt(glfwGetTime(), &last_frame_time);
 
-        g_SphereSpin += 0.1f * dt;
-        g_BunnySpin  += 0.1f * dt;
+        // Atualizamos a simulação do jogo e a câmera que segue o jogador.
+        g_Game.Update(dt);
+
+        const Player& player = g_Game.player;
+        TrackFrame player_frame = g_Game.track.FrameAt(player.s);
+        g_Camera.Update(player_frame, player.x, g_Game.track.IsTunnelAt(player.s), dt);
 
         // Aqui executamos as operações de renderização
 
-        // Definimos a cor do "fundo" do framebuffer como branco.  Tal cor é
-        // definida como coeficientes RGBA: Red, Green, Blue, Alpha; isto é:
-        // Vermelho, Verde, Azul, Alpha (valor de transparência).
+        // Definimos a cor do "fundo" do framebuffer como azul-claro (céu).
+        // Tal cor é definida como coeficientes RGBA: Red, Green, Blue, Alpha;
+        // isto é: Vermelho, Verde, Azul, Alpha (valor de transparência).
         // Conversaremos sobre sistemas de cores nas aulas de Modelos de Iluminação.
         //
         //           R     G     B     A
-        glClearColor(0.9f, 0.9f, 1.0f, 1.0f);
+        glClearColor(0.53f, 0.75f, 0.95f, 1.0f);
 
         // "Pintamos" todos os pixels do framebuffer com a cor definida acima,
         // e também resetamos todos os pixels do Z-buffer (depth buffer).
@@ -378,56 +414,26 @@ int main(int argc, char* argv[])
         // os shaders de vértice e fragmentos).
         glUseProgram(g_GpuProgramID);
 
-        // Computamos a posição da câmera utilizando coordenadas esféricas.  As
-        // variáveis g_CameraDistance, g_CameraPhi, e g_CameraTheta são
-        // controladas pelo mouse do usuário. Veja as funções CursorPosCallback()
-        // e ScrollCallback().
-        float r = g_CameraDistance;
-        float y = r*sin(g_CameraPhi);
-        float z = r*cos(g_CameraPhi)*cos(g_CameraTheta);
-        float x = r*cos(g_CameraPhi)*sin(g_CameraTheta);
-
-        // Abaixo definimos as varáveis que efetivamente definem a câmera virtual.
-        // Veja slides 195-227 e 229-234 do documento Aula_08_Sistemas_de_Coordenadas.pdf.
-        glm::vec4 camera_position_c  = glm::vec4(x,y,z,1.0f); // Ponto "c", centro da câmera
-        glm::vec4 camera_lookat_l    = glm::vec4(0.0f,0.0f,0.0f,1.0f); // Ponto "l", para onde a câmera (look-at) estará sempre olhando
-        glm::vec4 camera_view_vector = camera_lookat_l - camera_position_c; // Vetor "view", sentido para onde a câmera está virada
-        glm::vec4 camera_up_vector   = glm::vec4(0.0f,1.0f,0.0f,0.0f); // Vetor "up" fixado para apontar para o "céu" (eito Y global)
+        // Câmera look-at em 3ª pessoa: posição, view vector e up vêm de
+        // ThirdPersonCamera (camera.cpp). Veja slides 195-227 e 229-234 do
+        // documento Aula_08_Sistemas_de_Coordenadas.pdf.
+        CameraPose pose = g_Camera.Pose();
 
         // Computamos a matriz "View" utilizando os parâmetros da câmera para
         // definir o sistema de coordenadas da câmera.  Veja slides 2-14, 184-190 e 236-242 do documento Aula_08_Sistemas_de_Coordenadas.pdf.
-        glm::mat4 view = Matrix_Camera_View(camera_position_c, camera_view_vector, camera_up_vector);
+        glm::mat4 view = Matrix_Camera_View(pose.position, pose.view_vector, pose.up);
 
-        // Agora computamos a matriz de Projeção.
-        glm::mat4 projection;
-
+        // Agora computamos a matriz de Projeção (perspectiva).
         // Note que, no sistema de coordenadas da câmera, os planos near e far
         // estão no sentido negativo! Veja slides 176-204 do documento Aula_09_Projecoes.pdf.
-        float nearplane = -0.1f;  // Posição do "near plane"
-        float farplane  = -10.0f; // Posição do "far plane"
+        // near = -0.3 (e não -0.1) dá mais precisão ao Z-buffer com o far
+        // distante, evitando Z-fighting entre trilhos (y = 0.03) e chão.
+        float nearplane = -0.3f;   // Posição do "near plane"
+        float farplane  = -250.0f; // Posição do "far plane" (além do trecho gerado à frente)
 
-        if (g_UsePerspectiveProjection)
-        {
-            // Projeção Perspectiva.
-            // Para definição do field of view (FOV), veja slides 205-215 do documento Aula_09_Projecoes.pdf.
-            float field_of_view = 3.141592 / 3.0f;
-            projection = Matrix_Perspective(field_of_view, g_ScreenRatio, nearplane, farplane);
-        }
-        else
-        {
-            // Projeção Ortográfica.
-            // Para definição dos valores l, r, b, t ("left", "right", "bottom", "top"),
-            // PARA PROJEÇÃO ORTOGRÁFICA veja slides 219-224 do documento Aula_09_Projecoes.pdf.
-            // Para simular um "zoom" ortográfico, computamos o valor de "t"
-            // utilizando a variável g_CameraDistance.
-            float t = 1.5f*g_CameraDistance/2.5f;
-            float b = -t;
-            float r = t*g_ScreenRatio;
-            float l = -r;
-            projection = Matrix_Orthographic(l, r, b, t, nearplane, farplane);
-        }
-
-        glm::mat4 model = Matrix_Identity(); // Transformação identidade de modelagem
+        // Para definição do field of view (FOV), veja slides 205-215 do documento Aula_09_Projecoes.pdf.
+        float field_of_view = 3.141592f / 3.0f;
+        glm::mat4 projection = Matrix_Perspective(field_of_view, g_ScreenRatio, nearplane, farplane);
 
         // Enviamos as matrizes "view" e "projection" para a placa de vídeo
         // (GPU). Veja o arquivo "shader_vertex.glsl", onde estas são
@@ -435,34 +441,54 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        // Objetos de teste (cena provisória até a pista do jogo). Os ids são
-        // apenas reaproveitados de object_ids.h; cada objeto usa uma textura e
-        // um modo de UV diferentes.
+        // Chão e trilhos: faixas reconstruídas a partir da pista no trecho
+        // visível em torno do jogador. As UV das faixas já estão em
+        // "ladrilhos" de tamanho fixo em metros (sem esticar).
+        BuildGroundStrips(g_Game.track, player.s, &ground_batch);
+        UpdateDynamicStripMesh(&g_TrackGround, ground_batch);
+        DrawDynamicStripMesh(g_TrackGround, GROUND, tex_rock, UV_OBJ);
 
-        // Desenhamos o modelo da esfera (projeção esférica, pois o OBJ não tem UV)
-        model = Matrix_Translate(-1.0f,0.0f,0.0f)
-              * Matrix_Rotate_Z(0.6f)
-              * Matrix_Rotate_X(0.2f)
-              * Matrix_Rotate_Y(g_SphereSpin);
-        DrawObject("the_sphere", model, COIN, tex_brick, UV_SPHERICAL);
+        BuildRailStrips(g_Game.track, player.s, &rails_batch);
+        UpdateDynamicStripMesh(&g_TrackRails, rails_batch);
+        DrawDynamicStripMesh(g_TrackRails, RAIL, tex_metal, UV_OBJ);
 
-        // Desenhamos o modelo do coelho (projeção planar XY pela AABB)
-        model = Matrix_Translate(1.0f,0.0f,0.0f)
-              * Matrix_Rotate_X(g_BunnySpin);
-        DrawObject("the_bunny", model, PLAYER, tex_rock, UV_BBOX_XY);
+        // Jogador (coelho provisório): matriz de pista
+        //   T(posição na pista + right*x + up*y) * R_y(heading) * <modelo>,
+        // com altura total PLAYER_HEIGHT e os pés em y = 0. Rolando, é
+        // achatado na vertical para PLAYER_ROLL_HEIGHT.
+        {
+            glm::vec4 p = player_frame.position + player_frame.right * player.x
+                        + glm::vec4(0.0f, player.y, 0.0f, 0.0f);
+            float k = PLAYER_HEIGHT / ObjectSize("the_bunny").y;
+            float squash = (player.roll_timer > 0.0f) ? PLAYER_ROLL_HEIGHT / PLAYER_HEIGHT : 1.0f;
+            glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
+                            * Matrix_Rotate_Y(player_frame.heading + PLAYER_MODEL_YAW)
+                            * Matrix_OnGround("the_bunny", k, k * squash, k);
+            DrawObject("the_bunny", model, PLAYER, tex_metal, UV_SPHERICAL);
+        }
 
-        // Desenhamos o plano do chão, com a textura repetida 4x para não esticar
-        model = Matrix_Translate(0.0f,-1.1f,0.0f);
-        DrawObject("the_plane", model, GROUND, tex_rock, UV_OBJ, 4.0f);
+        // Prédios provisórios: o MESMO VAO do cubo desenhado várias vezes
+        // (instâncias), cada um com sua matriz de modelagem. A textura usa
+        // UV_BOX (em metros), para os tijolos não esticarem com a escala não
+        // uniforme: uma repetição a cada 3 m.
+        ComputeBuildings(player.s, &buildings);
+        glm::vec3 cube_size = ObjectSize("the_cube");
+        for (size_t i = 0; i < buildings.size(); ++i)
+        {
+            const BuildingInstance& b = buildings[i];
+            TrackFrame f = g_Game.track.FrameAt(b.s);
+            glm::vec4 p = f.position + f.right * b.x;
+            glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
+                            * Matrix_Rotate_Y(f.heading)
+                            * Matrix_OnGround("the_cube",
+                                              b.width  / cube_size.x,
+                                              b.height / cube_size.y,
+                                              b.depth  / cube_size.z);
+            DrawObject("the_cube", model, BUILDING, tex_brick, UV_BOX, 1.0f / 3.0f);
+        }
 
-        // Desenhamos o cubo (placeholder de barreira), com as UV do OBJ
-        model = Matrix_Translate(0.0f,-0.8f,0.9f)
-              * Matrix_Rotate_Y(0.5f)
-              * Matrix_Scale(0.6f,0.6f,0.6f);
-        DrawObject("the_cube", model, BARRIER_LOW, tex_metal, UV_OBJ);
-
-        // Imprimimos na informação sobre a matriz de projeção sendo utilizada.
-        TextRendering_ShowProjection(window);
+        // Imprimimos na tela a distância percorrida, a velocidade e a faixa.
+        TextRendering_ShowRunInfo(window);
 
         // Imprimimos na tela informação sobre o número de quadros renderizados
         // por segundo (frames per second).
@@ -572,6 +598,113 @@ void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint 
     glBindTexture(GL_TEXTURE_2D, texture);
 
     DrawVirtualObject(name);
+}
+
+// Dimensões da AABB de um objeto de g_VirtualScene (coordenadas de modelo).
+glm::vec3 ObjectSize(const char* name)
+{
+    const SceneObject& obj = g_VirtualScene[name];
+    return obj.bbox_max - obj.bbox_min;
+}
+
+// Matriz que escala o objeto por (sx,sy,sz) depois de transladá-lo para que o
+// centro da base da sua AABB fique na origem (objeto "em pé" sobre y = 0).
+glm::mat4 Matrix_OnGround(const char* name, float sx, float sy, float sz)
+{
+    const SceneObject& obj = g_VirtualScene[name];
+    float cx = 0.5f * (obj.bbox_min.x + obj.bbox_max.x);
+    float cz = 0.5f * (obj.bbox_min.z + obj.bbox_max.z);
+    return Matrix_Scale(sx, sy, sz) * Matrix_Translate(-cx, -obj.bbox_min.y, -cz);
+}
+
+// Cria o VAO e os VBOs (posição vec4, normal vec4, UV vec2) de uma malha
+// dinâmica de faixas, com espaço para 'capacity' vértices. Os dados são
+// enviados depois, a cada quadro, por UpdateDynamicStripMesh().
+void CreateDynamicStripMesh(DynamicStripMesh* mesh, size_t capacity)
+{
+    mesh->capacity = capacity;
+    mesh->first.clear();
+    mesh->count.clear();
+
+    glGenVertexArrays(1, &mesh->vertex_array_object_id);
+    glBindVertexArray(mesh->vertex_array_object_id);
+
+    // Mesmos "locations" de BuildTrianglesAndAddToVirtualScene() e shader_vertex.glsl.
+    const GLuint locations[3]  = {0, 1, 2};
+    const GLint  dimensions[3] = {4, 4, 2};
+    GLuint* vbos[3] = {&mesh->vbo_positions, &mesh->vbo_normals, &mesh->vbo_uvs};
+    for (int i = 0; i < 3; ++i)
+    {
+        glGenBuffers(1, vbos[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, *vbos[i]);
+        glBufferData(GL_ARRAY_BUFFER, capacity * dimensions[i] * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(locations[i], dimensions[i], GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(locations[i]);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+// Reenvia os vértices de 'batch' para os VBOs já alocados (glBufferSubData;
+// nenhum buffer é criado por quadro). Faixas que não caberiam na capacidade
+// são descartadas (com aviso), em vez de escrever fora do buffer.
+void UpdateDynamicStripMesh(DynamicStripMesh* mesh, const StripBatch& batch)
+{
+    mesh->first.clear();
+    mesh->count.clear();
+
+    size_t used = 0;
+    for (size_t i = 0; i < batch.first.size(); ++i)
+    {
+        size_t end = (size_t)batch.first[i] + (size_t)batch.count[i];
+        if (end > mesh->capacity)
+        {
+            static bool warned = false;
+            if (!warned)
+            {
+                fprintf(stderr, "AVISO: faixa com fim no vertice %d nao cabe na malha dinamica (capacidade %d); descartada.\n",
+                        (int)end, (int)mesh->capacity);
+                warned = true;
+            }
+            continue;
+        }
+        mesh->first.push_back(batch.first[i]);
+        mesh->count.push_back(batch.count[i]);
+        used = std::max(used, end);
+    }
+
+    if (used == 0)
+        return;
+
+    glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo_positions);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, used * 4 * sizeof(float), batch.positions.data());
+    glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo_normals);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, used * 4 * sizeof(float), batch.normals.data());
+    glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo_uvs);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, used * 2 * sizeof(float), batch.uvs.data());
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// Desenha as faixas de uma malha dinâmica (GL_TRIANGLE_STRIP). Os vértices já
+// estão em coordenadas de mundo, então model = identidade; os demais uniforms
+// são os mesmos de DrawObject().
+void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode, float uv_scale)
+{
+    glm::mat4 model = Matrix_Identity();
+    glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+    glUniform1i(g_object_id_uniform, object_id);
+    glUniform1i(g_uv_mode_uniform, uv_mode);
+    glUniform1f(g_uv_scale_uniform, uv_scale);
+    glUniform4f(g_bbox_min_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
+    glUniform4f(g_bbox_max_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glBindVertexArray(mesh.vertex_array_object_id);
+    for (size_t i = 0; i < mesh.first.size(); ++i)
+        glDrawArrays(GL_TRIANGLE_STRIP, mesh.first[i], mesh.count[i]);
+    glBindVertexArray(0);
 }
 
 // Função que desenha um objeto armazenado em g_VirtualScene. Veja definição
@@ -1115,86 +1248,6 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
     g_ScreenRatio = (float)width / height;
 }
 
-// Variáveis globais que armazenam a última posição do cursor do mouse, para
-// que possamos calcular quanto que o mouse se movimentou entre dois instantes
-// de tempo. Utilizadas no callback CursorPosCallback() abaixo.
-double g_LastCursorPosX, g_LastCursorPosY;
-
-// Função callback chamada sempre que o usuário aperta algum dos botões do mouse
-void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
-    {
-        // Se o usuário pressionou o botão esquerdo do mouse, guardamos a
-        // posição atual do cursor nas variáveis g_LastCursorPosX e
-        // g_LastCursorPosY.  Também, setamos a variável
-        // g_LeftMouseButtonPressed como true, para saber que o usuário está
-        // com o botão esquerdo pressionado.
-        glfwGetCursorPos(window, &g_LastCursorPosX, &g_LastCursorPosY);
-        g_LeftMouseButtonPressed = true;
-    }
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
-    {
-        // Quando o usuário soltar o botão esquerdo do mouse, atualizamos a
-        // variável abaixo para false.
-        g_LeftMouseButtonPressed = false;
-    }
-}
-
-// Função callback chamada sempre que o usuário movimentar o cursor do mouse em
-// cima da janela OpenGL.
-void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
-    // Abaixo executamos o seguinte: caso o botão esquerdo do mouse esteja
-    // pressionado, computamos quanto que o mouse se movimento desde o último
-    // instante de tempo, e usamos esta movimentação para atualizar os
-    // parâmetros que definem a posição da câmera dentro da cena virtual.
-    // Assim, temos que o usuário consegue controlar a câmera.
-
-    if (g_LeftMouseButtonPressed)
-    {
-        // Deslocamento do cursor do mouse em x e y de coordenadas de tela!
-        float dx = xpos - g_LastCursorPosX;
-        float dy = ypos - g_LastCursorPosY;
-    
-        // Atualizamos parâmetros da câmera com os deslocamentos
-        g_CameraTheta -= 0.01f*dx;
-        g_CameraPhi   += 0.01f*dy;
-    
-        // Em coordenadas esféricas, o ângulo phi deve ficar entre -pi/2 e +pi/2.
-        float phimax = 3.141592f/2;
-        float phimin = -phimax;
-    
-        if (g_CameraPhi > phimax)
-            g_CameraPhi = phimax;
-    
-        if (g_CameraPhi < phimin)
-            g_CameraPhi = phimin;
-    
-        // Atualizamos as variáveis globais para armazenar a posição atual do
-        // cursor como sendo a última posição conhecida do cursor.
-        g_LastCursorPosX = xpos;
-        g_LastCursorPosY = ypos;
-    }
-}
-
-// Função callback chamada sempre que o usuário movimenta a "rodinha" do mouse.
-void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    // Atualizamos a distância da câmera para a origem utilizando a
-    // movimentação da "rodinha", simulando um ZOOM.
-    g_CameraDistance -= 0.1f*yoffset;
-
-    // Uma câmera look-at nunca pode estar exatamente "em cima" do ponto para
-    // onde ela está olhando, pois isto gera problemas de divisão por zero na
-    // definição do sistema de coordenadas da câmera. Isto é, a variável abaixo
-    // nunca pode ser zero. Versões anteriores deste código possuíam este bug,
-    // o qual foi detectado pelo aluno Vinicius Fraga (2017/2).
-    const float verysmallnumber = std::numeric_limits<float>::epsilon();
-    if (g_CameraDistance < verysmallnumber)
-        g_CameraDistance = verysmallnumber;
-}
-
 void Correcao_KeyCallback(int key, int action, int mod);
 
 // Definição da função que será chamada sempre que o usuário pressionar alguma
@@ -1217,23 +1270,35 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);
 
-    // Se o usuário apertar a tecla espaço, resetamos a rotação dos objetos.
-    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
+    // Controles do jogador (só ao pressionar; a repetição automática da
+    // tecla segurada é ignorada):
+    //   setas esquerda/direita ou A/D -> troca de faixa
+    //   seta para cima, W ou espaço   -> pulo
+    //   seta para baixo ou S          -> rolamento
+    if (action == GLFW_PRESS)
     {
-        g_SphereSpin = 0.0f;
-        g_BunnySpin  = 0.0f;
-    }
-
-    // Se o usuário apertar a tecla P, utilizamos projeção perspectiva.
-    if (key == GLFW_KEY_P && action == GLFW_PRESS)
-    {
-        g_UsePerspectiveProjection = true;
-    }
-
-    // Se o usuário apertar a tecla O, utilizamos projeção ortográfica.
-    if (key == GLFW_KEY_O && action == GLFW_PRESS)
-    {
-        g_UsePerspectiveProjection = false;
+        switch (key)
+        {
+        case GLFW_KEY_LEFT:
+        case GLFW_KEY_A:
+            g_Game.HandleInput(Input::LEFT);
+            break;
+        case GLFW_KEY_RIGHT:
+        case GLFW_KEY_D:
+            g_Game.HandleInput(Input::RIGHT);
+            break;
+        case GLFW_KEY_UP:
+        case GLFW_KEY_W:
+        case GLFW_KEY_SPACE:
+            g_Game.HandleInput(Input::JUMP);
+            break;
+        case GLFW_KEY_DOWN:
+        case GLFW_KEY_S:
+            g_Game.HandleInput(Input::ROLL);
+            break;
+        default:
+            break;
+        }
     }
 
     // Se o usuário apertar a tecla H, fazemos um "toggle" do texto informativo mostrado na tela.
@@ -1319,19 +1384,18 @@ void TextRendering_ShowModelViewProjection(
     TextRendering_PrintMatrixVectorProductMoreDigits(window, viewport_mapping, p_ndc, -1.0f, 1.0f-26*pad, 1.0f);
 }
 
-// Escrevemos na tela qual matriz de projeção está sendo utilizada.
-void TextRendering_ShowProjection(GLFWwindow* window)
+// Escrevemos na tela a distância percorrida, a velocidade e a faixa do jogador.
+void TextRendering_ShowRunInfo(GLFWwindow* window)
 {
     if ( !g_ShowInfoText )
         return;
 
     float lineheight = TextRendering_LineHeight(window);
-    float charwidth = TextRendering_CharWidth(window);
 
-    if ( g_UsePerspectiveProjection )
-        TextRendering_PrintString(window, "Perspective", 1.0f-13*charwidth, -1.0f+2*lineheight/10, 1.0f);
-    else
-        TextRendering_PrintString(window, "Orthographic", 1.0f-13*charwidth, -1.0f+2*lineheight/10, 1.0f);
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "Distancia: %6.1f m   Velocidade: %4.1f m/s   Faixa: %+d",
+             g_Game.player.s, g_Game.player.speed, g_Game.player.lane);
+    TextRendering_PrintString(window, buffer, -1.0f+lineheight/10, -1.0f+2*lineheight/10, 1.0f);
 }
 
 // Escrevemos na tela o número de quadros renderizados por segundo (frames per

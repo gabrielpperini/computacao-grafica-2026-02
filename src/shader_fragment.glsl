@@ -7,6 +7,9 @@
 in vec4 position_world;
 in vec4 normal;
 
+// Normal do vértice no sistema de coordenadas local do modelo.
+in vec4 normal_model;
+
 // Posição do vértice atual no sistema de coordenadas local do modelo.
 in vec4 position_model;
 
@@ -42,6 +45,7 @@ uniform mat4 projection;
 #define UV_PLANAR_XZ  1 // Projeção planar em XZ do mundo
 #define UV_BBOX_XY    2 // Projeção planar em XY do modelo, normalizada pela AABB
 #define UV_SPHERICAL  3 // Projeção esférica em coordenadas do modelo
+#define UV_BOX        4 // Projeção "caixa" em metros do objeto
 
 uniform int object_id;
 uniform int uv_mode;
@@ -113,6 +117,31 @@ void main()
         U = (position_model.x - bbox_min.x) / (bbox_max.x - bbox_min.x);
         V = (position_model.y - bbox_min.y) / (bbox_max.y - bbox_min.y);
     }
+    else if ( uv_mode == UV_BOX )
+    {
+        // Projeção "caixa" (box mapping) em METROS no referencial do objeto.
+        // A escala de cada eixo é o comprimento da coluna correspondente da
+        // matriz model (model = T*R*S*...), então uma caixa escalada de forma
+        // não uniforme (prédio 6x12x10 m) recebe a textura com a mesma
+        // densidade em todas as faces, sem esticar. A face é escolhida pelo
+        // eixo dominante da normal em coordenadas do modelo; V parte da base
+        // da AABB (bbox_min). uv_scale = repetições por metro.
+        vec3 scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+        vec3 q = (position_model.xyz - bbox_min.xyz) * scale;
+        vec3 an = abs(normal_model.xyz);
+        if ( an.x >= an.y && an.x >= an.z )
+        {
+            U = q.z; V = q.y; // faces laterais (normal ±X)
+        }
+        else if ( an.z >= an.y )
+        {
+            U = q.x; V = q.y; // faces da frente/trás (normal ±Z)
+        }
+        else
+        {
+            U = q.x; V = q.z; // topo/base (normal ±Y)
+        }
+    }
     else if ( uv_mode == UV_PLANAR_XZ )
     {
         // Projeção planar em XZ de COORDENADAS DO MUNDO: 1 unidade de mundo =
@@ -132,10 +161,12 @@ void main()
     // GL_REPEAT, então uv_scale > 1 repete a imagem em vez de esticá-la.
     vec3 Kd0 = texture(TextureImage0, vec2(U,V) * uv_scale).rgb;
 
-    // Equação de Iluminação
+    // Equação de Iluminação (provisória até a Blinn-Phong da Tarefa 3.1):
+    // Lambert + um termo ambiente, para que as faces que não recebem a luz
+    // direta (ex.: fachadas dos prédios voltadas para a pista) não fiquem pretas.
     float lambert = max(0,dot(n,l));
 
-    color.rgb = Kd0 * (lambert + 0.01);
+    color.rgb = Kd0 * (lambert + 0.25);
 
     // NOTE: Se você quiser fazer o rendering de objetos transparentes, é
     // necessário:

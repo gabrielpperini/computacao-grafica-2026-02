@@ -372,17 +372,17 @@ registrar `src/track.cpp` nos dois builds e no alvo de testes.
   `jogador + forward*4 + up*1`. Usa só 1/3 do deslocamento lateral do jogador (a câmera não
   "pula" de faixa).
 
-- [ ] **Passo 1:** em `main.cpp`: `Game g_Game(seed)`, setas e `W/A/S/D` → `HandleInput`;
+- [x] **Passo 1:** em `main.cpp`: `Game g_Game(seed)`, setas e `W/A/S/D` → `HandleInput`;
   projeção com `nearplane = -0.3f`, `farplane = -250.0f` (evita Z-fighting com far grande).
-- [ ] **Passo 2:** VAO dinâmico `"track_ground"` (`GL_DYNAMIC_DRAW`, `GL_TRIANGLE_STRIP`)
+- [x] **Passo 2:** VAO dinâmico `"track_ground"` (`GL_DYNAMIC_DRAW`, `GL_TRIANGLE_STRIP`)
   reconstruído por frame com `BuildStrip(s-20, s+150, 1, -4.5, 4.5, 0, 1, 4)`; e 6 faixas de
   trilho (2 por faixa, largura 0.12, `y = 0.03`).
-- [ ] **Passo 3:** desenhar o jogador (coelho/cubo provisório) com a matriz de pista; prédios
+- [x] **Passo 3:** desenhar o jogador (coelho/cubo provisório) com a matriz de pista; prédios
   provisórios (`the_cube` com tijolo) como **instâncias** a cada 12 m em `x = ±9`.
-- [ ] **Passo 4:** compilar e rodar. Esperado: personagem corre sozinho, troca de faixa suave,
+- [x] **Passo 4:** compilar e rodar. Esperado: personagem corre sozinho, troca de faixa suave,
   pula e rola; chão e trilhos sem buracos nem Z-fighting; câmera estável a 30 e 144 Hz.
-- [ ] **Passo 5:** commit `IA: corrida jogável com câmera em terceira pessoa`.
-- [ ] **Passo 6:** **checkpoint da avaliação parcial** — compilar do zero (`rm -rf build`) na
+- [x] **Passo 5:** commit `IA: corrida jogável com câmera em terceira pessoa`.
+- [x] **Passo 6:** **checkpoint da avaliação parcial** — compilar do zero (`rm -rf build`) na
   máquina que vai para o laboratório e rodar.
 
 ---
