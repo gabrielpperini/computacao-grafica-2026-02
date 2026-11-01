@@ -1,7 +1,7 @@
 # Tarefa 7.2 — itens adicionais decididos pelo coordenador
 
 A. Build Linux real via Docker (Docker Desktop está rodando nesta máquina; `docker` no PATH):
-   rode um contêiner ubuntu:24.04 com o repositório montado (ex.: `docker run --rm -v "C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02:/src" -w /src ubuntu:24.04 bash -c "..."`),
+   rode um contêiner ubuntu:24.04 com o repositório montado (ex.: `docker run --rm -v "/computacao-grafica-2026-02:/src" -w /src ubuntu:24.04 bash -c "..."`),
    instale cmake g++ make e as dependências de X11/GL que o link estático de lib-linux/libglfw3.a exige
    (libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl-dev, etc.), configure num diretório de build
    DENTRO do contêiner (ex.: /tmp/build) para não sujar build/ do Windows, compile `main` e `logic_tests`, rode logic_tests.

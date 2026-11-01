@@ -8,13 +8,13 @@ implementou a onda de correção final (commits `Revisão final, item N`). A lis
 
 You are implementing the final fix wave for "Rail Rush", a C++11 / OpenGL 3.3 endless-runner game for a university CG course (INF01047/UFRGS), after the whole-branch final review. The game is feature-complete; these fixes address grade risks found by the final reviewer.
 
-Repository: C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02 (branch main).
+Repository: /computacao-grafica-2026-02 (branch main).
 
 ## Read first
 1. Your fix list (requirements — every item already decided by the controller; items 1–10, "Parqueados" are out of scope):
-   C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/final-fixlist.md
+   /computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/final-fixlist.md
 2. Build/test/E2E/commit instructions for this machine:
-   C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/env.md
+   /computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/env.md
 3. CLAUDE.md (rules + full architecture/module map), SPEC.md (binding; read-only), images/spec/image1-3.png (visual reference), data/FONTES.txt, PROMPTS.md.
 4. For item 2, the source material lives in .superpowers/sdd/PLANO-IMPLEMENTACAO/ (briefs, fixlists, reports with fix sections, progress.md ledger).
 
@@ -30,5 +30,5 @@ You never dispatch subagents. If unclear or stuck, report NEEDS_CONTEXT / BLOCKE
 
 ## Report
 Write the full report (per item: change, tests, evidence, screenshots + what they show, fps before/after for item 4) to:
-C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/final-fix-report.md
+/computacao-grafica-2026-02/.superpowers/sdd/PLANO-IMPLEMENTACAO/final-fix-report.md
 Then reply with ONLY (under 15 lines): Status, commits, one-line test summary, concerns, report path.

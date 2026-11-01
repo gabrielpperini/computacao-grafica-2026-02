@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # uso: mkbrief.sh X.Y  -> escreve task-X.Y-brief.md com contexto global + texto da tarefa
 set -euo pipefail
-cd "C:/Users/gabri/Desktop/Faculdade/computacao-grafica-2026-02"
+cd "/computacao-grafica-2026-02"
 P=docs/PLANO-IMPLEMENTACAO.md; W=.superpowers/sdd/PLANO-IMPLEMENTACAO; n="$1"; out="$W/task-$n-brief.md"
 {
   echo "# Brief — Tarefa $n (Rail Rush)"; echo
