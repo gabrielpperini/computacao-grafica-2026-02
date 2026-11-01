@@ -37,5 +37,6 @@ procedural/ramp.obj                                                 rampa para s
 Para regerar: python tools/gen_models.py (na raiz do repositorio).
 
 == Codigo base da disciplina ==
-bunny.obj, sphere.obj, plane.obj   arquivos do codigo base de INF01047 (sem uso no momento)
-cube.obj                           cubo unitario escrito para o trabalho (cabeca emissiva dos postes)
+cube.obj                           cubo unitario escrito para o trabalho (cabeca emissiva dos postes
+                                   e luminarias do teto dos tuneis)
+(bunny.obj, sphere.obj e plane.obj do codigo base foram removidos na Tarefa 7.1b: sem uso.)

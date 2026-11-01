@@ -476,7 +476,7 @@ envia os uniforms (o `tint` multiplica o Kd do material: tons dos prédios) e ch
 - Postes: `light-curved` com a cabeça em `LAMP_MODEL_HEAD` (coordenadas do modelo);
   `LampHeadPosition()` dá o centro da cabeça no mundo, usado **tanto** para a luz pontual quanto
   para o bloco emissivo `LAMP`.
-- `bunny.obj`, `sphere.obj` e `plane.obj` não são mais carregados; `red_brick` (Poly Haven) é a
+- `bunny.obj`, `sphere.obj` e `plane.obj` do código base foram removidos (Tarefa 7.1b); `red_brick` (Poly Haven) é a
   textura dos túneis (os OBJ do túnel têm UV em metros/2, não usam o atlas).
 
 ### Matemática e câmera
