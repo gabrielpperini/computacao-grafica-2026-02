@@ -2663,6 +2663,67 @@ void Test_FreeCamMoveDt()
     assert(g.Pose().position.y > y0 + 1.0f);
 }
 
+// ---------------------------------------------------------------------------
+// Ponto dentro do túnel (câmera livre; collisions.cpp)
+// ---------------------------------------------------------------------------
+
+// Ponto de mundo a (s, lateral, altura) da pista.
+static glm::vec3 TrackPoint(const Track& t, float s, float lat, float y)
+{
+    TrackFrame f = t.FrameAt(s);
+    vec4 p = f.position + f.right * lat;
+    return glm::vec3(p.x, p.y + y, p.z);
+}
+
+static void CheckTunnelVolume(const Track& t, float ts, float te)
+{
+    const float mid = 0.5f * (ts + te);
+    const float R = TUNNEL_INNER_HALF_WIDTH;
+    // Dentro: no eixo a meia altura, perto do chão, junto à parede (abaixo da abóbada).
+    assert(PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, 3.0f)));
+    assert(PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, 0.2f)));
+    assert(PointInsideTunnel(t, TrackPoint(t, mid, 4.5f, 1.5f)));
+    assert(PointInsideTunnel(t, TrackPoint(t, mid, -4.5f, 1.5f)));
+    // Teto: o topo do eixo é TunnelCeilingHeight(0) = 7 m; 8 m (sobre o túnel) é fora.
+    assert(PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, TunnelCeilingHeight(0.0f) - 0.1f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, TunnelCeilingHeight(0.0f) + 0.1f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, 8.0f)));
+    // Perto da parede, acima do perfil da abóbada (a 4.5 m o teto está a ~4.2 m): fora.
+    assert(TunnelCeilingHeight(4.5f) < 5.0f);
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, 4.5f, 5.0f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, -4.5f, 5.0f)));
+    // Fora da parede lateral (também a 1,5 m de altura) e abaixo do chão.
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, R + 0.5f, 1.5f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, -(R + 0.5f), 1.5f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, mid, 0.0f, -0.5f)));
+    // Antes da entrada e depois da saída (mesmo no eixo, a meia altura).
+    assert(!PointInsideTunnel(t, TrackPoint(t, ts - 1.0f, 0.0f, 3.0f)));
+    assert(!PointInsideTunnel(t, TrackPoint(t, te + 1.0f, 0.0f, 3.0f)));
+    assert(PointInsideTunnel(t, TrackPoint(t, ts + 0.5f, 0.0f, 3.0f)));
+    assert(PointInsideTunnel(t, TrackPoint(t, te - 0.5f, 0.0f, 3.0f)));
+}
+
+void Test_PointInsideTunnel()
+{
+    // Túnel numa reta com heading 0 (-Z do mundo).
+    float ts, te;
+    Track t = TunnelTrack(&ts, &te);
+    CheckTunnelVolume(t, ts, te);
+
+    // Túnel depois de uma curva de 90°: o eixo não é paralelo a nenhum eixo do mundo.
+    Track c(1);
+    const float R = 40.0f;
+    c.AppendSegment(30.0f, 0.0f, false);
+    c.AppendSegment(0.5f * kPi * R, 1.0f / R, false);
+    const float cs = c.Segments().back().s_start + c.Segments().back().length;
+    c.AppendSegment(60.0f, 0.0f, true);
+    c.AppendSegment(100.0f, 0.0f, false);
+    CheckTunnelVolume(c, cs, cs + 60.0f);
+
+    // Um segmento que não é túnel nunca contém o ponto.
+    assert(!PointInsideTunnelSegment(t.Segments()[0], TrackPoint(t, 10.0f, 0.0f, 3.0f)));
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -2788,6 +2849,7 @@ int main()
     Test_FreeCamStartAtRoundTrip();
     Test_FreeCamPitchClamp();
     Test_FreeCamMoveDt();
+    Test_PointInsideTunnel();
     printf("OK\n");
     return 0;
 }

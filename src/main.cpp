@@ -56,6 +56,7 @@
 #include "autotest.h"
 #include "game.h"
 #include "camera.h"
+#include "collisions.h"
 #include "scenery.h"
 
 // Estrutura que representa um modelo geométrico carregado a partir de um
@@ -186,9 +187,8 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods);
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
 // Direção de movimento (direita, cima, frente) da câmera livre a partir das
-// teclas seguradas, e teste "ponto dentro de um túnel" (escurecimento).
+// teclas seguradas.
 glm::vec3 FreeCameraInputDirection();
-bool PointInsideTunnel(const Track& track, const glm::vec4& point, float near_s);
 
 // Definimos uma estrutura que armazenará dados necessários para renderizar
 // cada objeto da cena virtual.
@@ -652,8 +652,9 @@ int main(int argc, char* argv[])
         if (free_camera)
         {
             g_FreeCamera.Move(FreeCameraInputDirection(), dt);
-            camera_in_tunnel = PointInsideTunnel(g_Game.track, g_FreeCamera.Pose().position,
-                                                 player.s);
+            // Câmera livre dentro do volume do túnel (collisions.cpp), não só "sobre" ele.
+            const glm::vec4 cp = g_FreeCamera.Pose().position;
+            camera_in_tunnel = PointInsideTunnel(g_Game.track, glm::vec3(cp.x, cp.y, cp.z));
         }
         else
         {
@@ -2038,7 +2039,12 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
             g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                           g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
             if (!Autotest_Active())
+            {
+                // Desfaz exatamente o que a entrada fez (movimento bruto e captura).
+                if (glfwRawMouseMotionSupported())
+                    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
         }
         return;
     }
@@ -2136,32 +2142,6 @@ glm::vec3 FreeCameraInputDirection()
     if (g_KeyHeld[GLFW_KEY_W]) dir.z += 1.0f;
     if (g_KeyHeld[GLFW_KEY_S]) dir.z -= 1.0f;
     return dir;
-}
-
-// Aproximação de "o ponto está dentro de um túnel?" para a câmera livre: acha
-// o ponto da pista mais próximo (amostrando s a cada 2 m ao redor do jogador,
-// onde há cenário) e confere se ele é de túnel e se o ponto está dentro da
-// seção (largura interna e altura do portal).
-bool PointInsideTunnel(const Track& track, const glm::vec4& point, float near_s)
-{
-    float best_s = near_s;
-    float best_d2 = 1e30f;
-    for (float s = near_s - 60.0f; s <= near_s + SPAWN_AHEAD + 60.0f; s += 2.0f)
-    {
-        const TrackFrame f = track.FrameAt(s);
-        const float dx = point.x - f.position.x;
-        const float dz = point.z - f.position.z;
-        const float d2 = dx * dx + dz * dz;
-        if (d2 < best_d2)
-        {
-            best_d2 = d2;
-            best_s = s;
-        }
-    }
-    if (!track.IsTunnelAt(best_s))
-        return false;
-    return best_d2 < TUNNEL_INNER_HALF_WIDTH * TUNNEL_INNER_HALF_WIDTH &&
-           point.y > 0.0f && point.y < TUNNEL_PORTAL_HEIGHT;
 }
 
 // Definimos o callback para impressão de erros da GLFW no terminal

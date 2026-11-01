@@ -854,6 +854,8 @@ static float g_FcMaxDriftS    = 0.0f;   // maior |player.s - s de entrada| em FR
 static bool  g_FcElapsedMoved = false;  // o relógio do jogo andou em FREE_CAMERA
 static glm::vec4 g_FcStartPos;          // posição da câmera livre no 1º quadro
 static glm::vec4 g_FcPosAfterW;         // posição no 1º quadro depois de soltar W
+static glm::vec4 g_FcStartView;         // view vector no 1º quadro em FREE_CAMERA
+static glm::vec4 g_FcLastView;          // view vector no último quadro em FREE_CAMERA
 static bool  g_FcWasHeld      = false;
 static bool  g_FcAfterWSaved  = false;
 static int   g_FcWFrames      = 0;      // quadros em FREE_CAMERA com W segurado
@@ -880,6 +882,7 @@ static void Hook_FreeCamera()
             g_FcStartElapsed = g_Game.elapsed;
             g_FcStartCoins = g_Game.coins_collected;
             g_FcStartPos = pose.position;
+            g_FcStartView = pose.view_vector;
         }
         g_FcMaxDriftS = std::max(g_FcMaxDriftS, std::fabs(p.s - g_FcStartS));
         if (std::fabs(g_Game.elapsed - g_FcStartElapsed) > 1e-6f)
@@ -893,6 +896,7 @@ static void Hook_FreeCamera()
             g_FcPosAfterW = pose.position;
         }
         g_FcWasHeld = w;
+        g_FcLastView = pose.view_vector;
     }
     else if (g_FcSeen && !g_FcResumed && g_Game.mode == GameMode::PLAYING)
     {
@@ -932,6 +936,16 @@ static bool Check_free_camera(std::string* why)
     if (std::fabs(dist - expected) > 0.05f)
     {
         snprintf(buf, sizeof(buf), "deslocou %.3f m com W; esperava %.3f m (10 m/s x tempo)", dist, expected);
+        *why = buf;
+        return false;
+    }
+    // O mouse injetado girou o olhar de fato: ~108 graus de yaw + pitch (> 1,5 rad no total).
+    const float cosang = g_FcStartView.x * g_FcLastView.x + g_FcStartView.y * g_FcLastView.y +
+                         g_FcStartView.z * g_FcLastView.z;
+    const float angle = std::acos(std::max(-1.0f, std::min(1.0f, cosang)));
+    if (angle < 1.5f)
+    {
+        snprintf(buf, sizeof(buf), "o mouse nao girou o olhar (angulo %.2f rad, esperava > 1.5)", angle);
         *why = buf;
         return false;
     }

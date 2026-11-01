@@ -9,6 +9,8 @@
 //     com FootprintsOverlap), para o jogador subir e andar nos trens;
 //   - teto do túnel: quanto a cabeça do jogador passou dele
 //     (CeilingPenetration);
+//   - câmera livre: ponto de mundo x volume interior do túnel
+//     (PointInsideTunnel), para escurecer o sol/céu só dentro dele;
 //   - ímã: esfera de alcance do jogador x esfera da moeda -> a moeda é atraída
 //     (SphereIntersectsSphere).
 // Tudo em coordenadas de pista (x lateral, y altura, z = s), sem OpenGL.
@@ -17,6 +19,8 @@
 
 #include <algorithm>
 #include <cmath>
+
+#include "scenery.h" // TunnelCeilingHeight, TUNNEL_INNER_HALF_WIDTH
 
 AABB MakeAABB(glm::vec3 center, glm::vec3 half_extents)
 {
@@ -146,4 +150,31 @@ bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
 float CeilingPenetration(const AABB& box, float ceiling)
 {
     return std::max(box.max.y - ceiling, 0.0f);
+}
+
+bool PointInsideTunnelSegment(const TrackSegment& seg, glm::vec3 point)
+{
+    if (!seg.tunnel)
+        return false;
+    // Túnel é reto: eixo = start_position + u * forward(start_heading).
+    const float h = seg.start_heading;
+    const float dx = point.x - seg.start_position.x;
+    const float dz = point.z - seg.start_position.z;
+    const float u = dx * (-std::sin(h)) + dz * (-std::cos(h));   // ao longo do eixo
+    const float lat = dx * std::cos(h) + dz * (-std::sin(h));    // deslocamento lateral (direita +)
+    const float y = point.y - seg.start_position.y;
+    if (u < 0.0f || u > seg.length)
+        return false;
+    if (std::fabs(lat) > TUNNEL_INNER_HALF_WIDTH)
+        return false;
+    return y > 0.0f && y < TunnelCeilingHeight(lat);
+}
+
+bool PointInsideTunnel(const Track& track, glm::vec3 point)
+{
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size(); ++i)
+        if (PointInsideTunnelSegment(segs[i], point))
+            return true;
+    return false;
 }

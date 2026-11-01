@@ -441,7 +441,7 @@ cima, frente), dt)` a 10 m/s, normalizado, com "frente" incluindo o pitch e "cim
 As teclas seguradas ficam em `g_KeyHeld[]` (atualizada por `HandleKey()` em PRESS/RELEASE, vale
 também no E2E) e o movimento é aplicado todo quadro com `dt`. Limitação aceita: o cenário só é
 gerado ao redor do jogador (≈ −20…+150 m), então voar para longe mostra o vazio; o escurecimento do
-túnel usa a posição da câmera livre (`PointInsideTunnel`). O E2E injeta o mouse pelos campos
+túnel usa a posição da câmera livre (`PointInsideTunnel`, em `collisions.cpp`: ponto de mundo dentro da abóbada, com `TunnelCeilingHeight`). O E2E injeta o mouse pelos campos
 `mouse_dx/mouse_dy` de `AutotestStep` (cenário `free_camera`).
 
 ### Estado e entrada

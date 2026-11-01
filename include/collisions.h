@@ -3,9 +3,13 @@
 
 #include <glm/vec3.hpp>
 
+#include "track.h"
+
 // Testes de intersecção do jogo (ver src/collisions.cpp). Sem OpenGL.
 // Tudo em coordenadas de pista: x = lateral, y = altura, z = s (distância
-// ao longo da pista). Todos os intervalos são fechados: encostar conta.
+// ao longo da pista) -- exceto os testes de ponto no túnel (PointInsideTunnel*),
+// que recebem um ponto em coordenadas de MUNDO. Todos os intervalos são
+// fechados: encostar conta.
 
 // Caixa alinhada aos eixos. Invariante: min <= max em cada componente.
 struct AABB {
@@ -68,5 +72,17 @@ bool LandsOnTop(const AABB& player_prev, const AABB& player_now,
 // Quanto o topo da caixa passou de um teto na altura 'ceiling' (0 se não
 // passou; encostar não conta). Usado para o teto do túnel.
 float CeilingPenetration(const AABB& box, float ceiling);
+
+// Ponto de mundo dentro do volume interior de um túnel (um segmento reto com
+// tunnel = true): s dentro de [s_start, s_start + length], deslocamento lateral
+// com sinal |lat| <= TUNNEL_INNER_HALF_WIDTH e 0 < altura < TunnelCeilingHeight(lat)
+// (a abóbada: ~7 m no eixo, descendo até 2 m junto às paredes). O s e o
+// deslocamento lateral saem da projeção exata do ponto no eixo do segmento.
+// Acima do teto, ao lado da parede ou antes/depois do túnel: false. Usado
+// pela câmera livre para escurecer o céu/sol só quando ela está dentro.
+bool PointInsideTunnelSegment(const TrackSegment& seg, glm::vec3 point);
+
+// Idem para qualquer túnel mantido da pista.
+bool PointInsideTunnel(const Track& track, glm::vec3 point);
 
 #endif
