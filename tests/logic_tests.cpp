@@ -1194,6 +1194,106 @@ void Test_PointLightsNoPop()
     assert((int)idx.size() == MAX_POINT_LIGHTS && nearf(w[0], 1.0f) && nearf(w[1], 1.0f));
 }
 
+// ---------------------------- Muros de pedra e prédios de tijolo (Revisão final, item 3)
+
+// Os muros de contenção ficam entre os postes e os prédios, fora do leito (e
+// de qualquer obstáculo/jogador), dos dois lados; só fora dos túneis (com
+// folga até os portais), com tampa nas pontas cortadas; cabem na capacidade.
+void Test_RetainingWalls()
+{
+    const float inner = RETAINING_WALL_X - 0.5f * RETAINING_WALL_THICKNESS;
+    const float outer = RETAINING_WALL_X + 0.5f * RETAINING_WALL_THICKNESS;
+    assert(inner > LAMP_OFFSET_X + LAMP_POLE_BACK);              // o poste não entra no muro
+    assert(outer < BUILDING_OFFSET_X - 0.5f * BUILDING_WIDTH);   // nem o muro no prédio
+    assert(inner > TRACK_BED_HALF_WIDTH && inner > LANE_WIDTH + 0.5f * OBSTACLE_SIZE[(int)ObstacleType::TRAIN][0]);
+    assert(inner > LANE_WIDTH + PLAYER_HALF_WIDTH);
+    assert(RETAINING_WALL_HEIGHT >= 1.4f && RETAINING_WALL_HEIGHT <= 2.0f);
+
+    // Pista reta com túnel: x de mundo = lateral, s = -z.
+    float ts, te;
+    const Track t = TunnelTrack(&ts, &te);
+    const float clear = TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
+    StripBatch walls;
+    std::vector<TunnelSpan> ranges;
+    int caps_seen = 0;
+    for (float ps = 0.0f; ps < 300.0f; ps += 3.7f) {
+        RetainingWallRanges(t, ps, &ranges);
+        assert(!ranges.empty());
+        for (size_t i = 0; i < ranges.size(); i++) {
+            assert(ranges[i].s1 > ranges[i].s0);
+            assert(ranges[i].s1 <= ts - clear + 1e-3f || ranges[i].s0 >= te + clear - 1e-3f);
+            if (i > 0) assert(ranges[i].s0 > ranges[i - 1].s1);
+        }
+        // Fora da zona do túnel, todo s visível tem muro.
+        for (float s = ps - DESPAWN_BEHIND + 1.0f; s < ps + SPAWN_AHEAD - 1.0f; s += 0.5f) {
+            if (s > ts - clear - 0.01f && s < te + clear + 0.01f)
+                continue;
+            bool covered = false;
+            for (size_t i = 0; i < ranges.size(); i++)
+                covered = covered || (s >= ranges[i].s0 && s <= ranges[i].s1);
+            assert(covered);
+        }
+        BuildRetainingWallStrips(t, ps, &walls);
+        assert(walls.VertexCount() <= MaxRetainingWallVertices());
+        assert(walls.uvs.size() == walls.VertexCount() * 2 && walls.normals.size() == walls.VertexCount() * 4);
+        int caps = 0;
+        for (size_t k = 0; k < walls.count.size(); k++)
+            caps += (walls.count[k] == 4) ? 1 : 0;
+        caps_seen += caps;
+        for (size_t v = 0; v < walls.VertexCount(); v++) {
+            const float x = std::fabs(walls.positions[4 * v + 0]);
+            const float y = walls.positions[4 * v + 1];
+            const float s = -walls.positions[4 * v + 2];
+            assert(x >= inner - 1e-3f && x <= outer + 1e-3f);
+            assert(y >= -1e-3f && y <= RETAINING_WALL_HEIGHT + 1e-3f);
+            assert(s <= ts - clear + 1e-3f || s >= te + clear - 1e-3f);
+        }
+    }
+    assert(caps_seen > 0); // pontas cortadas no túnel ganham tampa
+
+    // Pista com curvas e túneis: nunca passa da capacidade.
+    Game g(3);
+    const float ss[] = {0.0f, 7.3f, 420.5f, 1234.567f, 5000.5f, 98765.4f};
+    for (float s : ss) {
+        g.track.EnsureGeneratedUntil(s + SPAWN_AHEAD);
+        BuildRetainingWallStrips(g.track, s, &walls);
+        assert(walls.VertexCount() <= MaxRetainingWallVertices());
+    }
+}
+
+// Prédios de tijolo: um em cada BRICK_BUILDING_EVERY de cada lado (as fases
+// dos dois lados são diferentes), com 2 a 4 andares, estáveis de um quadro
+// para o outro; os demais continuam sendo modelos da Kenney.
+void Test_BrickBuildings()
+{
+    std::vector<BuildingInstance> a, b;
+    ComputeBuildings(StraightTrack(), 300.0f, &a);
+    int brick = 0;
+    int floors_seen[BRICK_BUILDING_MAX_FLOORS + 1] = {0};
+    for (size_t i = 0; i < a.size(); i++) {
+        const BuildingInstance& x = a[i];
+        assert(x.brick_floors == 0 ||
+               (x.brick_floors >= BRICK_BUILDING_MIN_FLOORS && x.brick_floors <= BRICK_BUILDING_MAX_FLOORS));
+        if (x.brick_floors > 0) {
+            brick++;
+            floors_seen[x.brick_floors]++;
+        }
+        // Dois prédios de tijolo nunca são vizinhos do mesmo lado.
+        for (size_t j = 0; j < a.size(); j++)
+            if (j != i && a[j].x == x.x && std::fabs(a[j].s - x.s) < 1.5f * BUILDING_SPACING)
+                assert(!(x.brick_floors > 0 && a[j].brick_floors > 0));
+    }
+    const float frac = (float)brick / (float)a.size();
+    assert(frac > 0.25f && frac < 0.42f);
+    for (int f = BRICK_BUILDING_MIN_FLOORS; f <= BRICK_BUILDING_MAX_FLOORS; f++)
+        assert(floors_seen[f] > 0);
+    ComputeBuildings(StraightTrack(), 320.0f, &b);
+    for (size_t i = 0; i < a.size(); i++)
+        for (size_t j = 0; j < b.size(); j++)
+            if (a[i].s == b[j].s && a[i].x == b[j].x)
+                assert(a[i].brick_floors == b[j].brick_floors);
+}
+
 // ------------------------------------------- Cenário dos túneis (4.2)
 
 // Pista com um túnel de 60 m em [*ts, *te]: largada, reta de 50 m, túnel,
@@ -4362,6 +4462,9 @@ int main()
     Test_PickNearestLampsAroundPlayer();
     Test_PointLightWeight();
     Test_PointLightsNoPop();
+    // Muros de pedra e prédios de tijolo (Revisão final, item 3)
+    Test_RetainingWalls();
+    Test_BrickBuildings();
     // Túneis (4.2)
     Test_SceneryAvoidsTunnels();
     Test_TunnelPiecesAndLamps();

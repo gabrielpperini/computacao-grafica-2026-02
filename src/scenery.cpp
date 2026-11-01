@@ -41,11 +41,9 @@ void AppendStrip(const Track& track, float player_s, float x0, float x1, float y
 // passos de Track::BuildStrip (mesmo número de vértices). UV em metros/tile:
 // u na altura e v no comprimento de arco da parede (s + x * heading, como
 // STRIP_UV_ALONG_TRACK), sem esticar nas curvas.
-void AppendWallStrip(const Track& track, float player_s, float x, float y0, float y1,
-                     bool outward_right, float tile, StripBatch* out)
+void AppendWallStripRange(const Track& track, float s0, float s1, float x, float y0, float y1,
+                          bool outward_right, float tile, StripBatch* out)
 {
-    const float s0 = StripStart(player_s);
-    const float s1 = player_s + SPAWN_AHEAD;
     const int n = std::max(1, (int)std::ceil((s1 - s0) / SCENERY_STEP - 1e-4f));
     const int first = (int)out->VertexCount();
     // Ordem de cada par: com normal +right, (topo, base); com -right, (base,
@@ -73,6 +71,13 @@ void AppendWallStrip(const Track& track, float player_s, float x, float y0, floa
     }
     out->first.push_back(first);
     out->count.push_back((int)out->VertexCount() - first);
+}
+
+void AppendWallStrip(const Track& track, float player_s, float x, float y0, float y1,
+                     bool outward_right, float tile, StripBatch* out)
+{
+    AppendWallStripRange(track, StripStart(player_s), player_s + SPAWN_AHEAD, x, y0, y1, outward_right,
+                         tile, out);
 }
 
 // Acrescenta uma face retangular (faixa de 4 vértices) dada pelos cantos na
@@ -226,7 +231,107 @@ void ComputeBuildings(const Track& track, float player_s, std::vector<BuildingIn
             b.x = side * BUILDING_OFFSET_X;
             b.variant = (int)(h % (unsigned)BUILDING_VARIANT_COUNT);
             b.tint = (int)((h >> 8) % (unsigned)BUILDING_TINT_COUNT);
+            // Um em cada BRICK_BUILDING_EVERY de cada lado é de tijolos (fases
+            // diferentes nos dois lados: não ficam um em frente ao outro).
+            const int slot = ((k % BRICK_BUILDING_EVERY) + BRICK_BUILDING_EVERY) % BRICK_BUILDING_EVERY;
+            const int floor_choices = BRICK_BUILDING_MAX_FLOORS - BRICK_BUILDING_MIN_FLOORS + 1;
+            b.brick_floors = (slot == (side > 0 ? 1 : 0))
+                                 ? BRICK_BUILDING_MIN_FLOORS + (int)((h >> 16) % (unsigned)floor_choices)
+                                 : 0;
             out->push_back(b);
+        }
+    }
+}
+
+// ------------------------------- Muros de pedra (Revisão final, item 3)
+
+void RetainingWallRanges(const Track& track, float player_s, std::vector<TunnelSpan>* out)
+{
+    out->clear();
+    const float a = StripStart(player_s);
+    const float b = player_s + SPAWN_AHEAD;
+    const float clear = TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
+    const float min_len = 0.05f; // trechos menores que isto não valem um muro
+    float cur = a;
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size() && (int)out->size() < MAX_RETAINING_WALL_RANGES; ++i) {
+        if (!segs[i].tunnel)
+            continue;
+        const float z0 = segs[i].s_start - clear;
+        const float z1 = segs[i].s_start + segs[i].length + clear;
+        if (z1 <= cur)
+            continue;
+        if (z0 >= b)
+            break;
+        if (z0 - cur > min_len) {
+            TunnelSpan r = {cur, z0};
+            out->push_back(r);
+        }
+        cur = std::max(cur, z1);
+    }
+    if (b - cur > min_len && (int)out->size() < MAX_RETAINING_WALL_RANGES) {
+        TunnelSpan r = {cur, b};
+        out->push_back(r);
+    }
+}
+
+size_t MaxRetainingWallVertices()
+{
+    // Por lado: 3 faixas (dentro, fora, topo) que, somados os trechos, cobrem
+    // no máximo o trecho visível (+1 par por trecho), e 2 tampas de 4 vértices
+    // por trecho.
+    const size_t per_face = MaxVerticesPerStrip() + 2 * (size_t)MAX_RETAINING_WALL_RANGES;
+    return 2 * (3 * per_face + 2 * 4 * (size_t)MAX_RETAINING_WALL_RANGES);
+}
+
+void BuildRetainingWallStrips(const Track& track, float player_s, StripBatch* out)
+{
+    out->Clear();
+    // Poucos elementos; estático para não alocar a cada quadro.
+    static std::vector<TunnelSpan> ranges;
+    RetainingWallRanges(track, player_s, &ranges);
+    const float a = StripStart(player_s);
+    const float b = player_s + SPAWN_AHEAD;
+    const float H = RETAINING_WALL_HEIGHT;
+    const float T = RETAINING_WALL_THICKNESS;
+    const float tile = STONE_TEXTURE_TILE;
+    for (size_t r = 0; r < ranges.size(); ++r) {
+        const float s0 = ranges[r].s0, s1 = ranges[r].s1;
+        for (int side = -1; side <= 1; side += 2) {
+            const float x_in = side * (RETAINING_WALL_X - 0.5f * T);
+            const float x_out = side * (RETAINING_WALL_X + 0.5f * T);
+            // Face voltada para a pista e face de trás (normal para fora).
+            AppendWallStripRange(track, s0, s1, x_in, 0.0f, H, side < 0, tile, out);
+            AppendWallStripRange(track, s0, s1, x_out, 0.0f, H, side > 0, tile, out);
+            // Topo.
+            const int first = (int)out->VertexCount();
+            track.BuildStrip(s0, s1, SCENERY_STEP, std::min(x_in, x_out), std::max(x_in, x_out), H, T / tile,
+                             tile, &out->positions, &out->normals, &out->uvs, STRIP_UV_ALONG_TRACK);
+            const int count = (int)out->VertexCount() - first;
+            if (count > 0) {
+                out->first.push_back(first);
+                out->count.push_back(count);
+            }
+            // Tampas nas pontas cortadas por túnel (não nas pontas do trecho
+            // visível, que acompanham o jogador). Cantos na ordem da faixa
+            // vista de fora (veja AppendQuad): com a normal +forward a
+            // "esquerda" é +right; com -forward, -right.
+            const float xa = std::min(x_in, x_out), xb = std::max(x_in, x_out);
+            const float uv_cap[8] = {0.0f, 0.0f, T / tile, 0.0f, 0.0f, H / tile, T / tile, H / tile};
+            if (s1 < b) {
+                const TrackFrame f = track.FrameAt(s1);
+                const glm::vec4 up(0.0f, H, 0.0f, 0.0f);
+                const glm::vec4 c[4] = {f.position + f.right * xb, f.position + f.right * xa,
+                                        f.position + f.right * xb + up, f.position + f.right * xa + up};
+                AppendQuad(c, f.forward, uv_cap, out);
+            }
+            if (s0 > a) {
+                const TrackFrame f = track.FrameAt(s0);
+                const glm::vec4 up(0.0f, H, 0.0f, 0.0f);
+                const glm::vec4 c[4] = {f.position + f.right * xa, f.position + f.right * xb,
+                                        f.position + f.right * xa + up, f.position + f.right * xb + up};
+                AppendQuad(c, -f.forward, uv_cap, out);
+            }
         }
     }
 }

@@ -278,6 +278,7 @@ void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint te
 DynamicStripMesh g_TrackGround;   // leito da pista (faixa 0) + terreno dos lados
 DynamicStripMesh g_TrackRails;    // 6 trilhos (2 por faixa), topo e laterais
 DynamicStripMesh g_TrackSleepers; // dormentes de madeira (uma faixa de 4 vértices por face)
+DynamicStripMesh g_RetainingWalls; // muros de pedra dos dois lados (Revisão final, item 3)
 
 // Imagens de textura carregadas em main() (veja data/FONTES.txt).
 struct Textures
@@ -291,7 +292,9 @@ struct Textures
     GLuint player;   // Kenney Blocky Characters (texture-b)
     GLuint city;     // Kenney City Kit Commercial (colormap): prédios
     GLuint roads;    // Kenney City Kit Roads (colormap): postes de luz
-    GLuint brick;    // red_brick (Poly Haven): túneis (abóbada e portais)
+    GLuint brick;    // red_brick (Poly Haven): portais dos túneis e prédios de tijolo
+    GLuint stone;    // stone_wall (Poly Haven): muros de contenção ao lado da pista
+    GLuint vault;    // castle_wall_slates (Poly Haven): abóbada dos túneis (pedra)
 };
 Textures g_Tex;
 
@@ -342,6 +345,9 @@ const glm::vec3 BUILDING_TINTS[BUILDING_TINT_COUNT] = {
     glm::vec3(0.90f, 0.90f, 0.90f), glm::vec3(1.00f, 0.76f, 0.60f),
     glm::vec3(0.70f, 0.84f, 1.00f), glm::vec3(0.78f, 0.95f, 0.74f)};
 void DrawBuilding(const Track& track, const BuildingInstance& b);
+void DrawBrickBuilding(const Track& track, const BuildingInstance& b); // b.brick_floors > 0
+// Tom do acabamento de concreto dos prédios de tijolo (embasamento, peitoris, cornija).
+const glm::vec3 BRICK_TRIM_TINT = glm::vec3(1.05f, 1.02f, 0.95f);
 
 // Postes de luz (Kenney City Kit Roads, "light-curved"): haste com braço
 // curvo para o lado da pista. No modelo, a haste fica em x = z = 0 e a cabeça
@@ -508,6 +514,11 @@ const glm::vec3 SKY_COLOR = glm::vec3(0.53f, 0.75f, 0.95f);
 const float FOG_START = 90.0f;  // m
 const float FOG_END   = 145.0f; // m
 const glm::vec3 GRAVEL_TINT      = glm::vec3(0.95f, 0.90f, 0.85f); // brita um pouco mais quente
+const glm::vec3 STONE_WALL_TINT  = glm::vec3(1.00f, 1.00f, 1.00f); // muros de pedra
+// Abóbada do túnel (pedra): UV do OBJ em metros / 2; VAULT_UV_SCALE < 1 deixa
+// as fiadas de pedra de castle_wall_slates com ~12 cm (e não 7 cm).
+const float     VAULT_UV_SCALE   = 0.6f;
+const glm::vec3 VAULT_TINT       = glm::vec3(1.00f, 1.00f, 1.00f);
 
 // Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
 // ks/q = especular de Blinn-Phong; emissive = cor somada sem depender das luzes.
@@ -623,6 +634,8 @@ int main(int argc, char* argv[])
     g_Tex.city    = LoadTextureImage("../../data/kenney/city-kit-commercial/Textures/colormap.png");
     g_Tex.roads   = LoadTextureImage("../../data/kenney/city-kit-roads/Textures/colormap.png");
     g_Tex.brick   = LoadTextureImage("../../data/red_brick_diff_1k.jpg");
+    g_Tex.stone   = LoadTextureImage("../../data/stone_wall_diff_1k.jpg");
+    g_Tex.vault   = LoadTextureImage("../../data/castle_wall_slates_diff_1k.jpg");
 
     // Construímos a representação de objetos geométricos através de malhas de
     // triângulos. Cada objeto é desenhado várias vezes (instâncias) com
@@ -659,6 +672,8 @@ int main(int argc, char* argv[])
     LoadObjToScene("../../data/procedural/tunnel_section.obj");
     LoadObjToScene("../../data/procedural/tunnel_portal.obj");
     LoadObjToScene("../../data/procedural/ramp.obj"); // ramp_frame + ramp_deck (Tarefa 4.4)
+    // Prédios de tijolo de 2, 3 e 4 andares (paredes, vidraças e acabamento).
+    LoadObjToScene("../../data/procedural/brick_building.obj");
     // Cubo: cabeça emissiva dos postes e luminárias do teto dos túneis.
     LoadObjToScene("../../data/cube.obj");
 
@@ -680,12 +695,14 @@ int main(int argc, char* argv[])
     CreateDynamicStripMesh(&g_TrackGround, GROUND_STRIP_COUNT * MaxVerticesPerStrip());
     CreateDynamicStripMesh(&g_TrackRails, RAIL_STRIP_COUNT * MaxVerticesPerStrip());
     CreateDynamicStripMesh(&g_TrackSleepers, MaxSleeperVertices());
+    CreateDynamicStripMesh(&g_RetainingWalls, MaxRetainingWallVertices());
 
     // Lotes de vértices das faixas e lista de prédios: reaproveitados a cada
     // quadro (sem realocar memória).
     StripBatch ground_batch;
     StripBatch rails_batch;
     StripBatch sleepers_batch;
+    StripBatch walls_batch;
     std::vector<BuildingInstance> buildings;
 
     // Postes de luz: lista do trecho visível, posição de mundo da luz de cada
@@ -975,6 +992,11 @@ int main(int argc, char* argv[])
         UpdateDynamicStripMesh(&g_TrackRails, rails_batch);
         DrawDynamicStripMesh(g_TrackRails, RAIL, g_Tex.metal, UV_OBJ);
 
+        // Muros de contenção de pedra dos dois lados da pista (fora dos túneis).
+        BuildRetainingWallStrips(g_Game.track, player.s, &walls_batch);
+        UpdateDynamicStripMesh(&g_RetainingWalls, walls_batch);
+        DrawDynamicStripMesh(g_RetainingWalls, WALL, g_Tex.stone, UV_OBJ, 1.0f, STONE_WALL_TINT);
+
         // Jogador: personagem articulado (veja DrawPlayer()).
         DrawPlayer(player, player_frame);
 
@@ -1153,7 +1175,8 @@ Material MaterialFor(int object_id)
     case SIGN:        m = { white, glm::vec3(0.35f), 64.0f, none, 0 }; break;
     case TRAIN:       m = { white, glm::vec3(0.55f), 64.0f, none, 0 }; break;  // lataria pintada
     case RAMP:        m = { white, glm::vec3(0.35f), 24.0f, none, 0 }; break;
-    case TUNNEL:      m = { white, glm::vec3(0.10f), 12.0f, none, 0 }; break;  // tijolo: quase fosco
+    case TUNNEL:      m = { white, glm::vec3(0.10f), 12.0f, none, 0 }; break;  // pedra/tijolo: quase fosco
+    case WALL:        m = { white, glm::vec3(0.06f), 10.0f, none, 0 }; break;  // muros de pedra, paredes de tijolo
     case COIN:        m = { glm::vec3(1.25f, 1.1f, 0.85f), glm::vec3(0.90f), 32.0f, none, 1 }; break; // ouro; Gouraud
     // Power-ups: plástico brilhante com um leve brilho próprio (emissivo) na cor
     // do tipo, para se destacarem na pista (e no túnel escuro).
@@ -1352,10 +1375,34 @@ void DrawCoin(const Coin& c)
     DrawObject("coin", model, COIN, g_Tex.atlas, UV_OBJ);
 }
 
+// Prédio de tijolos (Revisão final, item 3): modelo procedural de planta
+// BUILDING_WIDTH x BUILDING_WIDTH já em metros (escala 1, base em y = 0,
+// centrado), com a fachada (+Z) voltada para a pista: paredes com red_brick,
+// vidraças e acabamento (embasamento, peitoris, cornija/telhado) com o atlas.
+void DrawBrickBuilding(const Track& track, const BuildingInstance& b)
+{
+    static const char* const PARTS[BRICK_BUILDING_MAX_FLOORS + 1][3] = {
+        {NULL, NULL, NULL}, {NULL, NULL, NULL},
+        {"brick_building_2_walls", "brick_building_2_windows", "brick_building_2_trim"},
+        {"brick_building_3_walls", "brick_building_3_windows", "brick_building_3_trim"},
+        {"brick_building_4_walls", "brick_building_4_windows", "brick_building_4_trim"}};
+    const int floors = std::min(std::max(b.brick_floors, BRICK_BUILDING_MIN_FLOORS), BRICK_BUILDING_MAX_FLOORS);
+    const float yaw = (b.x < 0.0f) ? 1.5707963f : -1.5707963f; // +Z do modelo -> centro da pista
+    const glm::mat4 model = TrackPlacement(track.FrameAt(b.s), b.x, 0.0f, yaw);
+    DrawObject(PARTS[floors][0], model, WALL, g_Tex.brick, UV_OBJ);
+    DrawObject(PARTS[floors][1], model, BUILDING, g_Tex.atlas, UV_OBJ);
+    DrawObject(PARTS[floors][2], model, BUILDING, g_Tex.atlas, UV_OBJ, 1.0f, BRICK_TRIM_TINT);
+}
+
 // Prédio com a fachada (+Z do modelo) voltada para a pista, escala uniforme
 // para caber em BUILDING_WIDTH x BUILDING_WIDTH (a altura vem do modelo).
 void DrawBuilding(const Track& track, const BuildingInstance& b)
 {
+    if (b.brick_floors > 0)
+    {
+        DrawBrickBuilding(track, b);
+        return;
+    }
     const char* name = BUILDING_MODELS[b.variant];
     const glm::vec3 ms = ObjectSize(name);
     const float k = BUILDING_WIDTH / std::max(ms.x, ms.z);
@@ -1411,7 +1458,8 @@ void DrawTunnelPiece(const Track& track, const TunnelPiece& piece)
     const TrackFrame f = track.FrameAt(piece.s);
     if (piece.kind == TUNNEL_PIECE_SECTION)
     {
-        DrawObject("tunnel_section", TrackPlacement(f, 0.0f, 0.0f, 0.0f), TUNNEL, g_Tex.brick, UV_OBJ);
+        DrawObject("tunnel_section", TrackPlacement(f, 0.0f, 0.0f, 0.0f), TUNNEL, g_Tex.vault, UV_OBJ,
+                   VAULT_UV_SCALE, VAULT_TINT);
         return;
     }
     const float yaw = (piece.kind == TUNNEL_PIECE_EXIT) ? 3.1415927f : 0.0f;

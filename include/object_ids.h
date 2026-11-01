@@ -29,6 +29,7 @@ const int PARTICLE          = 16;
 const int LAMP              = 17; // cabeça emissiva do poste de luz
 const int LAMP_POLE         = 18; // haste do poste de luz
 const int SLEEPER           = 19; // dormentes de madeira sob os trilhos
+const int WALL              = 20; // muros de pedra e paredes dos prédios de tijolo
 
 // ---- Modos de geração de coordenadas de textura (uniform "uv_mode") ----
 const int UV_OBJ        = 0; // UV vindas do arquivo OBJ (atributo texcoords)

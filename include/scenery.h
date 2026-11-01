@@ -100,18 +100,29 @@ size_t MaxSleeperVertices();
 // (/SLEEPER_TEXTURE_TILE), com o veio da madeira ao longo do dormente.
 void BuildSleeperStrips(const Track& track, float player_s, StripBatch* out);
 
+// Prédios de tijolo (Revisão final, item 3; SPEC: "prédios do ambiente com
+// texturas de tijolos"): um a cada BRICK_BUILDING_EVERY posições de cada lado
+// (com fases diferentes nos dois lados) é um prédio de tijolos procedural
+// (data/procedural/brick_building.obj, tools/gen_models.py) de
+// BRICK_BUILDING_MIN_FLOORS a BRICK_BUILDING_MAX_FLOORS andares, com planta
+// BUILDING_WIDTH x BUILDING_WIDTH (escala 1: as UV dos tijolos estão em metros).
+const int BRICK_BUILDING_EVERY      = 3;
+const int BRICK_BUILDING_MIN_FLOORS = 2;
+const int BRICK_BUILDING_MAX_FLOORS = 4;
+
 // Um prédio: posição na pista (s, x lateral do centro), modelo e tom.
 struct BuildingInstance {
     float s;
     float x;
-    int variant; // [0, BUILDING_VARIANT_COUNT)
-    int tint;    // [0, BUILDING_TINT_COUNT)
+    int variant;      // [0, BUILDING_VARIANT_COUNT): modelo da Kenney (se brick_floors == 0)
+    int tint;         // [0, BUILDING_TINT_COUNT)
+    int brick_floors; // 0 = modelo da Kenney; senão, prédio de tijolos com esse número de andares
 };
 
 // Limpa *out e lista os prédios em s = k*BUILDING_SPACING no trecho visível,
-// dos dois lados. Modelo e tom dependem só de (k, lado): o mesmo prédio não
-// muda de um quadro para o outro. Prédios que encostariam num túnel (ou nos
-// seus portais, com folga TUNNEL_CLEAR_MARGIN) são omitidos.
+// dos dois lados. Modelo, tom e tijolo dependem só de (k, lado): o mesmo
+// prédio não muda de um quadro para o outro. Prédios que encostariam num
+// túnel (ou nos seus portais, com folga TUNNEL_CLEAR_MARGIN) são omitidos.
 void ComputeBuildings(const Track& track, float player_s, std::vector<BuildingInstance>* out);
 
 // Um poste de luz: posição na pista (s, x lateral).
@@ -127,6 +138,40 @@ struct LampInstance {
 // luzes usam LIGHT_CANDIDATE_BEHIND, veja o fade das luzes abaixo).
 void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out,
                   float behind = DESPAWN_BEHIND);
+
+// Trecho [s0, s1] da pista (de um túnel, ou de muro).
+struct TunnelSpan {
+    float s0;
+    float s1;
+};
+
+// Muros de contenção de pedra (Revisão final, item 3; SPEC: "paredes com
+// texturas de pedra"; images/spec/image3.png tem muros contínuos ao lado da
+// pista): dos dois lados, entre os postes (x = ±LAMP_OFFSET_X; a haste vai
+// até LAMP_POLE_BACK atrás disso) e a face dos prédios (x = ±(BUILDING_OFFSET_X
+// - BUILDING_WIDTH/2) = ±6), seguindo a pista também nas curvas (faixas como
+// os trilhos, sem frestas). Ficam fora dos túneis e a TUNNEL_PORTAL_DEPTH +
+// TUNNEL_CLEAR_MARGIN dos portais (o portal é mais largo que o muro), com uma
+// tampa em cada ponta cortada. Fora das faixas: nada do jogo encosta neles.
+const float LAMP_POLE_BACK            = 0.18f;  // m: a haste do poste vai até LAMP_OFFSET_X + isto
+const float RETAINING_WALL_X          = 5.85f;  // m: centro do muro (lateral)
+const float RETAINING_WALL_THICKNESS  = 0.24f;  // m
+const float RETAINING_WALL_HEIGHT     = 1.6f;   // m
+const float STONE_TEXTURE_TILE        = 2.5f;   // m por repetição de stone_wall_diff_1k.jpg
+const int   MAX_RETAINING_WALL_RANGES = 8;      // trechos contínuos de muro no trecho visível (folga)
+
+// Limpa *out e lista os trechos [s0, s1] do trecho visível (de StripStart a
+// player_s + SPAWN_AHEAD) que têm muro: tudo menos os túneis com a folga dos
+// portais. Em ordem de s, sem sobreposição.
+void RetainingWallRanges(const Track& track, float player_s, std::vector<TunnelSpan>* out);
+
+// Limpa *out e gera os muros: para cada trecho e lado, face de dentro, face
+// de fora e topo (faixas ao longo da pista) e, nas pontas cortadas por túnel,
+// uma tampa (faixa de 4 vértices). UV em metros / STONE_TEXTURE_TILE.
+void BuildRetainingWallStrips(const Track& track, float player_s, StripBatch* out);
+
+// Capacidade (vértices) para BuildRetainingWallStrips.
+size_t MaxRetainingWallVertices();
 
 // Par (distância², índice) usado por PickNearestPoints.
 struct PointDistance {
@@ -236,11 +281,6 @@ struct TunnelPiece {
     int kind;  // TUNNEL_PIECE_*
 };
 
-// Trecho [s0, s1] de um túnel.
-struct TunnelSpan {
-    float s0;
-    float s1;
-};
 
 // Limpa *out e lista os túneis (segmentos com tunnel = true) que cruzam o
 // trecho visível [player_s - DESPAWN_BEHIND, player_s + SPAWN_AHEAD] (contando

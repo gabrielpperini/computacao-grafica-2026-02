@@ -2013,6 +2013,13 @@ static const AuditPose AUDIT_POSES[] = {
     {"curve_ground_in",  2, 10.0f,  5.0f, -5.0f,  0.40f, 25.0f, -5.0f, 0.00f},
     {"curve_ground_out", 2, 10.0f,  5.0f, 17.0f,  0.50f, 25.0f, 17.0f, 0.00f},
     {"exit_portal",      3, 10.0f, 22.0f, -2.0f,  2.00f,  0.0f,  0.0f, 3.00f},
+    // Revisão final, item 3: muros de pedra e prédios de tijolo (na largada, o
+    // prédio da esquerda em s = 0 e o da direita em s = 12 são de tijolo).
+    {"wall_top_grazing", 0, 10.0f, 12.0f,  5.0f,  1.75f, 40.0f,  5.85f, 1.60f},
+    {"wall_end_cap",     1,-20.0f, -0.8f,  4.3f,  2.20f, -4.0f,  6.20f, 0.60f},
+    {"brick_facade",     0, 10.0f,  6.0f, -3.0f,  2.50f,  0.0f, -6.0f, 3.50f},
+    {"wall_brick_gap",   0, 10.0f,  4.0f,  4.8f,  1.00f, 16.0f,  6.5f, 2.00f},
+    {"vault_stone",      1, 20.0f, 14.0f, -1.0f,  2.00f, 26.0f,  4.0f, 5.50f},
 };
 static const int AUDIT_POSE_COUNT = (int)(sizeof(AUDIT_POSES) / sizeof(AUDIT_POSES[0]));
 static TrackSegment g_AuditTunnel, g_AuditCurve;
