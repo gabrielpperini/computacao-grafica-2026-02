@@ -195,9 +195,7 @@ void Game::Update(float dt)
     // barreira (0.3 m); testando só a caixa final ele "atravessaria" a
     // barreira sem colidir (tunneling).
     AABB now = PlayerBox();
-    AABB swept;
-    swept.min = glm::min(before.min, now.min);
-    swept.max = glm::max(before.max, now.max);
+    const AABB swept = SweepAABB(before, now);
 
     // Obstáculo (qualquer parte sólida) -> fim de jogo. Um obstáculo que
     // andou neste passo também é varrido (união da caixa antes e depois), pelo
@@ -225,11 +223,7 @@ void Game::Update(float dt)
             parts[0].max.y -= ROOF_TOLERANCE;
         const float dz = obstacle_dz_[i];
         for (int k = 0; k < n; ++k) {
-            if (dz < 0.0f)
-                parts[k].max.z -= dz;
-            else if (dz > 0.0f)
-                parts[k].min.z -= dz;
-            if (AABBIntersectsAABB(swept, parts[k])) {
+            if (AABBIntersectsAABB(swept, SweepAABBAlongZ(parts[k], dz))) {
                 mode = GameMode::GAME_OVER;
                 break;
             }
@@ -567,9 +561,7 @@ float Game::SupportHeight(const AABB& before, const AABB& now, bool include_roof
     // teto - ROOF_TOLERANCE: sem isto ele não chegaria ao teto do trem (e
     // bateria na frente dele). A rampa varrida o leva até a altura em que a
     // frente da pegada está agora (no fim da rampa: o teto).
-    AABB reach = now;
-    reach.min = glm::min(before.min, now.min);
-    reach.max = glm::max(before.max, now.max);
+    const AABB reach = SweepAABB(before, now);
 
     float g = 0.0f; // leito da pista
     for (size_t i = 0; i < obstacles.size(); ++i) {

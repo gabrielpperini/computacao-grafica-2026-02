@@ -1104,6 +1104,44 @@ void Test_AABBOverlap()
     assert(!AABBIntersectsAABB(a, Box(2.5f, 0, 0, 3, 2, 2)));      // ao lado
 }
 
+// Caixa varrida (Tarefa 7.1a): a união da caixa antes e depois do passo.
+void Test_SweepAABB()
+{
+    AABB before = Box(0, 0, 0, 1, 1, 1);
+    AABB after  = Box(2, 0.5f, -1, 3, 1.5f, 0);
+    AABB s = SweepAABB(before, after);
+    assert(nearf(s.min.x, 0) && nearf(s.min.y, 0) && nearf(s.min.z, -1));
+    assert(nearf(s.max.x, 3) && nearf(s.max.y, 1.5f) && nearf(s.max.z, 1));
+    // Simétrica e idempotente.
+    AABB r = SweepAABB(after, before);
+    assert(nearf(r.min.z, s.min.z) && nearf(r.max.x, s.max.x));
+    AABB same = SweepAABB(before, before);
+    assert(nearf(same.min.x, 0) && nearf(same.max.z, 1));
+    // Intersecta tudo o que qualquer uma das duas caixas intersecta.
+    assert(AABBIntersectsAABB(s, Box(0.2f, 0.2f, 0.2f, 0.4f, 0.4f, 0.4f)));
+    assert(AABBIntersectsAABB(s, Box(2.2f, 0.7f, -0.8f, 2.4f, 0.9f, -0.6f)));
+}
+
+void Test_SweepAABBAlongZ()
+{
+    // Obstáculo que andou dz < 0 neste passo (trem vindo): a caixa varrida vai
+    // da posição antiga (max.z - dz) à atual.
+    AABB now = Box(-1, 0, 10, 1, 3, 23);
+    AABB s = SweepAABBAlongZ(now, -1.9f);
+    assert(nearf(s.min.z, 10) && nearf(s.max.z, 23 + 1.9f));
+    assert(nearf(s.min.x, -1) && nearf(s.max.x, 1) && nearf(s.min.y, 0) && nearf(s.max.y, 3));
+    // dz > 0: a posição antiga ficava mais atrás (min.z - dz).
+    s = SweepAABBAlongZ(now, 2.0f);
+    assert(nearf(s.min.z, 10 - 2.0f) && nearf(s.max.z, 23));
+    // Parado: a própria caixa.
+    s = SweepAABBAlongZ(now, 0.0f);
+    assert(nearf(s.min.z, 10) && nearf(s.max.z, 23));
+    // Pega o jogador que o trem atravessou num passo: caixa fina "atrás" da
+    // posição atual do trem, na altura do jogador.
+    assert(AABBIntersectsAABB(SweepAABBAlongZ(now, -1.9f), Box(-0.4f, 0, 23.5f, 0.4f, 1.8f, 24.5f)));
+    assert(!AABBIntersectsAABB(now, Box(-0.4f, 0, 23.5f, 0.4f, 1.8f, 24.5f)));
+}
+
 void Test_SphereCornerMiss() // perto do canto, mas fora
 {
     AABB box = Box(0, 0, 0, 1, 1, 1);

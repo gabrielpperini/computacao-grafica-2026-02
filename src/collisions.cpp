@@ -2,6 +2,8 @@
 // arquivo; ele centraliza as funções usadas pelas interações:
 //   - obstáculo (trem, barreira): AABB jogador x AABB obstáculo -> game over
 //     (AABBIntersectsAABB), exceto quando o jogador pousa no teto (LandsOnTop);
+//     as duas caixas são varridas no passo (SweepAABB, SweepAABBAlongZ), para
+//     que nenhuma "atravesse" a outra entre dois quadros;
 //   - moedas e power-ups: esfera do item x AABB do jogador -> coleta
 //     (SphereIntersectsAABB);
 //   - rampas e teto do trem: altura da rampa sob a pegada do jogador
@@ -21,6 +23,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <glm/common.hpp>
+
 #include "scenery.h" // TunnelCeilingHeight, TUNNEL_INNER_HALF_WIDTH
 
 AABB MakeAABB(glm::vec3 center, glm::vec3 half_extents)
@@ -38,6 +42,22 @@ bool AABBIntersectsAABB(const AABB& a, const AABB& b)
     return a.min.x <= b.max.x && a.max.x >= b.min.x &&
            a.min.y <= b.max.y && a.max.y >= b.min.y &&
            a.min.z <= b.max.z && a.max.z >= b.min.z;
+}
+
+AABB SweepAABB(const AABB& before, const AABB& after)
+{
+    AABB box;
+    box.min = glm::min(before.min, after.min);
+    box.max = glm::max(before.max, after.max);
+    return box;
+}
+
+AABB SweepAABBAlongZ(const AABB& now, float dz)
+{
+    AABB before = now;
+    before.min.z -= dz;
+    before.max.z -= dz;
+    return SweepAABB(before, now);
 }
 
 bool SphereIntersectsAABB(glm::vec3 center, float radius, const AABB& box)

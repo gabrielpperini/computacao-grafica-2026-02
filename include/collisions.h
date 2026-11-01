@@ -24,6 +24,16 @@ AABB MakeAABB(glm::vec3 center, glm::vec3 half_extents);
 // Interseção caixa-caixa (faces encostadas contam como interseção).
 bool AABBIntersectsAABB(const AABB& a, const AABB& b);
 
+// Caixa varrida de um movimento: a menor caixa que contém a caixa antes e a
+// caixa depois do passo. Testar só a posição final deixaria um corpo rápido
+// "atravessar" o outro entre dois quadros (tunneling).
+AABB SweepAABB(const AABB& before, const AABB& after);
+
+// Idem para um obstáculo que andou dz (m) ao longo de s neste passo e está em
+// 'now': a caixa antes era 'now' deslocada de -dz em z (dz < 0: o trem vindo
+// na direção do jogador estendia-se para trás de max.z; dz > 0, de min.z).
+AABB SweepAABBAlongZ(const AABB& now, float dz);
+
 // Esfera-caixa: ponto da caixa mais próximo do centro a distância <= raio.
 bool SphereIntersectsAABB(glm::vec3 center, float radius, const AABB& box);
 
