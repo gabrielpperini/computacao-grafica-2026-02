@@ -9,8 +9,10 @@
 
 #include <glm/vec4.hpp>
 
+#include "camera.h"
 #include "game.h"
 #include "game_config.h"
+#include "scenery.h"
 #include "track.h"
 
 using glm::vec4;
@@ -307,6 +309,148 @@ void Test_GameKeepsTrackAhead()
     assert(g.track.SegmentAt(g.player.s) != nullptr);
 }
 
+// ---------------------------------------------------------------- Câmera (1.3)
+
+// Referencial de uma pista reta em s (heading 0: forward = -Z, right = +X).
+static TrackFrame StraightFrame(float s)
+{
+    Track t(1);
+    t.EnsureGeneratedUntil(s + 10.0f);
+    return t.FrameAt(s);
+}
+
+void Test_CameraSnapEqualsTarget()
+{
+    ThirdPersonCamera cam;
+    TrackFrame f = StraightFrame(10.0f); // jogador em (0, 0, -10)
+    cam.Snap(f, LANE_WIDTH, false);
+    CameraPose p = cam.Pose();
+    // Só 1/3 do deslocamento lateral; 6 m atrás (+Z) e 3.5 m acima.
+    float lat = LANE_WIDTH / 3.0f;
+    assert(near(p.position, vec4(lat, CAMERA_HEIGHT, -10.0f + CAMERA_BACK, 1)));
+    // Olha para jogador + forward*4 + up*1 (com o mesmo lateral).
+    vec4 look(lat, CAMERA_LOOK_HEIGHT, -10.0f - CAMERA_LOOK_AHEAD, 1);
+    assert(near(p.view_vector, look - p.position));
+    assert(near(p.up, vec4(0, 1, 0, 0)));
+}
+
+void Test_CameraConverges() // troca de faixa: move aos poucos, sem passar do alvo
+{
+    ThirdPersonCamera cam;
+    TrackFrame f = StraightFrame(0.0f);
+    cam.Snap(f, 0.0f, false);
+    float target = LANE_WIDTH / 3.0f;
+    cam.Update(f, LANE_WIDTH, false, 1.0f / 60.0f);
+    float x1 = cam.Pose().position.x;
+    assert(x1 > 0.0f && x1 < 0.5f * target); // suave: não pula para o alvo
+    float prev = x1;
+    for (int i = 0; i < 120; i++) { // 2 s
+        cam.Update(f, LANE_WIDTH, false, 1.0f / 60.0f);
+        float x = cam.Pose().position.x;
+        assert(x >= prev && x <= target + kEps); // monotônico, sem overshoot
+        prev = x;
+    }
+    assert(nearf(prev, target, 1e-3f));
+}
+
+void Test_CameraDtIndependent() // 30 Hz e 120 Hz chegam ao mesmo lugar
+{
+    Track t(1);
+    t.EnsureGeneratedUntil(100.0f);
+    ThirdPersonCamera a, b;
+    a.Snap(t.FrameAt(0.0f), 0.0f, false);
+    b.Snap(t.FrameAt(0.0f), 0.0f, false);
+    // 0.5 s: jogador anda a 12 m/s, troca para a faixa da direita e entra
+    // num túnel (alvo de altura/recuo muda no meio do caminho).
+    for (int i = 1; i <= 15; i++) {
+        float s = 12.0f * i / 30.0f;
+        a.Update(t.FrameAt(s), LANE_WIDTH, true, 1.0f / 30.0f);
+    }
+    for (int i = 1; i <= 60; i++) {
+        float s = 12.0f * i / 120.0f;
+        b.Update(t.FrameAt(s), LANE_WIDTH, true, 1.0f / 120.0f);
+    }
+    assert(near(a.Pose().position, b.Pose().position, 1e-3f));
+    assert(near(a.Pose().view_vector, b.Pose().view_vector, 1e-3f));
+    // E a câmera acompanha o avanço do jogador sem atraso (z ~ -6 + recuo).
+    assert(a.Pose().position.z < -6.0f + CAMERA_BACK);
+}
+
+void Test_CameraTunnelLowerCloser()
+{
+    TrackFrame f = StraightFrame(20.0f);
+    ThirdPersonCamera out, in;
+    out.Snap(f, 0.0f, false);
+    in.Snap(f, 0.0f, true);
+    vec4 po = out.Pose().position, pi = in.Pose().position;
+    assert(pi.y < po.y);                                     // mais baixa
+    assert(std::fabs(pi.z - f.position.z) < std::fabs(po.z - f.position.z)); // mais perto
+    assert(nearf(pi.y, CAMERA_TUNNEL_HEIGHT));
+    assert(nearf(pi.z, f.position.z + CAMERA_TUNNEL_BACK));
+    // A transição é suave: um passo de 1/60 s não chega ao alvo do túnel.
+    out.Update(f, 0.0f, true, 1.0f / 60.0f);
+    float y = out.Pose().position.y;
+    assert(y < po.y && y > CAMERA_TUNNEL_HEIGHT + 0.5f);
+}
+
+// ---------------------------------------------------------------- Cenário (1.3)
+
+void Test_SceneryFitsCapacity() // nunca passa da capacidade dos buffers da GPU
+{
+    Game g(1);
+    StripBatch ground, rails;
+    const float ss[] = {0.0f, 7.3f, 1234.567f, 98765.4f};
+    for (float s : ss) {
+        g.track.EnsureGeneratedUntil(s + SPAWN_AHEAD);
+        BuildGroundStrips(g.track, s, &ground);
+        BuildRailStrips(g.track, s, &rails);
+        assert(ground.first.size() == (size_t)GROUND_STRIP_COUNT);
+        assert(rails.first.size() == (size_t)RAIL_STRIP_COUNT);
+        for (size_t i = 0; i < ground.count.size(); i++)
+            assert((size_t)ground.count[i] <= MaxVerticesPerStrip());
+        for (size_t i = 0; i < rails.count.size(); i++)
+            assert((size_t)rails.count[i] <= MaxVerticesPerStrip());
+        assert(ground.VertexCount() <= GROUND_STRIP_COUNT * MaxVerticesPerStrip());
+        assert(rails.VertexCount() <= RAIL_STRIP_COUNT * MaxVerticesPerStrip());
+        assert(ground.uvs.size() == ground.VertexCount() * 2);
+        assert(rails.normals.size() == rails.VertexCount() * 4);
+    }
+}
+
+void Test_RailsAboveGroundAndInsideBed()
+{
+    Track t(1);
+    t.EnsureGeneratedUntil(200);
+    StripBatch rails;
+    BuildRailStrips(t, 50.0f, &rails);
+    for (size_t v = 0; v < rails.VertexCount(); v++) {
+        assert(nearf(rails.positions[4 * v + 1], RAIL_HEIGHT));
+        assert(std::fabs(rails.positions[4 * v + 0]) < TRACK_BED_HALF_WIDTH);
+    }
+}
+
+void Test_BuildingsCoverVisibleRange()
+{
+    std::vector<BuildingInstance> a, b;
+    ComputeBuildings(100.0f, &a);
+    assert(!a.empty());
+    for (size_t i = 0; i < a.size(); i++) {
+        assert(a[i].s >= 100.0f - DESPAWN_BEHIND && a[i].s <= 100.0f + SPAWN_AHEAD);
+        assert(nearf(std::fabs(a[i].x), BUILDING_OFFSET_X));
+        assert(a[i].height >= BUILDING_MIN_HEIGHT && a[i].height <= BUILDING_MIN_HEIGHT + 8.0f);
+    }
+    // Mesmo prédio (mesmo s e lado) mantém a altura quando o jogador anda.
+    ComputeBuildings(130.0f, &b);
+    int matched = 0;
+    for (size_t i = 0; i < a.size(); i++)
+        for (size_t j = 0; j < b.size(); j++)
+            if (a[i].s == b[j].s && a[i].x == b[j].x) {
+                assert(a[i].height == b[j].height);
+                matched++;
+            }
+    assert(matched > 10);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -331,6 +475,13 @@ int main()
     Test_InputIgnoredWhenNotPlaying();
     Test_GameResetRestoresState();
     Test_GameKeepsTrackAhead();
+    Test_CameraSnapEqualsTarget();
+    Test_CameraConverges();
+    Test_CameraDtIndependent();
+    Test_CameraTunnelLowerCloser();
+    Test_SceneryFitsCapacity();
+    Test_RailsAboveGroundAndInsideBed();
+    Test_BuildingsCoverVisibleRange();
     printf("OK\n");
     return 0;
 }
