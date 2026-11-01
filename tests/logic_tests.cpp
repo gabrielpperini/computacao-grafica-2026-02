@@ -1635,6 +1635,275 @@ void Test_LanesConcentricInCurve()
     }
 }
 
+// ------------------------------------------------------ Trens em movimento (4.3)
+
+// Jogo sem spawn automático e com uma reta longa (600 m) logo depois da reta
+// da largada, para posicionar trens à mão em qualquer s até ~700 m.
+static Game StraightGame()
+{
+    Game g = QuietGame();
+    g.track = Track(1);
+    g.track.AppendSegment(600.0f, 0.0f, false);
+    return g;
+}
+
+void Test_StraightRunStart()
+{
+    Track t(1);
+    const float L0 = t.Segments()[0].length;
+    t.AppendSegment(60.0f, 1.0f / TRACK_CURVE_RADIUS, false);  // curva
+    t.AppendSegment(80.0f, 0.0f, false);                       // reta
+    t.AppendSegment(40.0f, 0.0f, true);                        // túnel (também reto)
+    t.AppendSegment(70.0f, 0.0f, false);                       // reta
+    const float a = L0 + 60.0f;
+    assert(nearf(t.StraightRunStart(10.0f), 0.0f));
+    assert(nearf(t.StraightRunStart(a + 1.0f), a));
+    assert(nearf(t.StraightRunStart(a + 80.0f + 10.0f), a));   // atravessa reta + túnel
+    assert(nearf(t.StraightRunStart(a + 120.0f + 10.0f), a));
+    assert(nearf(t.StraightRunStart(L0 + 30.0f), L0 + 30.0f)); // em curva: o próprio s
+}
+
+void Test_MovingTrainAdvances()
+{
+    Game g = StraightGame();
+    Obstacle t = g.MakeMovingTrain(1, 200.0f, -MOVING_TRAIN_SPEED);
+    assert(nearf(t.velocity, -MOVING_TRAIN_SPEED));
+    assert(t.min_s <= t.box.min.z);
+    g.obstacles.push_back(t);
+    Run(g, 1.0f);
+    const Obstacle& o = g.obstacles[0];
+    assert(nearf(o.s, 200.0f - MOVING_TRAIN_SPEED, 1e-3f));
+    // A caixa acompanha o s (centro e comprimento preservados).
+    assert(nearf(0.5f * (o.box.min.z + o.box.max.z), o.s, 1e-3f));
+    assert(nearf(o.box.max.z - o.box.min.z, OBSTACLE_SIZE[(int)ObstacleType::TRAIN][2], 1e-3f));
+    assert(g.mode == GameMode::PLAYING);
+
+    // O deslocamento depende do tempo, não do número de quadros.
+    Game h = StraightGame();
+    h.obstacles.push_back(h.MakeMovingTrain(1, 200.0f, -MOVING_TRAIN_SPEED));
+    Run(h, 1.0f, 1.0f / 20.0f);
+    assert(nearf(h.obstacles[0].s, o.s, 1e-3f));
+
+    // dt gigante vale no máximo MAX_DT (o trem também).
+    Game k = StraightGame();
+    k.obstacles.push_back(k.MakeMovingTrain(1, 200.0f, -MOVING_TRAIN_SPEED));
+    k.Update(10.0f);
+    assert(nearf(k.obstacles[0].s, 200.0f - MOVING_TRAIN_SPEED * MAX_DT, 1e-4f));
+
+    // Trem parado (velocity 0) não anda.
+    Game z = StraightGame();
+    z.obstacles.push_back(z.MakeObstacle(ObstacleType::TRAIN, 1, 200.0f));
+    Run(z, 1.0f);
+    assert(nearf(z.obstacles[0].s, 200.0f));
+}
+
+// O trem para quando o seu nariz chegaria ao começo da reta onde nasceu (aqui
+// há uma curva logo antes) e fica parado lá.
+void Test_MovingTrainStopsAtSegmentEnd()
+{
+    Game g = QuietGame();
+    g.track = Track(1);
+    const float L0 = g.track.Segments()[0].length;
+    g.track.AppendSegment(60.0f, 1.0f / TRACK_CURVE_RADIUS, false);
+    g.track.AppendSegment(120.0f, 0.0f, false);
+    const float run_start = L0 + 60.0f;
+    Obstacle t = g.MakeMovingTrain(1, run_start + 100.0f, -MOVING_TRAIN_SPEED);
+    assert(t.velocity < 0.0f);
+    assert(nearf(t.min_s, run_start));
+    g.obstacles.push_back(t);
+    bool stopped = false;
+    for (int i = 0; i < 60 * 20 && !stopped; i++) {
+        g.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        assert(g.obstacles[0].box.min.z >= run_start - 1e-3f); // nunca entra na curva
+        stopped = g.obstacles[0].velocity == 0.0f;
+    }
+    assert(stopped);
+    const Obstacle& o = g.obstacles[0];
+    assert(nearf(o.box.min.z, run_start, 1e-3f));
+    assert(nearf(0.5f * (o.box.min.z + o.box.max.z), o.s, 1e-3f));
+    float s_stop = o.s;
+    Run(g, 0.5f); // continua parado
+    assert(nearf(g.obstacles[0].s, s_stop) && g.obstacles[0].velocity == 0.0f);
+
+    // Um trem que não cabe inteiro numa reta não nasce móvel (fica parado).
+    Obstacle bad = g.MakeMovingTrain(1, L0 + 20.0f, -MOVING_TRAIN_SPEED); // em cima da curva
+    assert(bad.velocity == 0.0f);
+}
+
+// Um obstáculo à frente na mesma faixa também faz o trem parar (sem atravessá-lo).
+void Test_MovingTrainStopsBehindObstacle()
+{
+    Game g = StraightGame();
+    g.obstacles.push_back(g.MakeObstacle(ObstacleType::SIGN, 1, 300.0f));
+    g.obstacles.push_back(g.MakeMovingTrain(1, 400.0f, -MOVING_TRAIN_SPEED));
+    // Um segundo trem móvel logo atrás do primeiro (mesma faixa): para atrás dele.
+    g.obstacles.push_back(g.MakeMovingTrain(1, 430.0f, -MOVING_TRAIN_SPEED));
+    // Outra faixa: não é afetada pela placa.
+    g.obstacles.push_back(g.MakeMovingTrain(-1, 400.0f, -MOVING_TRAIN_SPEED));
+    for (int i = 0; i < 60 * 14; i++)
+        g.Update(1.0f / 60.0f);
+    assert(g.mode == GameMode::PLAYING);
+    const Obstacle& sign = g.obstacles[0];
+    const Obstacle& a = g.obstacles[1];
+    const Obstacle& b = g.obstacles[2];
+    const Obstacle& c = g.obstacles[3];
+    assert(a.velocity == 0.0f && b.velocity == 0.0f);
+    assert(a.box.min.z >= sign.box.max.z);
+    assert(b.box.min.z >= a.box.max.z);
+    assert(nearf(a.box.min.z, sign.box.max.z + TRAIN_STOP_GAP, 1e-3f));
+    assert(nearf(b.box.min.z, a.box.max.z + TRAIN_STOP_GAP, 1e-3f));
+    assert(c.velocity < 0.0f); // a outra faixa segue em frente
+}
+
+// Contato com um trem móvel: sem desvio -> GAME_OVER no instante esperado;
+// desviando de faixa antes do contato -> segue vivo.
+void Test_MovingTrainHitAndDodge()
+{
+    Game hit = StraightGame();
+    hit.obstacles.push_back(hit.MakeMovingTrain(0, 200.0f, -MOVING_TRAIN_SPEED));
+    for (int i = 0; i < 60 * 20 && hit.mode == GameMode::PLAYING; i++)
+        hit.Update(1.0f / 60.0f);
+    assert(hit.mode == GameMode::GAME_OVER);
+    // 12 t + 0.075 t^2 + 0.4 = (200 - 6.5) - 8 t  ->  t ~ 9.3 s
+    assert(hit.elapsed > 9.0f && hit.elapsed < 9.6f);
+
+    Game dodge = StraightGame();
+    dodge.obstacles.push_back(dodge.MakeMovingTrain(0, 200.0f, -MOVING_TRAIN_SPEED));
+    Run(dodge, 5.0f); // bem antes do contato (3 s de aviso)
+    assert(dodge.mode == GameMode::PLAYING);
+    dodge.HandleInput(Input::RIGHT);
+    Run(dodge, 8.0f);
+    assert(dodge.mode == GameMode::PLAYING);
+    assert(dodge.player.s > 100.0f);
+}
+
+// Sem "tunneling": mesmo com velocidade de fechamento alta e dt máximo, um
+// obstáculo fino não atravessa o jogador entre dois quadros.
+void Test_MovingTrainNoTunneling()
+{
+    // Caso do enunciado: jogador a 30 m/s, trem a -8 m/s, dt = 0.05 s, trem
+    // fino (0.3 m) que cruza a caixa do jogador entre dois quadros.
+    {
+        Game g = QuietGame();
+        g.SetObstacleExtents(ObstacleType::TRAIN, glm::vec3(1.1f, 1.6f, 0.15f));
+        g.player.speed = PLAYER_MAX_SPEED;
+        Obstacle t = g.MakeObstacle(ObstacleType::TRAIN, 0, 0.7f); // z em [0.55, 0.85]
+        t.velocity = -MOVING_TRAIN_SPEED;
+        t.min_s = -1e9f;
+        g.obstacles.push_back(t);
+        AABB before = g.PlayerBox(); // z em [-0.4, 0.4]
+        assert(before.max.z < t.box.min.z);
+        g.Update(MAX_DT);            // jogador a [1.1, 1.9]; trem a [0.15, 0.45]
+        assert(g.PlayerBox().min.z > g.obstacles[0].box.max.z); // nenhum dos dois toca o outro
+        assert(g.mode == GameMode::GAME_OVER);
+    }
+    // Obstáculo muito mais rápido que o jogador: só a caixa varrida DO
+    // OBSTÁCULO (antes/depois) detecta o cruzamento.
+    {
+        Game g = QuietGame();
+        g.SetObstacleExtents(ObstacleType::TRAIN, glm::vec3(1.1f, 1.6f, 0.15f));
+        Obstacle t = g.MakeObstacle(ObstacleType::TRAIN, 0, 3.15f); // z em [3.0, 3.3]
+        t.velocity = -100.0f;                                      // 5 m por passo
+        t.min_s = -1e9f;
+        g.obstacles.push_back(t);
+        g.Update(MAX_DT);            // trem a [-2.0, -1.7]; jogador varreu [-0.4, 1.0]
+        assert(g.obstacles[0].box.max.z < g.PlayerBox().min.z);
+        assert(g.mode == GameMode::GAME_OVER);
+    }
+}
+
+// Piloto fantasma: segue a faixa segura de cada chunk (a faixa muda na emenda
+// livre entre chunks) e ignora barreiras.
+static int AutopilotLane(const Game& g)
+{
+    int c = (int)std::floor(g.player.s / CHUNK_LENGTH);
+    float end = (c + 1) * CHUNK_LENGTH;
+    return g.SafeLaneOfChunk(g.player.s >= end - CHUNK_CLEAR_TAIL ? c + 1 : c);
+}
+
+// Bateu em placa/trem? (barreira não conta: o piloto não pula nem rola.)
+static bool HitSolid(const Game& g)
+{
+    const AABB p = g.PlayerBox();
+    for (size_t k = 0; k < g.obstacles.size(); k++) {
+        const Obstacle& o = g.obstacles[k];
+        if (!IsBlocking(o.type))
+            continue;
+        // Folga de 2 m em s (passo do jogador + do trem) e 0.5 m em x (troca de faixa).
+        if (p.max.z + 2.0f >= o.box.min.z && p.min.z - 2.0f <= o.box.max.z &&
+            p.max.x + 0.5f >= o.box.min.x && p.min.x - 0.5f <= o.box.max.x)
+            return true;
+    }
+    return false;
+}
+
+// Propriedades dos trens móveis gerados de verdade (Update + spawn por
+// chunks), em várias sementes: regras de spawn, e o piloto que segue a faixa
+// segura nunca bate em placa nem em trem (parado ou móvel).
+void Test_MovingTrainsSpawnAndStayPassable()
+{
+    int moving_total = 0, trains_total = 0;
+    for (unsigned seed = 1; seed <= 30; seed++) {
+        Game g(seed);
+        int prev_chunk = -1;
+        while (g.player.s < 5000.0f) {
+            g.player.lane = AutopilotLane(g);
+            g.Update(1.0f / 60.0f);
+            if (g.mode == GameMode::GAME_OVER) {
+                assert(!HitSolid(g)); // só pode ter sido barreira
+                g.mode = GameMode::PLAYING;
+            }
+            int top = prev_chunk;
+            for (size_t k = 0; k < g.obstacles.size(); k++) {
+                const Obstacle& o = g.obstacles[k];
+                int c = (int)std::floor(o.s / CHUNK_LENGTH);
+                if (c > prev_chunk && o.type == ObstacleType::TRAIN) {
+                    // Recém-gerado neste quadro.
+                    trains_total++;
+                    if (o.velocity < 0.0f) {
+                        moving_total++;
+                        // Aviso: visível por >= MOVING_TRAIN_WARNING segundos.
+                        assert(o.s - g.player.s >=
+                               (g.player.speed + MOVING_TRAIN_SPEED) * MOVING_TRAIN_WARNING - 1e-3f);
+                        assert(nearf(o.velocity, -MOVING_TRAIN_SPEED));
+                        assert(g.SafeLaneOfChunk(c) != o.lane); // faixa não segura
+                        assert(o.min_s <= o.box.min.z + 1e-3f);
+                        assert(g.track.IsStraightRange(o.min_s, o.box.max.z));
+                    } else {
+                        assert(o.velocity == 0.0f);
+                    }
+                }
+                top = std::max(top, c);
+            }
+            prev_chunk = top;
+        }
+    }
+    printf("  [trens moveis] %d de %d trens gerados\n", moving_total, trains_total);
+    assert(moving_total >= 30); // a funcionalidade aparece de fato
+    assert(moving_total < trains_total);
+}
+
+// Mesma semente -> mesmos trens móveis (decisão determinística).
+void Test_MovingTrainsDeterministic()
+{
+    auto run = [](unsigned seed) {
+        Game g(seed);
+        std::vector<float> out;
+        while (g.player.s < 1500.0f) {
+            g.player.lane = AutopilotLane(g);
+            g.Update(1.0f / 60.0f);
+            g.mode = GameMode::PLAYING;
+            for (size_t k = 0; k < g.obstacles.size(); k++)
+                if (g.obstacles[k].velocity < 0.0f)
+                    out.push_back(g.obstacles[k].s);
+        }
+        return out;
+    };
+    std::vector<float> a = run(7), b = run(7);
+    assert(!a.empty() && a == b);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -1721,6 +1990,15 @@ int main()
     Test_ResetClearsRunAndRespawnsSame();
     Test_NoTrainOnCurve();
     Test_LanesConcentricInCurve();
+    // Trens em movimento (4.3)
+    Test_StraightRunStart();
+    Test_MovingTrainAdvances();
+    Test_MovingTrainStopsAtSegmentEnd();
+    Test_MovingTrainStopsBehindObstacle();
+    Test_MovingTrainHitAndDodge();
+    Test_MovingTrainNoTunneling();
+    Test_MovingTrainsSpawnAndStayPassable();
+    Test_MovingTrainsDeterministic();
     printf("OK\n");
     return 0;
 }

@@ -10,6 +10,9 @@ namespace {
 // Mistura a semente do jogo para o gerador do spawn, de modo que a sequência
 // não seja a mesma do gerador da pista (que usa a semente pura).
 const unsigned kSpawnSeedMix = 0x9E3779B9u;
+// Idem para o sorteio de quais trens são móveis: gerador separado, para que
+// ele não altere a sequência de tipos/posições dos obstáculos (rng_).
+const unsigned kMovingSeedMix = 0x85EBCA6Bu;
 
 bool IsBarrier(ObstacleType t)
 {
@@ -35,7 +38,8 @@ int ObstacleParts(const Obstacle& o, AABB parts[3])
 Game::Game(unsigned seed)
     : mode(GameMode::PLAYING), track(seed), elapsed(0.0f), coins_collected(0),
       score(0.0f), multiplier(1), spawn_enabled(true), seed_(seed),
-      rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0)
+      rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0),
+      moving_rng_(seed ^ kMovingSeedMix)
 {
     for (int i = 0; i < OBSTACLE_TYPE_COUNT; i++)
         SetObstacleExtents((ObstacleType)i, 0.5f * glm::vec3(OBSTACLE_SIZE[i][0], OBSTACLE_SIZE[i][1],
@@ -64,8 +68,11 @@ void Game::Reset()
     multiplier = 1;
     next_chunk_ = 0;
     safe_lane_ = 0;
+    safe_lanes_.clear();
+    obstacle_dz_.clear();
 
     rng_.seed(seed_ ^ kSpawnSeedMix);
+    moving_rng_.seed(seed_ ^ kMovingSeedMix);
     track = Track(seed_);
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
 }
@@ -142,6 +149,9 @@ void Game::Update(float dt)
     // Rolamento
     player.roll_timer = std::max(player.roll_timer - dt, 0.0f);
 
+    // Trens móveis andam neste passo (a caixa deles anda junto).
+    MoveObstacles(dt);
+
     // Colisões com a caixa VARRIDA: a que envolve as caixas do jogador antes
     // e depois do passo. Na velocidade máxima com dt = MAX_DT o jogador anda
     // 1.5 m por passo, mais que a própria profundidade (0.8 m) somada à de uma
@@ -152,11 +162,19 @@ void Game::Update(float dt)
     swept.min = glm::min(before.min, now.min);
     swept.max = glm::max(before.max, now.max);
 
-    // Obstáculo (qualquer parte sólida) -> fim de jogo.
+    // Obstáculo (qualquer parte sólida) -> fim de jogo. Um obstáculo que
+    // andou neste passo também é varrido (união da caixa antes e depois), pelo
+    // mesmo motivo: a velocidade de fechamento com um trem móvel chega a
+    // 38 m/s (1.9 m por passo de MAX_DT).
     AABB parts[3];
     for (size_t i = 0; i < obstacles.size() && mode == GameMode::PLAYING; ++i) {
         int n = ObstacleParts(obstacles[i], parts);
+        const float dz = obstacle_dz_[i];
         for (int k = 0; k < n; ++k) {
+            if (dz < 0.0f)
+                parts[k].max.z -= dz;
+            else if (dz > 0.0f)
+                parts[k].min.z -= dz;
             if (AABBIntersectsAABB(swept, parts[k])) {
                 mode = GameMode::GAME_OVER;
                 break;
@@ -230,7 +248,95 @@ Obstacle Game::MakeObstacle(ObstacleType type, int lane, float s) const
     o.s = s;
     o.velocity = 0.0f;
     o.box = MakeAABB(glm::vec3(lane * LANE_WIDTH, base + h.y, s), h);
+    o.min_s = -1e9f;
     return o;
+}
+
+Obstacle Game::MakeMovingTrain(int lane, float s, float velocity) const
+{
+    Obstacle o = MakeObstacle(ObstacleType::TRAIN, lane, s);
+    const float hz = extents_[(int)ObstacleType::TRAIN].z;
+    if (velocity < 0.0f && track.IsStraightRange(s - hz, s + hz)) {
+        o.velocity = velocity;
+        o.min_s = track.StraightRunStart(s - hz);
+    }
+    return o;
+}
+
+int Game::SafeLaneOfChunk(int chunk) const
+{
+    if (chunk < 0)
+        return 0;
+    if ((size_t)chunk >= safe_lanes_.size())
+        return -2;
+    return safe_lanes_[(size_t)chunk];
+}
+
+// Anda cada trem móvel (velocity < 0) em velocity*dt. Ele para (velocity = 0,
+// de vez) se a ponta dianteira passaria de min_s (o começo da reta onde nasceu)
+// ou entraria na folga TRAIN_STOP_GAP de outro obstáculo da mesma faixa que
+// está à sua frente. Os obstáculos ficam em ordem de s, então quem está à
+// frente já andou neste passo. Positivo não é suportado (nenhum trem sobe).
+void Game::MoveObstacles(float dt)
+{
+    obstacle_dz_.assign(obstacles.size(), 0.0f);
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        Obstacle& o = obstacles[i];
+        if (o.velocity >= 0.0f)
+            continue;
+
+        float limit = o.min_s;
+        for (size_t j = 0; j < obstacles.size(); ++j) {
+            const Obstacle& other = obstacles[j];
+            if (j != i && other.lane == o.lane && other.box.max.z <= o.box.min.z + 1e-3f)
+                limit = std::max(limit, other.box.max.z + TRAIN_STOP_GAP);
+        }
+
+        float target = o.box.min.z + o.velocity * dt;
+        if (target < limit) {
+            target = std::min(limit, o.box.min.z); // nunca recua para a folga
+            o.velocity = 0.0f;
+        }
+        const float dz = target - o.box.min.z;
+        o.s += dz;
+        o.box.min.z += dz;
+        o.box.max.z += dz;
+        obstacle_dz_[i] = dz;
+    }
+}
+
+bool Game::CanSpawnMoving(int lane, float s, float hz, float min_s) const
+{
+    // Aviso: o trem precisa ser visível por MOVING_TRAIN_WARNING segundos
+    // antes do contato (jogador e trem se aproximam a speed + |velocity|).
+    const float closing = player.speed + MOVING_TRAIN_SPEED;
+    if (s - player.s < closing * MOVING_TRAIN_WARNING)
+        return false;
+
+    // Até onde o nariz do trem chega antes de o jogador passar por ele. A
+    // velocidade do jogador só cresce, então o encontro acontece, no máximo,
+    // em gap / closing segundos: este é um limite inferior seguro.
+    const float front = s - hz;
+    const float gap = front - (player.s + PLAYER_HALF_DEPTH);
+    const float lowest = std::max(front - MOVING_TRAIN_SPEED * gap / closing, min_s);
+
+    // Garantia de faixa livre: o trem ocupa os chunks de [lowest, s + hz] e
+    // o jogador que segue a faixa segura de cada um (trocando na emenda de
+    // CHUNK_CLEAR_TAIL + CHUNK_CLEAR_HEAD metros) nunca pode cruzar com ele.
+    // Por isso a faixa do trem não pode ser a segura de nenhum desses chunks
+    // (nem do chunk que cobre a emenda logo abaixo do ponto mais baixo).
+    const float lo = lowest - (CHUNK_CLEAR_TAIL + CHUNK_CLEAR_HEAD);
+    const int c0 = std::max(0, (int)std::floor(lo / CHUNK_LENGTH));
+    const int c1 = (int)std::floor((s + hz) / CHUNK_LENGTH);
+    for (int c = c0; c <= c1; ++c)
+        if (SafeLaneOfChunk(c) == lane)
+            return false;
+    return true;
+}
+
+float Game::MovingRandom01()
+{
+    return (float)(moving_rng_() >> 8) * (1.0f / 16777216.0f);
 }
 
 void Game::GenerateChunksUntil(float s)
@@ -282,11 +388,13 @@ void Game::GenerateChunk(int index)
             coins.push_back(c);
         }
         safe_lane_ = 0;
+        safe_lanes_.push_back(0);
         return;
     }
 
     int safe = std::min(std::max(safe_lane_ + RandomInt(-1, 1), -1), 1);
     safe_lane_ = safe;
+    safe_lanes_.push_back(safe); // índice = chunk (os chunks saem em ordem)
 
     float w0 = std::max(start + CHUNK_CLEAR_HEAD, OBSTACLE_FREE_START);
     float w1 = end - CHUNK_CLEAR_TAIL;
@@ -341,8 +449,19 @@ void Game::GenerateChunk(int index)
                     combo = true;
             }
         }
-        if (!combo)
-            obstacles.push_back(MakeObstacle(type, lane, s));
+        if (!combo) {
+            Obstacle o = MakeObstacle(type, lane, s);
+            // Alguns trens nascem móveis (sorteio próprio, determinístico),
+            // se houver aviso suficiente e a faixa continuar transponível.
+            if (type == ObstacleType::TRAIN && MovingRandom01() < MOVING_TRAIN_CHANCE) {
+                float min_s = track.StraightRunStart(s - hz);
+                if (CanSpawnMoving(lane, s, hz, min_s)) {
+                    o.velocity = -MOVING_TRAIN_SPEED;
+                    o.min_s = min_s;
+                }
+            }
+            obstacles.push_back(o);
+        }
     }
 
     // Fileira de moedas na faixa segura, pulando as que cairiam numa barreira.

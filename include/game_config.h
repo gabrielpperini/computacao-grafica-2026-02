@@ -28,4 +28,10 @@ const float SNEAKERS_JUMP_MULT  = 1.5f;
 const float PIGGY_FLIGHT_TIME   = 4.0f;   // s para t ir de 0 a 1
 const float PIGGY_COIN_INTERVAL = 0.15f;  // s entre moedas soltas
 
+// Trens em movimento (Tarefa 4.3): vêm na direção do jogador (velocity < 0).
+const float MOVING_TRAIN_SPEED   = 8.0f;        // m/s (módulo da velocity do trem)
+const float MOVING_TRAIN_CHANCE  = 1.0f / 3.0f; // fração dos trens que nascem móveis
+const float MOVING_TRAIN_WARNING = 3.0f;        // s de aviso visível antes do contato
+const float TRAIN_STOP_GAP       = 0.5f;        // m que o trem deixa de outro obstáculo ao parar
+
 #endif // _GAME_CONFIG_H

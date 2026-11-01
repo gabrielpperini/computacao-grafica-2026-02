@@ -59,8 +59,11 @@ const float OBSTACLE_SIZE[OBSTACLE_TYPE_COUNT][3] = {
 };
 
 // box: caixa em coordenadas de pista, já posicionada (z = s). s = centro da
-// caixa ao longo da pista. velocity: trens em movimento (Tarefa 4.4; 0 aqui).
-struct Obstacle { ObstacleType type; int lane; float s, velocity; AABB box; };
+// caixa ao longo da pista. velocity (m/s ao longo da pista): 0 = parado; < 0 =
+// trem em movimento, vindo na direção do jogador (Tarefa 4.3); a caixa anda
+// junto com s. min_s: limite do movimento, a ponta dianteira (box.min.z) do
+// trem móvel não passa daí (começo da reta onde ele nasceu; -1e9 = sem limite).
+struct Obstacle { ObstacleType type; int lane; float s, velocity; AABB box; float min_s; };
 
 // Moeda: esfera de raio COIN_RADIUS centrada em (lane*LANE_WIDTH, y, s).
 struct Coin { int lane; float s, y; bool collected; };
@@ -104,8 +107,9 @@ public:
     void HandleInput(Input in);
 
     // Avança a simulação em dt segundos (limitado a [0, MAX_DT]). Só avança em
-    // PLAYING. Ordem: movimento do jogador; colisões com a caixa varrida do
-    // jogador (obstáculo -> GAME_OVER; moeda -> coletada); pontuação; spawn de
+    // PLAYING. Ordem: movimento do jogador; movimento dos trens móveis;
+    // colisões com a caixa varrida do jogador e dos obstáculos que andaram
+    // (obstáculo -> GAME_OVER; moeda -> coletada); pontuação; spawn de
     // chunks até player.s + SPAWN_AHEAD (se spawn_enabled) e descarte do que
     // ficou mais de DESPAWN_BEHIND para trás (a pista: + TRACK_KEEP_MARGIN).
     void Update(float dt);
@@ -125,6 +129,17 @@ public:
     // Obstáculo do tipo na faixa, centrado em s, apoiado no chão (a barreira
     // alta começa em y = BARRIER_HIGH_CLEARANCE).
     Obstacle MakeObstacle(ObstacleType type, int lane, float s) const;
+
+    // Trem (TRAIN) centrado em s com a velocity dada (< 0: anda para o
+    // jogador, MOVING_TRAIN_SPEED). min_s = começo da sequência de retas onde
+    // ele está (track.StraightRunStart): o trem para ao chegar lá. Se o trem
+    // não cabe inteiro numa reta, ou velocity >= 0, sai parado (velocity 0).
+    Obstacle MakeMovingTrain(int lane, float s, float velocity) const;
+
+    // Faixa segura (sem placa/trem) do chunk, ou -2 se o chunk ainda não foi
+    // gerado. Trens móveis nunca nascem na faixa segura dos chunks que
+    // percorrerão (veja GenerateChunk); os testes usam isto para conferir.
+    int SafeLaneOfChunk(int chunk) const;
 
     // Gera os chunks que terminam até s (independe de spawn_enabled; o Update
     // só chama isto quando spawn_enabled).
@@ -151,6 +166,14 @@ public:
 
 private:
     void GenerateChunk(int index);
+    // Anda os trens móveis em dt (param/colisão entre eles) e guarda em
+    // obstacle_dz_ o deslocamento de cada obstáculo neste passo.
+    void MoveObstacles(float dt);
+    // O trem de comprimento 2*hz centrado em s pode nascer móvel? (aviso de
+    // MOVING_TRAIN_WARNING s e faixa não segura em todos os chunks por onde
+    // ele passará antes de encontrar o jogador.)
+    bool CanSpawnMoving(int lane, float s, float hz, float min_s) const;
+    float MovingRandom01();       // sorteio do trem móvel (gerador próprio)
     float Random01();             // [0, 1), portável (só usa a saída do mt19937)
     int RandomInt(int lo, int hi); // [lo, hi]
 
@@ -158,6 +181,9 @@ private:
     std::mt19937 rng_;
     int next_chunk_;   // próximo chunk a gerar
     int safe_lane_;    // faixa sem placa/trem do último chunk gerado
+    std::vector<int> safe_lanes_;        // faixa segura de cada chunk gerado (índice = chunk)
+    std::mt19937 moving_rng_;            // decide quais trens são móveis (independe de rng_)
+    std::vector<float> obstacle_dz_;     // deslocamento de cada obstáculo no último Update
     glm::vec3 extents_[OBSTACLE_TYPE_COUNT];
 };
 

@@ -730,6 +730,17 @@ int main(int argc, char* argv[])
         glUniform4fv(g_tunnel_forward_uniform, MAX_SHADER_TUNNELS, tun_fwd);
         glUniform4f(g_tunnel_shape_uniform, mid_wall, TUNNEL_SPRING_HEIGHT, mid_wall, TUNNEL_INSIDE_AMBIENT);
 
+        // Túneis: instâncias do módulo de abóbada (a cada 4 m) e dos dois
+        // portais, mais as luminárias emissivas do teto. São desenhados ANTES
+        // do chão, dos trilhos e dos demais objetos opacos: a abóbada, grande
+        // e perto da câmera, enche o z-buffer primeiro (early-Z) e o fragment
+        // shader (caro) deixa de rodar para o que fica atrás dela.
+        ComputeTunnelPieces(g_Game.track, player.s, &tunnel_pieces);
+        for (size_t i = 0; i < tunnel_pieces.size(); ++i)
+            DrawTunnelPiece(g_Game.track, tunnel_pieces[i]);
+        for (size_t i = 0; i < tunnel_lamps.size(); ++i)
+            DrawTunnelLamp(g_Game.track, tunnel_lamps[i]);
+
         // Chão, dormentes e trilhos: faixas reconstruídas a partir da pista no
         // trecho visível em torno do jogador. As UV das faixas já estão em
         // "ladrilhos" de tamanho fixo em metros (sem esticar). O chão tem duas
@@ -760,14 +771,6 @@ int main(int argc, char* argv[])
         // Postes de luz: modelo do poste + cabeça emissiva.
         for (size_t i = 0; i < lamps.size(); ++i)
             DrawLamp(g_Game.track, lamps[i]);
-
-        // Túneis: instâncias do módulo de abóbada (a cada 4 m) e dos dois
-        // portais, mais as luminárias emissivas do teto.
-        ComputeTunnelPieces(g_Game.track, player.s, &tunnel_pieces);
-        for (size_t i = 0; i < tunnel_pieces.size(); ++i)
-            DrawTunnelPiece(g_Game.track, tunnel_pieces[i]);
-        for (size_t i = 0; i < tunnel_lamps.size(); ++i)
-            DrawTunnelLamp(g_Game.track, tunnel_lamps[i]);
 
         // Obstáculos: cada um é o seu modelo escalado para a caixa de colisão.
         for (size_t i = 0; i < g_Game.obstacles.size(); ++i)

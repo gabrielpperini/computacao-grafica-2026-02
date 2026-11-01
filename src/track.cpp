@@ -161,6 +161,17 @@ bool Track::IsStraightRange(float s0, float s1) const
     }
 }
 
+float Track::StraightRunStart(float s) const
+{
+    const TrackSegment* seg = SegmentAt(s);
+    if (seg == nullptr || std::fabs(seg->curvature) >= kMinCurvature)
+        return s;
+    const TrackSegment* first = &segments_.front();
+    while (seg > first && std::fabs((seg - 1)->curvature) < kMinCurvature)
+        --seg;
+    return seg->s_start;
+}
+
 TrackFrame Track::FrameInSegment(const TrackSegment& seg, float s)
 {
     // u pode ser negativo ou maior que seg.length (extrapolação): a fórmula

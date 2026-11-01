@@ -89,6 +89,13 @@ public:
     // só pôr trens/rampas/túneis em retas.
     bool IsStraightRange(float s0, float s1) const;
 
+    // Começo (s_start) da sequência contígua de segmentos retos (reta, túnel,
+    // reta...) que contém s, ou o próprio s se ali não há trecho reto mantido
+    // (curva ou fora da pista). Se a sequência começa antes do primeiro
+    // segmento mantido, devolve o começo dele. Usado como limite de
+    // movimento dos trens móveis.
+    float StraightRunStart(float s) const;
+
     // Segmentos mantidos, em ordem de s (para testes e depuração).
     const std::vector<TrackSegment>& Segments() const { return segments_; }
 

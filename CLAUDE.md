@@ -137,7 +137,8 @@ implementado** — o base é só um visualizador.
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
 | Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (~1 em 3) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
-| Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
+| Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
+| Trens em movimento (SPEC: velocidade dos trens) | ✅ Tarefa 4.3: ~1 em 3 trens nasce móvel (`MOVING_TRAIN_SPEED` = 8 m/s na direção do jogador), com ≥ 3 s de aviso e sem quebrar a garantia de faixa livre; para ao chegar ao começo da reta onde nasceu ou a 0.5 m de outro obstáculo da faixa; colisão varre também a caixa do obstáculo (veja "Trens móveis") |
 | Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
 | Funcionalidade extra obrigatória | ❌ (sugestões: partículas, sombras, billboards, GUI, picking, texto com fontes, patches de Bézier) |
 
@@ -218,7 +219,9 @@ o README/vídeo), `showcase_props` (power-ups e porco voador em exposição: `sh
 faz `main.cpp` chamar `DrawShowcaseProps()`), `game_over` (bate sem entrada) e `restart` /
 `restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo), `curve` (jogador posto 24 m
 antes da 1ª curva, troca de faixa dentro dela; fotos de entrada, meio e saída),
-`curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte), `tunnel`
+`curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte),
+`moving_train` / `moving_train_hit` (trem móvel posto na faixa do jogador: ele desvia e o trem passa
+ao lado / não desvia e bate no instante previsto pela cinemática), `tunnel`
 (atravessa o 1º túnel com um trem parado na faixa -1 e troca de faixa lá dentro; confere altura
 da câmera antes/dentro/depois, transições sem salto, folga até o teto e o escurecimento) e
 `tunnel_side` (portal visto de longe, saindo da curva anterior). **Não fixe valores de s ligados
@@ -340,6 +343,22 @@ modelos procedurais já são feitos nessas medidas; o trem são 3 carros em fila
 ≈ 2.0 × 2.0 × 1.7). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
 `tools/gen_models.py`). A colisão usa a caixa varrida do jogador (antes ∪ depois do passo) contra
 tunneling. `spawn_enabled = false` desliga a geração (testes de física).
+
+**Trens móveis (Tarefa 4.3)**: `Obstacle.velocity < 0` (`-MOVING_TRAIN_SPEED`) anda o trem
+`velocity * dt` por quadro (`Game::MoveObstacles`, antes das colisões; só `velocity < 0` anda); a
+caixa e `s` andam juntos. O trem para de vez (`velocity = 0`) quando a ponta dianteira
+(`box.min.z`) passaria de `Obstacle.min_s` (começo da sequência de retas/túneis onde nasceu,
+`Track::StraightRunStart`, guardado no spawn) ou entraria na folga `TRAIN_STOP_GAP` de outro
+obstáculo da mesma faixa à frente. A colisão varre também o obstáculo (caixa antes ∪ depois do
+passo): a velocidade de fechamento chega a 38 m/s. **Spawn** (`GenerateChunk` + `CanSpawnMoving`):
+só trens (já garantidos em reta) e só se `MovingRandom01() < MOVING_TRAIN_CHANCE` — gerador próprio
+`moving_rng_`, então a sequência de tipos/posições dos obstáculos NÃO muda — com
+`s - player.s >= (speed + 8) * MOVING_TRAIN_WARNING` e a faixa do trem **não segura em nenhum chunk**
+de `[ponta mais baixa que ele alcança antes do jogador − 16 m, s + metade do comprimento]`
+(`SafeLaneOfChunk`): assim quem segue a faixa segura de cada chunk nunca cruza com ele, mesmo que
+ele entre em chunks anteriores. Se alguma condição falha, o trem nasce parado. Garantias testadas
+em `logic_tests` (`Test_MovingTrainsSpawnAndStayPassable`: piloto que segue a faixa segura em 30
+sementes × 5 km nunca bate em placa/trem).
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler

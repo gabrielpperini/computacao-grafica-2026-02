@@ -541,8 +541,8 @@ extraído do jogo de referência.
 - `Obstacle.velocity < 0` (≈ -8 m/s) desloca `s` por `velocity*dt`. Se o trem chegaria ao fim da
   reta onde nasceu, para (`velocity = 0`). Spawn de trem móvel exige ≥ 3 s de antecedência visível
   (`s_spawn - player.s ≥ (speed - velocity) * 3`).
-- [ ] **Passo 1:** testes `Test_MovingTrainAdvances`, `Test_MovingTrainStopsAtSegmentEnd`.
-- [ ] **Passo 2:** implementar; `OK`; rodar; commit `IA: trens em movimento`.
+- [x] **Passo 1:** testes `Test_MovingTrainAdvances`, `Test_MovingTrainStopsAtSegmentEnd`.
+- [x] **Passo 2:** implementar; `OK`; rodar; commit `IA: trens em movimento`.
 
 ### Tarefa 4.4: Rampas e andar sobre trens
 

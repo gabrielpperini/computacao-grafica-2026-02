@@ -577,6 +577,93 @@ static bool Check_tunnel(std::string* why)
     return true;
 }
 
+// moving_train / moving_train_hit: sem spawn, um trem móvel (MOVING_TRAIN_SPEED)
+// na faixa do jogador, vindo na direção dele pela reta da largada. No
+// primeiro o jogador desvia de faixa (seta direita) com folga e o trem passa;
+// no segundo não faz nada e bate, no instante previsto pela cinemática
+// (jogador a PLAYER_START_SPEED + PLAYER_ACCEL, trem a -MOVING_TRAIN_SPEED).
+static float g_TrainS0   = 0.0f;   // s inicial do trem
+static float g_TrainMinS = 1e9f;   // menor s do trem observado
+static bool  g_TrainGone = false;  // o trem foi descartado (ficou para trás do jogador)
+
+static void SetupMovingTrain()
+{
+    SetupNoSpawn();
+    // O trem nasce junto ao fim da reta da largada (a mais longa possível).
+    g_TrainS0 = g_Game.track.Segments()[0].length - 8.0f;
+    g_Game.obstacles.push_back(g_Game.MakeMovingTrain(0, g_TrainS0, -MOVING_TRAIN_SPEED));
+}
+
+static void Hook_MovingTrain()
+{
+    if (g_Game.obstacles.empty())
+    {
+        g_TrainGone = true;
+        return;
+    }
+    g_TrainMinS = std::min(g_TrainMinS, g_Game.obstacles[0].s);
+}
+
+// Instante (s) em que o nariz do trem alcança a frente do jogador, resolvendo
+// v0 t + a t²/2 + meia profundidade = (s0 - meio comprimento) - 8 t.
+static float ExpectedTrainHitTime()
+{
+    const float hz  = 0.5f * OBSTACLE_SIZE[(int)ObstacleType::TRAIN][2];
+    const float gap = g_TrainS0 - hz - PLAYER_HALF_DEPTH;
+    const float v   = PLAYER_START_SPEED + MOVING_TRAIN_SPEED, a = 0.5f * PLAYER_ACCEL;
+    return (-v + std::sqrt(v * v + 4.0f * a * gap)) / (2.0f * a);
+}
+
+static bool Check_moving_train(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "o jogador bateu apesar de desviar de faixa";
+        return false;
+    }
+    if (g_Game.player.lane != 1)
+    {
+        *why = "o jogador nao trocou de faixa";
+        return false;
+    }
+    if (g_TrainMinS > g_TrainS0 - 20.0f)
+    {
+        snprintf(buf, sizeof(buf), "o trem quase nao andou: s inicial %.1f, menor s %.1f", g_TrainS0, g_TrainMinS);
+        *why = buf;
+        return false;
+    }
+    if (!g_TrainGone && g_Game.obstacles[0].s > g_Game.player.s)
+    {
+        *why = "o trem nao passou pelo jogador";
+        return false;
+    }
+    return true;
+}
+
+static bool Check_moving_train_hit(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::GAME_OVER)
+    {
+        *why = "o jogador nao bateu no trem que vinha na faixa dele";
+        return false;
+    }
+    const float expected = ExpectedTrainHitTime();
+    if (std::fabs(g_Game.elapsed - expected) > 0.25f)
+    {
+        snprintf(buf, sizeof(buf), "bateu em t = %.2f s, esperava %.2f s", g_Game.elapsed, expected);
+        *why = buf;
+        return false;
+    }
+    if (g_TrainMinS > g_TrainS0 - 10.0f)
+    {
+        *why = "o trem nao andou ate o contato";
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -719,6 +806,36 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = Check_restart;
         s.frame_hook  = Hook_GameOver;
         s.steps.push_back(AutotestStep{39.5f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
+        scenarios.push_back(s);
+    }
+
+    // moving_train: trem móvel na faixa do jogador; ele desvia e o trem passa.
+    {
+        AutotestScenario s;
+        s.name        = "moving_train";
+        s.duration    = 8.0f;
+        s.final_check = Check_moving_train;
+        s.setup       = SetupMovingTrain;
+        s.frame_hook  = Hook_MovingTrain;
+        s.steps.push_back(AutotestStep{0.3f, 0, 0, "far"});
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "approach"});
+        s.steps.push_back(AutotestStep{2.6f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.2f, 0, 0, "dodge"});
+        s.steps.push_back(AutotestStep{5.6f, 0, 0, "pass"});
+        s.steps.push_back(AutotestStep{6.8f, 0, 0, "alongside"});
+        scenarios.push_back(s);
+    }
+
+    // moving_train_hit: o mesmo trem, sem desvio: bate no instante previsto.
+    {
+        AutotestScenario s;
+        s.name        = "moving_train_hit";
+        s.duration    = 8.0f;
+        s.final_check = Check_moving_train_hit;
+        s.setup       = SetupMovingTrain;
+        s.frame_hook  = Hook_MovingTrain;
+        s.steps.push_back(AutotestStep{2.0f, 0, 0, "approach"});
+        s.steps.push_back(AutotestStep{7.5f, 0, 0, "gameover"});
         scenarios.push_back(s);
     }
 
