@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Trabalho final de **INF01047 — Computação Gráfica e Visualização I (INF/UFRGS)**, feito em dupla.
 O projeto é o jogo *Rail Rush* (corredor infinito sobre trilhos, `SPEC.md`), uma aplicação OpenGL 3.3
 core profile em C++11 (GLFW + GLAD + GLM + Dear ImGui), que carrega modelos `.obj` via tinyobjloader
-e texturas via stb_image. Estado em 2026-11-01 (fim da Tarefa 7.2): jogo completo e polido; falta só
-a entrega humana (Tarefa 7.3: `README.md`, vídeo, metadados).
+e texturas via stb_image. Estado em 2026-11-01 (fim da Tarefa 7.2 e da onda de correção da revisão
+final, `docs/prompts/final-fixlist.md`): jogo completo e polido; falta só a entrega humana (Tarefa 7.3:
+`README.md`, vídeo, metadados).
 
 O enunciado completo está em `ordem-trabalho.md` (versão 2026-09-16). **Em caso de conflito entre
 este arquivo e `ordem-trabalho.md`, o enunciado prevalece** — várias regras abaixo são
@@ -32,7 +33,10 @@ de IA no mesmo commit — a separação no histórico do Git é obrigatória.
 ### 2. Registro dos prompts
 
 O prompt que gerou o código precisa estar no repositório. Convenção deste repo: registrar em
-**`PROMPTS.md`**, commitado junto com o código gerado. A alternativa permitida pelo enunciado é
+**`PROMPTS.md`**, commitado junto com o código gerado; o texto exato entregue a cada subagente
+(briefs, listas de correção, decisões do coordenador, achados das revisões) fica em
+**`docs/prompts/`** (veja a entrada "Execução do plano por subagentes" do `PROMPTS.md`; ao despachar
+trabalho novo por subagente, copie o brief para lá). A alternativa permitida pelo enunciado é
 colocar o prompt na própria mensagem do commit, precedido de `PROMPT:` em maiúsculo — nesse caso
 use uma das duas formas de forma consistente, nunca metade em cada.
 
@@ -128,21 +132,21 @@ mora no código e como é verificado.
 | Requisito | Estado |
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
-| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k), túnel (módulo de abóbada e portal com moldura) e rampa (estrutura metálica + tábuas) |
+| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k), túnel (módulo de abóbada e portal com moldura), rampa (estrutura metálica + tábuas) e prédios de tijolo de 2–4 andares com janelas recuadas (revisão final) |
 | Interação por mouse **e** teclado | ✅ teclado: controles do jogador em `HandleKey()`; mouse: na câmera livre (Tarefa 5.1, `C`) o cursor é capturado e o movimento gira o olhar (`CursorPosCallback`). Fora da câmera livre o mouse clica nos botões da GUI do menu, da pausa e do game over (Tarefa 6.2, ImGui) |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ✅ (1) 3ª pessoa look-at (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); (2) câmera livre "fly" (`FreeCamera`, Tarefa 5.1): `C` alterna `PLAYING` ↔ `FREE_CAMERA` com o jogo congelado, WASD/Espaço/Shift voam a 10 m/s, o mouse gira (pitch ±89°) |
-| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
-| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`, com a varredura em `SweepAABB`/`SweepAABBAlongZ`, também em `collisions.cpp`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada |
-| Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
-| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
+| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos da Kenney + 3 de tijolo em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
+| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`, com a varredura em `SweepAABB`/`SweepAABBAlongZ`, também em `collisions.cpp`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada; revisão final: em pé sobre o teto (`StandsOnTop`) → o trem não mata e vira o chão da câmera, trem móvel × obstáculo à frente na faixa (`StopBehindAlongZ`) → para, e sobreposição ao longo de s no spawn (`SpanTouchesBoxAlongZ`, `PointNearBoxAlongZ`) — `game.cpp` só chama |
+| Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática, com fade suave ao entrar/sair das 8 mais próximas — revisão final); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
+| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 12 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos (portais e prédios de tijolo), pedra dos muros (`stone_wall`) e da abóbada dos túneis (`castle_wall_slates`) (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups, vidraças); padrões em densidade fixa por metro (nada esticado). SPEC "paredes com texturas de pedra, prédios com texturas de tijolos": muros de pedra contínuos ao lado da pista e 1 em cada 3 prédios de tijolo (revisão final, veja "Muros de pedra e prédios de tijolo") |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ✅ `include/bezier.h`, `src/bezier.cpp`; porco voador do cofrinho (`Game::pig`, Tarefa 5.3) |
-| Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (1/3 de chance por reta elegível) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
+| Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (1/3 de chance por reta elegível) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de pedra (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais de tijolo como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` e `Game::Update()` usam `ClampFrameDt()` (`game.cpp`: NaN/negativo/zero → 0, o resto limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
 | Rampas para subir nos trens (SPEC) | ✅ Tarefa 4.4: metade dos trens parados ganha uma rampa (8 m, 0 → 3.2 m) colada à frente; o jogador sobe correndo, anda no teto, pula de um teto para outro ou troca de faixa para o teto vizinho, e cai no fim do trem ou ao trocar para uma faixa vazia; a câmera sobe junto com o chão (não com o pulo) (veja "Rampas e tetos") |
 | Trens em movimento (SPEC: velocidade dos trens) | ✅ Tarefa 4.3: ~22% dos trens nascem móveis (`MOVING_TRAIN_CHANCE` = 1/3 sorteado, mas só os que cumprem o aviso e a faixa livre; 478 de 2138 em `logic_tests`) (`MOVING_TRAIN_SPEED` = 8 m/s na direção do jogador), com ≥ 3 s de aviso e sem quebrar a garantia de faixa livre; para ao chegar ao começo da reta onde nasceu ou a 0.5 m de outro obstáculo da faixa; colisão varre também a caixa do obstáculo (veja "Trens móveis") |
-| Objetivo e lógica de controle não-triviais | ✅ corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação, power-ups clássicos (ímã, tênis, multiplicador x2: 10 s cada, renovam sem empilhar; veja "Power-ups"), cofrinho com porco voador (5.3) e, na Tarefa 6.2, menu, pausa e fim de jogo com reinício (veja "GUI") |
+| Objetivo e lógica de controle não-triviais | ✅ corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação, power-ups clássicos (ímã, tênis, multiplicador x2: 10 s cada, renovam sem empilhar; veja "Power-ups"), cofrinho com porco voador (5.3; o 1º power-up de cada corrida é sempre um cofrinho, a partir de 150 m) e, na Tarefa 6.2, menu, pausa e fim de jogo com reinício (cada corrida nova tem semente nova; veja "GUI") |
 | Funcionalidade extra obrigatória | ✅ (1) Tarefa 6.1: sistema de partículas na coleta (`include/particles.h`, `src/particles.cpp`, sem GL): `Game::events` registra cada moeda/power-up coletado (posição de pista); `main.cpp` converte para o mundo e chama `ParticleSystem::Emit` (30 douradas na moeda, 80 na cor do tipo no power-up); pool fixo de 512 (sem alocação em jogo; cheio = as novas substituem as de menor vida restante, Tarefa 7.1b), vida 0.4–0.9 s, gravidade 6 m/s², quicam no chão da pista (`floor_y` do `Emit`; o sprite nunca o atravessa), movimento com `dt` (congela fora de PLAYING); desenho como billboards (matriz de modelo montada à mão com os eixos da câmera), sprite redondo procedural no fragment shader (`object_id == PARTICLE`, uniform `particle_alpha`), blending aditivo com `glDepthMask(GL_FALSE)` depois dos opacos. (2) Tarefa 6.2: GUI com Dear ImGui v1.92.9b (`third_party/imgui/`, MIT): menu, pausa, game over e HUD (veja "GUI") |
 
 Bugs que custam nota na avaliação: Z-fighting, texturas esticadas, colisões incorretas,
@@ -154,9 +158,12 @@ na câmera, 5 cm abaixo das faixas, mesma textura em coordenadas de mundo) cobre
 faixas de terreno; UV do chão e dos trilhos sem esticar nas curvas; o vão dos portais fica na sombra
 do túnel (sem anel claro); as nervuras do teto do trem são achatadas (o pé não entra nelas);
 partículas quicam no chão; a GUI cabe em janelas baixas. Varredura de Z-fighting com o E2E
-`visual_audit` (13 poses rasantes da câmera livre: nada encontrado além do que foi corrigido).
-Desempenho (E2E `perf_heavy`, túnel + trens + 512 partículas + porco, sem vsync, GTX 1070): Release
-~540–590 fps (1% mais lento ≥ 310 fps), Debug ~150 fps (≥ 107 fps). **Conferir no laboratório** — o
+`visual_audit` (13 poses rasantes da câmera livre, 18 desde a revisão final: nada encontrado além do que foi corrigido).
+Desempenho (E2E `perf_heavy`, túnel + trens + 512 partículas + porco, sem vsync, GTX 1070; medido de
+novo depois da revisão final, com muros e prédios de tijolo): Release ~580–650 fps, Debug ~140–145 fps
+(~7 ms por quadro). A posição da câmera vai para os shaders como uniform (`camera_position`), em vez
+de `inverse(view)` por fragmento (revisão final: ganho só aparece em GPU fraca; na GTX 1070 o
+quadro é limitado pela CPU). **Conferir no laboratório** — o
 build padrão do CMake é Debug (limitado pela CPU: geração das faixas a cada quadro); para a
 apresentação, prefira o Release. Limitações conhecidas: objetos do cenário (prédios, postes, túneis)
 só existem em ≈ −20…+150 m do jogador (na câmera livre, voando para longe, só sobra o chão);
@@ -270,12 +277,16 @@ no jogador, Enter inicia sem pular, P e ESC saem da câmera livre direto para a 
 e que obstáculos, moedas, power-ups, partículas e segmentos da pista ficam em contagens limitadas; leva ~30 s,
 dentro do timeout de 60 s do `run_e2e.sh`); da Tarefa 7.1b, `gui_small_window` (o hook redimensiona a
 janela para 640x400 e 480x270 com "Controles" aberto: botões inteiros na tela, "Jogar" clicável),
-`visual_audit` (câmera livre posta pelo hook com `g_FreeCamera.StartAt()` em 13 poses rasantes —
+`visual_audit` (câmera livre posta pelo hook com `g_FreeCamera.StartAt()` em 18 poses rasantes —
 trilhos, borda do leito, rampa, barreira, teto do trem, portal, chão e parede do túnel, prédios e
-terreno numa curva, portal de saída —, levando `g_Game.player.s` junto; uma foto por pose para inspeção)
+terreno numa curva, portal de saída e, da revisão final, topo e ponta do muro de pedra, fachada de
+tijolo, vão muro/prédio e abóbada de pedra —, levando `g_Game.player.s` junto; uma foto por pose para inspeção)
 e `perf_heavy` (túnel + trens + moedas + ímã + porco + 80 partículas por quadro; imprime
 `E2E perf_heavy: ... media ... fps, 1% mais lento ...` com o tempo de relógio por quadro; desde a Tarefa 7.2
-**falha se a média passar de 16 ms** — `PERF_MAX_AVG_MS`, vale também no Debug, onde mede ~6.7 ms na GTX 1070).
+**falha se a média passar de 16 ms** — `PERF_MAX_AVG_MS`, vale também no Debug, onde mede ~7 ms na GTX 1070; com
+OpenGL por software — `GL_RENDERER` llvmpipe/softpipe/"Software"/"Microsoft Basic Render" — só avisa, revisão final)
+e, da revisão final, `focus_pause` (perder o foco/minimizar pausa: o hook chama `HandleWindowFocusLost()`, o
+mesmo tratamento dos callbacks de foco e minimização, que ignoram os eventos reais no autotest).
 `run_e2e.sh` roda tudo em ~10 min no Windows (o `marathon` sozinho leva ~30 s) e, se o comando `timeout` não existir
 (macOS padrão), roda os cenários sem limite de tempo (usa `gtimeout` se houver).
 **Não fixe valores de s ligados
@@ -310,7 +321,7 @@ executável `main` (não do `logic_tests`); no `Makefile.macOS` estão na mesma 
 | `src/track.cpp` | segmentos reta/curva/túnel, `FrameAt(s)`, faixas de malha do chão | não |
 | `src/game.cpp` | estados, jogador, spawn, pontuação, power-ups, porco | não |
 | `src/camera.cpp` | câmera em 3ª pessoa e câmera livre | não |
-| `src/scenery.cpp` | prédios, postes, luzes, túneis visíveis, faixas de chão/trilhos | não |
+| `src/scenery.cpp` | prédios (Kenney e de tijolo), postes, luzes (escolha + fade), túneis visíveis, faixas de chão/trilhos/muros de pedra | não |
 | `src/particles.cpp` | pool de partículas (extra obrigatório) | não |
 | `src/main.cpp` | janela, shaders, texturas, VAOs, desenho, callbacks, GUI (ImGui) | sim |
 | `src/autotest.cpp` | harness E2E (`--autotest`) | sim |
@@ -376,7 +387,8 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 - **Atributos de vértice**: `location 0` = posição (`vec4`), `1` = normal (`vec4`), `2` = texcoords
   (`vec2`). Definidos em `BuildTrianglesAndAddToVirtualScene()` e declarados em
   `shader_vertex.glsl`. Os VBOs de normal e textura só são criados se o OBJ tiver esses dados.
-- **Uniforms**: `model`, `view`, `projection`, `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` e os de
+- **Uniforms**: `model`, `view`, `projection`, `camera_position` (posição da câmera no mundo, nos dois
+  shaders; revisão final), `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` e os de
   iluminação (`sun_direction`, `sun_color`, `ambient_color`, `num_point_lights`, `point_light_position[8]`,
   `point_light_color[8]`, `shading_mode`, `material_kd_tint`, `material_ks`, `material_q`, `material_emissive`,
   e dos túneis: `num_tunnels`, `tunnel_start[4]`, `tunnel_forward[4]`, `tunnel_shape`; da névoa:
@@ -386,7 +398,8 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 - **Tamanhos dos arrays**: `MAX_POINT_LIGHTS` (`scenery.h`) e `MAX_TUNNELS` (= `MAX_SHADER_TUNNELS`,
   `main.cpp`) **não** são definidos nos shaders: `LoadShader()` insere os `#define` logo depois do
   `#version` (com `#line 2`, para os números de linha dos erros baterem com o arquivo). Uma fonte só.
-- **IDs de objeto e modos de UV**: as constantes `const int` (`PLAYER`, `GROUND`, ..., `LAMP_POLE` e
+- **IDs de objeto e modos de UV**: as constantes `const int` (`PLAYER`, `GROUND`, ..., `LAMP_POLE`, `SLEEPER`,
+  `WALL` (muros de pedra e paredes dos prédios de tijolo) e
   `UV_OBJ`/`UV_PLANAR_XZ`/`UV_BBOX_XY`/`UV_SPHERICAL`/`UV_BOX`) vivem em `include/object_ids.h` e são
   **copiadas** para o topo de `shader_fragment.glsl` (a sintaxe é a mesma em C++ e GLSL) — alterar
   um exige alterar o outro. Não são `#define` porque `BARRIER_LOW`, `SIGN`, `TRAIN` etc. também
@@ -400,7 +413,14 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 **Iluminação** (Tarefa 3.1): Blinn-Phong `Kd*(ambiente + Σ I·max(0,n·l)) + Ks*Σ I·max(0,n·h)^q`
 (`h = normalize(l+v)`), com o sol (`sun_direction` aponta da superfície PARA o sol) e as
 `MAX_POINT_LIGHTS` (8) lâmpadas de poste mais próximas do jogador (`ComputeLamps()` +
-`PickNearestPoints()` em `scenery.cpp`; atenuação `1/(1 + 0.09d + 0.032d²)`). A função `BlinnPhong()`
+`PickPointLights()` em `scenery.cpp`; atenuação `1/(1 + 0.09d + 0.032d²)`). **Fade das luzes** (revisão
+final): cada luz escolhida tem um peso (`PointLightWeight`, smoothstep) que multiplica a cor: 1 longe
+do corte e 0 na distância da 1ª luz que ficou de fora (no máximo `POINT_LIGHT_MAX_DIST` = 60 m,
+`POINT_LIGHT_FADE_WIDTH` = 8 m), então a 8ª e a 9ª têm peso 0 na troca. As candidatas vão até
+`LIGHT_CANDIDATE_BEHIND` = 60 m atrás do jogador (só se desenha o que está a ≤ 20 m atrás), e a
+distância efetiva ganha `LightEdgePenalty()` nos últimos 25 m: uma luz sai da lista já com peso 0.
+Por isso a pista é mantida `DESPAWN_BEHIND + TRACK_KEEP_MARGIN` = 65 m para trás (`game_config.h`).
+Teste: `Test_PointLightsNoPop` (maior salto de intensidade por passo de 5 cm: 0.04; sem o fade, 1). A função `BlinnPhong()`
 está **duplicada** em `shader_vertex.glsl` (Gouraud: `gouraud_diffuse`/`gouraud_specular` por vértice)
 e `shader_fragment.glsl` (Phong): GLSL não tem include, então os dois blocos devem ficar textualmente
 idênticos. As cabeças dos postes (`LAMP`) são emissivas.
@@ -425,6 +445,21 @@ correção gamma) com `fog_color` = `SKY_COLOR` (a mesma do `glClearColor`) por
 passam por ela. `DrawGroundPlane()` desenha, por último entre os opacos, um quadrado horizontal de lado
 `2·FOG_END + 40` centrado na câmera, `GROUND_PLANE_DROP` (5 cm) abaixo das faixas, com a textura de
 terreno em `UV_PLANAR_XZ` (`uv_scale = 1/GROUND_TEXTURE_TILE`, o mesmo ladrilho das faixas de terreno).
+
+**Muros de pedra e prédios de tijolo** (revisão final, item 3; SPEC "paredes com texturas de pedra,
+prédios com texturas de tijolos"; `images/spec/image3.png`): muros de contenção dos dois lados
+(`BuildRetainingWallStrips()`/`RetainingWallRanges()` em `scenery.cpp`, desenhados como a malha dinâmica
+`g_RetainingWalls`, id `WALL`, textura `stone_wall` em metros / 2.5): centro em x = ±`RETAINING_WALL_X`
+(5.85 m), 0.24 m × 1.6 m, entre a haste dos postes (até 5.68 m) e a face dos prédios (6 m), seguindo a
+pista também nas curvas (sem frestas), fora dos túneis e a 2.5 m dos portais, com tampa nas pontas
+cortadas. Nada do jogo encosta neles (as faixas vão até 3.6 m). Prédios: 1 em cada `BRICK_BUILDING_EVERY`
+(3) posições de cada lado (fases diferentes nos dois lados) é de tijolo (`BuildingInstance.brick_floors`
+2–4, `DrawBrickBuilding()`): `data/procedural/brick_building.obj` (`tools/gen_models.py`,
+`model_brick_building`), planta 6 × 6 m em escala 1, objetos `brick_building_N_walls` (red_brick, UV em
+metros / 2, 2 janelas recuadas por andar em cada face), `_windows` (vidro, atlas) e `_trim` (embasamento,
+peitoris e cornija/telhado, atlas). A abóbada do túnel usa `castle_wall_slates` (`VAULT_UV_SCALE`); o
+portal continua de tijolo. E2E: `visual_audit` tem poses do topo e da ponta do muro, da fachada de
+tijolo, do vão muro/prédio e da abóbada.
 
 **Obstáculos e moedas**: `Game` gera um chunk de `CHUNK_LENGTH` por vez (até `s + SPAWN_AHEAD`)
 e descarta o que fica `DESPAWN_BEHIND` para trás. Cada obstáculo é uma `AABB` em coordenadas
@@ -487,7 +522,10 @@ No túnel a cabeça é limitada pela abóbada (`TunnelCeilingHeight` + `CeilingP
 (`MAGNET`, `SNEAKERS`, `MULTIPLIER`, `PIGGY`) em `Game::powerups`; esfera de coleta
 `POWERUP_RADIUS` a `POWERUP_HEIGHT` na faixa, testada contra a caixa varrida do jogador
 (`SphereIntersectsAABB`). Spawn (`Game::GeneratePowerUp`): 1 chance em 6 por chunk
-(`POWERUP_CHUNK_CHANCE`), sempre na faixa segura do chunk, no primeiro de 16 pontos do chunk que
+(`POWERUP_CHUNK_CHANCE`) — exceto o **primeiro power-up de cada corrida, que é sempre um cofrinho**
+(revisão final, item 8: nenhum power-up antes de `FIRST_PIGGY_MIN_S` = 150 m; dali em diante cada chunk
+tenta pôr o cofrinho, sem depender do sorteio, onde a regra do túnel deixa; em 43 de 60 sementes ele
+fica até 300 m, no pior caso em 387 m; `Test_FirstPowerUpIsPiggy`) —, sempre na faixa segura do chunk, no primeiro de 16 pontos do chunk que
 fique a `POWERUP_CLEARANCE` de qualquer obstáculo/moeda da faixa; gerador próprio `powerup_rng_`
 (3 sorteios por chunk, sempre consumidos: o resto do spawn não muda; `powerups_enabled = false`
 só para o teste que confere isso). `Game::powerup_timer[tipo]` conta segundos só em `PLAYING` (pausa,
@@ -551,8 +589,10 @@ envia os uniforms (o `tint` multiplica o Kd do material: tons dos prédios) e ch
 - Postes: `light-curved` com a cabeça em `LAMP_MODEL_HEAD` (coordenadas do modelo);
   `LampHeadPosition()` dá o centro da cabeça no mundo, usado **tanto** para a luz pontual quanto
   para o bloco emissivo `LAMP`.
-- `bunny.obj`, `sphere.obj` e `plane.obj` do código base foram removidos (Tarefa 7.1b); `red_brick` (Poly Haven) é a
-  textura dos túneis (os OBJ do túnel têm UV em metros/2, não usam o atlas).
+- `bunny.obj`, `sphere.obj` e `plane.obj` do código base foram removidos (Tarefa 7.1b); `cube.obj` foi escrito para o
+  trabalho. Texturas do Poly Haven além do chão/trilhos: `red_brick` (portais dos túneis e paredes dos prédios de
+  tijolo), `castle_wall_slates` (abóbada dos túneis) e `stone_wall` (muros) — os OBJ do túnel e do prédio de tijolo
+  têm UV em metros/2, não usam o atlas (as vidraças e o acabamento do prédio usam).
 
 ### Matemática e câmera
 
@@ -612,6 +652,12 @@ transparente no canto superior esquerdo; `PAUSED` → HUD + "Continuar", "Reinic
 `FREE_CAMERA` → aviso no topo; `GAME_OVER` → pontos, moedas, distância, "Jogar de novo", "Menu").
 A cena continua sendo desenhada atrás (escurecida) e congelada. O jogo abre em `MENU` (`main()`
 põe `g_Game.mode = MENU` fora do autotest; `Game()`/`Reset()` continuam deixando `PLAYING`).
+**Cada corrida nova tem semente nova** (revisão final, item 1): fora do autotest, `RestartRun()` (usado por
+"Jogar de novo", "Reiniciar" e Menu → "Jogar") chama `Game::Reseed(NextRunSeed())` (relógio + `glfwGetTime` +
+contador; `Reseed` troca a semente e chama `Reset()`, mantendo `spawn_enabled`/`ramps_enabled`/`powerups_enabled`);
+no autotest continua `Reset()` com a semente fixa 12345. **Perder o foco ou minimizar a janela** em `PLAYING`
+ou `FREE_CAMERA` chama `PauseRun()` (`glfwSetWindowFocusCallback`/`glfwSetWindowIconifyCallback`, registrados
+antes do `Gui_Init`; ao voltar continua pausado).
 As ações dos botões são funções compartilhadas com os atalhos: `StartRunFromMenu()`,
 `PauseRun()`, `ResumeRun()`, `GoToMenu()` (corrida nova ao fundo), `RestartRun()`,
 `EnterFreeCamera()/LeaveFreeCamera()`. Na pausa ficam parados jogador, relógio, trens, porco,
@@ -647,6 +693,7 @@ Lista final de atalhos, para a dupla escrever o manual do `README.md` (a IA não
 | `H` | liga / desliga o texto de depuração (velocidade, faixa, FPS); começa desligado |
 | `R` | recarrega os shaders do disco (`src/shader_*.glsl`) sem recompilar |
 | mouse | clica nos botões do menu, da pausa e do game over |
+| (trocar de janela / minimizar) | pausa a corrida (continua pausada ao voltar) |
 
 HUD (pontos, moedas, distância, tempos dos power-ups) sempre visível durante a corrida. Power-ups:
 ímã (puxa moedas), tênis (pulo 1.5x), multiplicador x2 (pontos das moedas) e cofrinho (porco voador
@@ -659,8 +706,10 @@ em Bézier solta moedas), 10 s cada, renovam ao pegar de novo.
 - O tênis permite pular por cima das placas (apogeu ~4.5 m), por desenho.
 - Na raspada lateral num trem o braço do personagem pode entrar ~13 cm na parede antes do game over
   (a caixa de colisão segue o tronco, não os braços).
-- O build padrão do CMake é Debug (~150 fps no cenário mais pesado numa GTX 1070); para a
-  apresentação use `-DCMAKE_BUILD_TYPE=Release` (~540 fps).
+- O build padrão do CMake é Debug (~140 fps no cenário mais pesado numa GTX 1070); para a
+  apresentação use `-DCMAKE_BUILD_TYPE=Release` (~580–650 fps).
+- Só as 8 luzes pontuais mais próximas iluminam; a 8ª costuma ficar com peso perto de 0 (fade da
+  revisão final), então na prática são ~7 luzes fortes por quadro.
 - Windows App Control pode bloquear um `.exe` recém-linkado ("Permission denied"): toque num `.cpp`
   e recompile.
 - macOS e MSVC nunca foram compilados (sem máquina disponível); o Linux foi verificado só num
