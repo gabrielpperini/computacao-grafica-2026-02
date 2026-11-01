@@ -126,15 +126,16 @@ implementado** — o base é só um visualizador.
 | Requisito | Estado |
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
-| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho e porco voador (até ~3.9k) |
+| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k) e túnel (módulo de abóbada e portal com moldura) |
 | Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
-| Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`); falta a câmera livre |
-| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes |
+| Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC ✅ (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); falta a câmera livre |
+| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
 | Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta. Rampa/pouso no trem (`RampHeightAt`/`LandsOnTop`) entram na 4.4 |
-| Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes, atenuação quadrática); **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
-| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 9 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
+| Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
+| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
+| Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (~1 em 3) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
 | Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
@@ -215,9 +216,14 @@ Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn),
 (arranjo fixo com um exemplar de cada obstáculo, 2 trens e moedas, + foto do pulo — imagem para
 o README/vídeo), `showcase_props` (power-ups e porco voador em exposição: `show_props = true`
 faz `main.cpp` chamar `DrawShowcaseProps()`), `game_over` (bate sem entrada) e `restart` /
-`restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo), `curve` (atravessa a 1ª curva
-da semente 12345, s = 146.5–205.9, trocando de faixa no meio; fotos de entrada, meio e saída) e
-`curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte).
+`restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo), `curve` (jogador posto 24 m
+antes da 1ª curva, troca de faixa dentro dela; fotos de entrada, meio e saída),
+`curve_obstacles` (barreiras, placa e moedas dentro da curva e trem na reta seguinte), `tunnel`
+(atravessa o 1º túnel com um trem parado na faixa -1 e troca de faixa lá dentro; confere altura
+da câmera antes/dentro/depois, transições sem salto, folga até o teto e o escurecimento) e
+`tunnel_side` (portal visto de longe, saindo da curva anterior). **Não fixe valores de s ligados
+à semente**: os cenários de curva/túnel acham o segmento com `FindFirstSegment()` (no `setup`, ou
+numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do comprimento).
 
 ### Ao adicionar um novo arquivo `.cpp`
 
@@ -240,8 +246,8 @@ referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras, spawn de obstác
 chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp` (todos os testes
 de intersecção),
 `camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
-`scenery.cpp` (faixas de chão/dormentes/trilhos, prédios e postes do trecho visível
-`[s-20, s+150]`; as faixas começam na grade de 1 m em s para o chão facetado das curvas não
+`scenery.cpp` (faixas de chão/dormentes/trilhos, prédios, postes e peças/lâmpadas dos túneis do
+trecho visível `[s-20, s+150]`, sem prédios/postes junto aos túneis; as faixas começam na grade de 1 m em s para o chão facetado das curvas não
 "deslizar" entre quadros). Os demais
 `.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
 `tiny_obj_loader.cpp`, `stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs,
@@ -290,7 +296,8 @@ Três pontos precisam ser mantidos em sincronia manualmente:
   `shader_vertex.glsl`. Os VBOs de normal e textura só são criados se o OBJ tiver esses dados.
 - **Uniforms**: `model`, `view`, `projection`, `object_id`, `uv_mode`, `uv_scale`, `bbox_min`, `bbox_max` e os de
   iluminação (`sun_direction`, `sun_color`, `ambient_color`, `num_point_lights`, `point_light_position[8]`,
-  `point_light_color[8]`, `shading_mode`, `material_kd_tint`, `material_ks`, `material_q`, `material_emissive`) têm seus
+  `point_light_color[8]`, `shading_mode`, `material_kd_tint`, `material_ks`, `material_q`, `material_emissive`,
+  e dos túneis: `num_tunnels`, `tunnel_start[4]`, `tunnel_forward[4]`, `tunnel_shape`) têm seus
   locations cacheados nos globais `g_*_uniform` em `LoadShadersFromFiles()`. Um uniform novo
   precisa ser declarado no shader, ter o global criado e o `glGetUniformLocation()` adicionado ali.
 - **IDs de objeto e modos de UV**: as constantes `const int` (`PLAYER`, `GROUND`, ..., `LAMP_POLE` e
@@ -311,6 +318,17 @@ Três pontos precisam ser mantidos em sincronia manualmente:
 está **duplicada** em `shader_vertex.glsl` (Gouraud: `gouraud_diffuse`/`gouraud_specular` por vértice)
 e `shader_fragment.glsl` (Phong): GLSL não tem include, então os dois blocos devem ficar textualmente
 idênticos. As cabeças dos postes (`LAMP`) são emissivas.
+
+**Túneis** (Tarefa 4.2): `Track` gera segmentos retos com `tunnel = true` (veja `track.h`);
+`TunnelOverlaps()` tira prédios e postes de rua de perto deles. As medidas da seção (`TUNNEL_*` em
+`scenery.h`) são as mesmas de `tools/gen_models.py` (`tunnel_section.obj`, `tunnel_portal.obj`):
+alterar nos dois. O túnel não tem piso (o chão é o leito: sem Z-fighting). O shader recebe os
+túneis visíveis (`ComputeVisibleTunnels()`) e `SkyVisibility(p)` (no bloco duplicado de
+`BlinnPhong`) corta o sol e reduz o ambiente para `tunnel_shape.w` dentro do volume — a
+"sombra" do túnel, visível também de fora. As luminárias do teto (`ComputeTunnelLamps()`, bloco
+emissivo `LAMP`) entram na mesma escolha das 8 luzes mais próximas que os postes. Com a CÂMERA
+(em `s - g_Camera.Back()`) no túnel, `g_TunnelDimming` (rampa linear de `StepTunnelDimming()`)
+multiplica `sun_color` por até 0.2 e `ambient_color` por até 0.6.
 
 **Obstáculos e moedas**: `Game` gera um chunk de `CHUNK_LENGTH` por vez (até `s + SPAWN_AHEAD`)
 e descarta o que fica `DESPAWN_BEHIND` para trás. Cada obstáculo é uma `AABB` em coordenadas
@@ -348,7 +366,8 @@ envia os uniforms (o `tint` multiplica o Kd do material: tons dos prédios) e ch
 - Postes: `light-curved` com a cabeça em `LAMP_MODEL_HEAD` (coordenadas do modelo);
   `LampHeadPosition()` dá o centro da cabeça no mundo, usado **tanto** para a luz pontual quanto
   para o bloco emissivo `LAMP`.
-- `bunny.obj`, `sphere.obj`, `plane.obj` e `red_brick` não são mais carregados.
+- `bunny.obj`, `sphere.obj` e `plane.obj` não são mais carregados; `red_brick` (Poly Haven) é a
+  textura dos túneis (os OBJ do túnel têm UV em metros/2, não usam o atlas).
 
 ### Matemática e câmera
 

@@ -255,6 +255,7 @@ struct Textures
     GLuint player;   // Kenney Blocky Characters (texture-b)
     GLuint city;     // Kenney City Kit Commercial (colormap): prédios
     GLuint roads;    // Kenney City Kit Roads (colormap): postes de luz
+    GLuint brick;    // red_brick (Poly Haven): túneis (abóbada e portais)
 };
 Textures g_Tex;
 
@@ -303,6 +304,20 @@ const glm::vec3 LAMP_MODEL_HEAD = glm::vec3(0.0f, 0.6639f, -0.175f);
 glm::vec4 LampHeadPosition(const Track& track, const LampInstance& l); // centro da cabeça (mundo)
 void DrawLamp(const Track& track, const LampInstance& l);
 
+// Túneis (Tarefa 4.2): módulos de abóbada e portais (data/procedural/
+// tunnel_*.obj, com as medidas TUNNEL_* de scenery.h) desenhados como
+// instâncias ao longo dos segmentos de túnel, e as luminárias do teto: blocos
+// emissivos (LAMP) de TUNNEL_LAMP_BOX_* m, com a face de cima rente ao teto.
+const float TUNNEL_LAMP_BOX_WIDTH  = 0.5f;  // m (lateral)
+const float TUNNEL_LAMP_BOX_HEIGHT = 0.12f; // m
+const float TUNNEL_LAMP_BOX_LENGTH = 1.6f;  // m (ao longo da pista)
+const float TUNNEL_LAMP_BOX_TOP    = 6.96f; // m (o teto, no centro, fica a 7 m)
+void DrawTunnelPiece(const Track& track, const TunnelPiece& piece);
+void DrawTunnelLamp(const Track& track, float s);
+// Escurecimento do sol e do céu com a câmera dentro do túnel (0..1, rampa
+// de TUNNEL_DIM_TIME s; veja StepTunnelDimming() em scenery.cpp).
+float g_TunnelDimming = 0.0f;
+
 // Power-ups e porco voador: modelos já carregados (usados nas Fases 5.2/5.3);
 // por enquanto só aparecem no cenário E2E "showcase_props".
 void DrawShowcaseProps();
@@ -335,6 +350,10 @@ GLint g_material_kd_tint_uniform;
 GLint g_material_ks_uniform;
 GLint g_material_q_uniform;
 GLint g_material_emissive_uniform;
+GLint g_num_tunnels_uniform;
+GLint g_tunnel_start_uniform;
+GLint g_tunnel_forward_uniform;
+GLint g_tunnel_shape_uniform;
 
 // Cena: sol (luz direcional) e luzes pontuais dos postes.
 // SUN_DIRECTION aponta da superfície PARA o sol: de cima, um pouco de lado e
@@ -344,6 +363,14 @@ const glm::vec4 SUN_DIRECTION    = glm::vec4(0.30f, 1.00f, 0.70f, 0.0f);
 const glm::vec3 SUN_COLOR        = glm::vec3(0.95f, 0.92f, 0.82f);
 const glm::vec3 AMBIENT_COLOR    = glm::vec3(0.22f, 0.25f, 0.32f); // céu azulado
 const glm::vec3 LAMP_LIGHT_COLOR = glm::vec3(2.8f, 2.0f, 1.0f);   // luz quente, intensidade > 1
+// Luminárias do teto do túnel: luz mais branca e mais fraca que a dos postes
+// (são várias, a cada 10 m, e as paredes ficam perto delas: com a mesma
+// intensidade o túnel ficaria tão claro quanto o dia lá fora).
+const glm::vec3 TUNNEL_LAMP_LIGHT_COLOR = glm::vec3(0.9f, 0.82f, 0.65f);
+// Fração do ambiente (céu) que sobra nos pontos dentro do túnel (o sol some).
+const float TUNNEL_INSIDE_AMBIENT = 0.35f;
+// Túneis enviados ao shader (= MAX_TUNNELS em shader_*.glsl).
+const int MAX_SHADER_TUNNELS = 4;
 const glm::vec3 GRAVEL_TINT      = glm::vec3(0.95f, 0.90f, 0.85f); // brita um pouco mais quente
 
 // Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
@@ -450,6 +477,7 @@ int main(int argc, char* argv[])
     g_Tex.player  = LoadTextureImage("../../data/kenney/blocky-characters/Textures/texture-b.png");
     g_Tex.city    = LoadTextureImage("../../data/kenney/city-kit-commercial/Textures/colormap.png");
     g_Tex.roads   = LoadTextureImage("../../data/kenney/city-kit-roads/Textures/colormap.png");
+    g_Tex.brick   = LoadTextureImage("../../data/red_brick_diff_1k.jpg");
 
     // Construímos a representação de objetos geométricos através de malhas de
     // triângulos. Cada objeto é desenhado várias vezes (instâncias) com
@@ -480,6 +508,9 @@ int main(int argc, char* argv[])
     LoadObjToScene("../../data/procedural/powerup_multiplier.obj");
     LoadObjToScene("../../data/procedural/piggy_bank.obj");
     LoadObjToScene("../../data/procedural/flying_pig.obj"); // corpo + 2 asas (objetos separados)
+    // Túnel: módulo de abóbada (4 m) e portal, com UV em metros (tijolos).
+    LoadObjToScene("../../data/procedural/tunnel_section.obj");
+    LoadObjToScene("../../data/procedural/tunnel_portal.obj");
     // Cubo: cabeça emissiva dos postes e a rampa (Tarefa 4.4, ainda sem modelo).
     LoadObjToScene("../../data/cube.obj");
 
@@ -511,8 +542,15 @@ int main(int argc, char* argv[])
     // escolha (todos reaproveitados por quadro, sem alocar).
     std::vector<LampInstance> lamps;
     std::vector<glm::vec3> lamp_positions;
+    std::vector<glm::vec3> lamp_colors;   // cor de cada luz de lamp_positions
     std::vector<int> picked_lamps;
     std::vector<PointDistance> pick_scratch;
+
+    // Túneis do trecho visível: peças (módulos e portais), lâmpadas do teto
+    // (s de cada uma) e trechos [s0, s1] enviados ao shader.
+    std::vector<TunnelPiece> tunnel_pieces;
+    std::vector<float> tunnel_lamps;
+    std::vector<TunnelSpan> tunnel_spans;
 
     // Corrida: no autotest a semente fixa (12345) de g_Game é mantida para que
     // o cenário seja determinístico; no jogo normal, semente pelo relógio.
@@ -527,6 +565,7 @@ int main(int argc, char* argv[])
 
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s));
+    g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 
     // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
     glEnable(GL_DEPTH_TEST);
@@ -566,7 +605,12 @@ int main(int argc, char* argv[])
 
         const Player& player = g_Game.player;
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
+        // Câmera: recua/abaixa (suavemente) enquanto o JOGADOR está no túnel.
         g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt);
+        // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
+        // CÂMERA (em s - recuo) está dentro do túnel.
+        g_TunnelDimming = StepTunnelDimming(
+            g_TunnelDimming, g_Game.track.IsTunnelAt(player.s - g_Camera.Back()), dt);
 
         // Aqui executamos as operações de renderização
 
@@ -613,16 +657,25 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        // Luzes: sol fixo + as MAX_POINT_LIGHTS lâmpadas de poste mais próximas
-        // do jogador (as demais ficam longe demais para fazer diferença). A
-        // posição de cada luz é o centro da cabeça do poste desenhado
-        // (LampHeadPosition), na altura do chão da pista + LAMP_HEIGHT.
-        ComputeLamps(player.s, &lamps);
+        // Luzes: sol + as MAX_POINT_LIGHTS lâmpadas mais próximas do jogador
+        // (as demais ficam longe demais para fazer diferença), entre as dos
+        // postes de rua (centro da cabeça do poste desenhado, LampHeadPosition)
+        // e as do teto dos túneis (TUNNEL_LAMP_HEIGHT acima da pista).
+        ComputeLamps(g_Game.track, player.s, &lamps);
+        ComputeTunnelLamps(g_Game.track, player.s, &tunnel_lamps);
         lamp_positions.clear();
+        lamp_colors.clear();
         for (size_t i = 0; i < lamps.size(); ++i)
         {
             glm::vec4 h = LampHeadPosition(g_Game.track, lamps[i]);
             lamp_positions.push_back(glm::vec3(h.x, h.y, h.z));
+            lamp_colors.push_back(LAMP_LIGHT_COLOR);
+        }
+        for (size_t i = 0; i < tunnel_lamps.size(); ++i)
+        {
+            glm::vec4 c = g_Game.track.FrameAt(tunnel_lamps[i]).position;
+            lamp_positions.push_back(glm::vec3(c.x, c.y + TUNNEL_LAMP_HEIGHT, c.z));
+            lamp_colors.push_back(TUNNEL_LAMP_LIGHT_COLOR);
         }
         glm::vec4 player_pos = player_frame.position + player_frame.right * player.x;
         PickNearestPoints(lamp_positions, glm::vec3(player_pos.x, player_pos.y, player_pos.z),
@@ -632,20 +685,50 @@ int main(int argc, char* argv[])
         for (size_t i = 0; i < picked_lamps.size(); ++i)
         {
             const glm::vec3& lp = lamp_positions[picked_lamps[i]];
+            const glm::vec3& lc = lamp_colors[picked_lamps[i]];
             light_pos[4 * i + 0] = lp.x;
             light_pos[4 * i + 1] = lp.y;
             light_pos[4 * i + 2] = lp.z;
             light_pos[4 * i + 3] = 1.0f;
-            light_col[3 * i + 0] = LAMP_LIGHT_COLOR.x;
-            light_col[3 * i + 1] = LAMP_LIGHT_COLOR.y;
-            light_col[3 * i + 2] = LAMP_LIGHT_COLOR.z;
+            light_col[3 * i + 0] = lc.x;
+            light_col[3 * i + 1] = lc.y;
+            light_col[3 * i + 2] = lc.z;
         }
+        // Câmera dentro do túnel: sol x TUNNEL_SUN_FACTOR e ambiente x
+        // TUNNEL_AMBIENT_FACTOR, interpolados pela rampa g_TunnelDimming.
+        const float sun_k = 1.0f + (TUNNEL_SUN_FACTOR - 1.0f) * g_TunnelDimming;
+        const float amb_k = 1.0f + (TUNNEL_AMBIENT_FACTOR - 1.0f) * g_TunnelDimming;
         glUniform4f(g_sun_direction_uniform, SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z, 0.0f);
-        glUniform3f(g_sun_color_uniform, SUN_COLOR.x, SUN_COLOR.y, SUN_COLOR.z);
-        glUniform3f(g_ambient_color_uniform, AMBIENT_COLOR.x, AMBIENT_COLOR.y, AMBIENT_COLOR.z);
+        glUniform3f(g_sun_color_uniform, SUN_COLOR.x * sun_k, SUN_COLOR.y * sun_k, SUN_COLOR.z * sun_k);
+        glUniform3f(g_ambient_color_uniform, AMBIENT_COLOR.x * amb_k, AMBIENT_COLOR.y * amb_k,
+                    AMBIENT_COLOR.z * amb_k);
         glUniform1i(g_num_point_lights_uniform, (GLint)picked_lamps.size());
         glUniform4fv(g_point_light_position_uniform, MAX_POINT_LIGHTS, light_pos);
         glUniform3fv(g_point_light_color_uniform, MAX_POINT_LIGHTS, light_col);
+
+        // Volumes dos túneis visíveis (o shader corta o sol e o céu dentro
+        // deles): início, sentido e comprimento de cada um, e o perfil da
+        // seção medido até o meio da parede.
+        ComputeVisibleTunnels(g_Game.track, player.s, &tunnel_spans);
+        float tun_start[4 * MAX_SHADER_TUNNELS] = {0};
+        float tun_fwd[4 * MAX_SHADER_TUNNELS] = {0};
+        const int num_tunnels = std::min((int)tunnel_spans.size(), MAX_SHADER_TUNNELS);
+        for (int i = 0; i < num_tunnels; ++i)
+        {
+            TrackFrame f = g_Game.track.FrameAt(tunnel_spans[i].s0);
+            tun_start[4 * i + 0] = f.position.x;
+            tun_start[4 * i + 1] = f.position.y;
+            tun_start[4 * i + 2] = f.position.z;
+            tun_start[4 * i + 3] = tunnel_spans[i].s1 - tunnel_spans[i].s0;
+            tun_fwd[4 * i + 0] = f.forward.x;
+            tun_fwd[4 * i + 1] = f.forward.y;
+            tun_fwd[4 * i + 2] = f.forward.z;
+        }
+        const float mid_wall = TUNNEL_INNER_HALF_WIDTH + 0.5f * TUNNEL_WALL_THICKNESS;
+        glUniform1i(g_num_tunnels_uniform, num_tunnels);
+        glUniform4fv(g_tunnel_start_uniform, MAX_SHADER_TUNNELS, tun_start);
+        glUniform4fv(g_tunnel_forward_uniform, MAX_SHADER_TUNNELS, tun_fwd);
+        glUniform4f(g_tunnel_shape_uniform, mid_wall, TUNNEL_SPRING_HEIGHT, mid_wall, TUNNEL_INSIDE_AMBIENT);
 
         // Chão, dormentes e trilhos: faixas reconstruídas a partir da pista no
         // trecho visível em torno do jogador. As UV das faixas já estão em
@@ -670,13 +753,21 @@ int main(int argc, char* argv[])
         DrawPlayer(player, player_frame);
 
         // Prédios: instâncias dos modelos de prédio, um por posição.
-        ComputeBuildings(player.s, &buildings);
+        ComputeBuildings(g_Game.track, player.s, &buildings);
         for (size_t i = 0; i < buildings.size(); ++i)
             DrawBuilding(g_Game.track, buildings[i]);
 
         // Postes de luz: modelo do poste + cabeça emissiva.
         for (size_t i = 0; i < lamps.size(); ++i)
             DrawLamp(g_Game.track, lamps[i]);
+
+        // Túneis: instâncias do módulo de abóbada (a cada 4 m) e dos dois
+        // portais, mais as luminárias emissivas do teto.
+        ComputeTunnelPieces(g_Game.track, player.s, &tunnel_pieces);
+        for (size_t i = 0; i < tunnel_pieces.size(); ++i)
+            DrawTunnelPiece(g_Game.track, tunnel_pieces[i]);
+        for (size_t i = 0; i < tunnel_lamps.size(); ++i)
+            DrawTunnelLamp(g_Game.track, tunnel_lamps[i]);
 
         // Obstáculos: cada um é o seu modelo escalado para a caixa de colisão.
         for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
@@ -829,6 +920,7 @@ Material MaterialFor(int object_id)
     case SIGN:        m = { white, glm::vec3(0.35f), 64.0f, none, 0 }; break;
     case TRAIN:       m = { white, glm::vec3(0.55f), 64.0f, none, 0 }; break;  // lataria pintada
     case RAMP:        m = { white, glm::vec3(0.35f), 24.0f, none, 0 }; break;
+    case TUNNEL:      m = { white, glm::vec3(0.10f), 12.0f, none, 0 }; break;  // tijolo: quase fosco
     case COIN:        m = { glm::vec3(1.25f, 1.1f, 0.85f), glm::vec3(0.90f), 32.0f, none, 1 }; break; // ouro; Gouraud
     case POWERUP_MAGNET:
     case POWERUP_SNEAKERS:
@@ -1049,6 +1141,37 @@ void DrawLamp(const Track& track, const LampInstance& l)
     DrawObject("the_cube", head, LAMP, g_Tex.metal, UV_BOX, 0.5f);
 }
 
+// Peça do túnel na pista, nas coordenadas do próprio modelo (sem recentrar):
+// o módulo está centrado em z = 0 e o portal tem o corpo centrado em z = 0 e
+// a frente em +Z (voltada para quem chega). O portal de saída é girado 180°
+// (frente para quem sai). O portal tem um tom de pedra mais clara que a
+// abóbada, para destacar a entrada.
+void DrawTunnelPiece(const Track& track, const TunnelPiece& piece)
+{
+    const TrackFrame f = track.FrameAt(piece.s);
+    if (piece.kind == TUNNEL_PIECE_SECTION)
+    {
+        DrawObject("tunnel_section", TrackPlacement(f, 0.0f, 0.0f, 0.0f), TUNNEL, g_Tex.brick, UV_OBJ);
+        return;
+    }
+    const float yaw = (piece.kind == TUNNEL_PIECE_EXIT) ? 3.1415927f : 0.0f;
+    DrawObject("tunnel_portal", TrackPlacement(f, 0.0f, 0.0f, yaw), TUNNEL, g_Tex.brick, UV_OBJ,
+               1.0f, glm::vec3(0.95f, 0.85f, 0.80f));
+}
+
+// Luminária do teto do túnel em s: bloco emissivo no centro da pista, com a
+// face de cima rente ao teto (TUNNEL_LAMP_BOX_TOP); a luz pontual
+// correspondente fica logo abaixo, em TUNNEL_LAMP_HEIGHT.
+void DrawTunnelLamp(const Track& track, float s)
+{
+    const TrackFrame f = track.FrameAt(s);
+    const glm::vec3 cube = ObjectSize("the_cube");
+    glm::mat4 model = TrackPlacement(f, 0.0f, TUNNEL_LAMP_BOX_TOP - TUNNEL_LAMP_BOX_HEIGHT, 0.0f)
+                    * Matrix_OnGround("the_cube", TUNNEL_LAMP_BOX_WIDTH / cube.x,
+                                      TUNNEL_LAMP_BOX_HEIGHT / cube.y, TUNNEL_LAMP_BOX_LENGTH / cube.z);
+    DrawObject("the_cube", model, LAMP, g_Tex.metal, UV_BOX, 0.5f);
+}
+
 // Cenário E2E "showcase_props": os power-ups (ímã, tênis, x2, cofrinho) em
 // fila sobre a pista e o porco voador acima deles, para conferir os modelos
 // antes das Tarefas 5.2/5.3.
@@ -1080,6 +1203,7 @@ void RestartRun()
     g_Game.Reset();
     g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
                   g_Game.track.IsTunnelAt(g_Game.player.s));
+    g_TunnelDimming = g_Game.track.IsTunnelAt(g_Game.player.s - g_Camera.Back()) ? 1.0f : 0.0f;
 }
 
 // Dimensões da AABB de um objeto de g_VirtualScene (coordenadas de modelo).
@@ -1287,6 +1411,10 @@ void LoadShadersFromFiles()
     g_material_ks_uniform          = glGetUniformLocation(g_GpuProgramID, "material_ks");
     g_material_q_uniform           = glGetUniformLocation(g_GpuProgramID, "material_q");
     g_material_emissive_uniform    = glGetUniformLocation(g_GpuProgramID, "material_emissive");
+    g_num_tunnels_uniform          = glGetUniformLocation(g_GpuProgramID, "num_tunnels");
+    g_tunnel_start_uniform         = glGetUniformLocation(g_GpuProgramID, "tunnel_start");
+    g_tunnel_forward_uniform       = glGetUniformLocation(g_GpuProgramID, "tunnel_forward");
+    g_tunnel_shape_uniform         = glGetUniformLocation(g_GpuProgramID, "tunnel_shape");
 
     // Variável em "shader_fragment.glsl" para acesso da textura do objeto (unidade 0)
     glUseProgram(g_GpuProgramID);

@@ -178,13 +178,19 @@ void Test_TrackGeneratorRules()
         assert(segs[0].length <= TRACK_STRAIGHT_MAX_LENGTH + 1e-3f);
         for (size_t i = 0; i < segs.size(); i++) {
             const TrackSegment& g = segs[i];
-            assert(!g.tunnel); // túneis só na Tarefa 4.2
             if (i > 0) {
-                // Alterna: nunca duas retas nem duas curvas seguidas.
-                assert((g.curvature == 0.0f) != (segs[i - 1].curvature == 0.0f));
-                assert(nearf(g.s_start, segs[i - 1].s_start + segs[i - 1].length, 1e-2f));
+                // Alterna: nunca duas curvas seguidas, e duas retas seguidas
+                // só com um túnel entre elas (reta, túnel, reta; Tarefa 4.2).
+                const TrackSegment& p = segs[i - 1];
+                if (g.curvature != 0.0f)
+                    assert(p.curvature == 0.0f && !p.tunnel);
+                else if (p.curvature == 0.0f)
+                    assert(g.tunnel != p.tunnel);
+                assert(nearf(g.s_start, p.s_start + p.length, 1e-2f));
             }
-            if (g.curvature == 0.0f) {
+            if (g.tunnel) {
+                // Comprimento do túnel testado em Test_TunnelOnlyOnStraight.
+            } else if (g.curvature == 0.0f) {
                 assert(g.length >= TRACK_STRAIGHT_MIN_LENGTH - 1e-3f);
                 assert(g.length <= TRACK_STRAIGHT_MAX_LENGTH + 1e-3f);
             } else {
@@ -200,7 +206,8 @@ void Test_TrackGeneratorRules()
         assert(u.Segments().size() == segs.size());
         for (size_t i = 0; i < segs.size(); i++)
             assert(u.Segments()[i].length == segs[i].length &&
-                   u.Segments()[i].curvature == segs[i].curvature);
+                   u.Segments()[i].curvature == segs[i].curvature &&
+                   u.Segments()[i].tunnel == segs[i].tunnel);
     }
     assert(left > 100 && right > 100); // curvas para os dois lados
 }
@@ -221,6 +228,77 @@ void Test_CurveContinuity()
             assert(near(a.forward, b.forward, 1e-3f));
         }
     }
+}
+
+// ------------------------------------------------------- Túneis (4.2)
+
+// Túneis só em retas: segmento com tunnel = true tem curvatura 0, nunca é a
+// reta da largada e fica entre duas retas comuns (reta, túnel, reta), de modo
+// que o portal é visto de longe, de frente, e a saída também dá numa reta.
+// Comprimento de 40 a 80 m, múltiplo do módulo do túnel (4 m). Aparecem em
+// cerca de 1 de cada 3 retas.
+void Test_TunnelOnlyOnStraight()
+{
+    int tunnels = 0, curves = 0;
+    for (unsigned seed = 1; seed <= 20; seed++) {
+        Track t(seed);
+        t.EnsureGeneratedUntil(20000.0f);
+        const std::vector<TrackSegment>& segs = t.Segments();
+        assert(!segs[0].tunnel);
+        for (size_t i = 0; i < segs.size(); i++) {
+            const TrackSegment& g = segs[i];
+            if (g.curvature != 0.0f) {
+                assert(!g.tunnel);
+                curves++;
+                continue;
+            }
+            if (!g.tunnel)
+                continue;
+            tunnels++;
+            assert(i > 0);
+            assert(segs[i - 1].curvature == 0.0f && !segs[i - 1].tunnel);
+            if (i + 1 < segs.size()) // (o último gerado ainda não tem sucessor)
+                assert(segs[i + 1].curvature == 0.0f && !segs[i + 1].tunnel);
+            assert(g.length >= TRACK_TUNNEL_MIN_LENGTH - 1e-3f);
+            assert(g.length <= TRACK_TUNNEL_MAX_LENGTH + 1e-3f);
+            float k = g.length / TRACK_TUNNEL_SECTION;
+            assert(nearf(k, std::floor(k + 0.5f), 1e-3f));
+            assert(t.IsStraightRange(g.s_start, g.s_start + g.length - 1e-3f));
+        }
+    }
+    // ~1 túnel a cada 3 retas elegíveis (uma por curva).
+    assert(tunnels > 0);
+    float ratio = (float)tunnels / (float)curves;
+    assert(ratio > 0.2f && ratio < 0.5f);
+}
+
+// IsTunnelAt: verdadeiro dentro do segmento de túnel, falso fora (inclusive
+// logo antes do portal de entrada e logo depois da saída). TunnelOverlaps
+// detecta qualquer intersecção do intervalo [s0, s1] com um túnel.
+void Test_IsTunnelAtBounds()
+{
+    Track t(1);
+    float a = t.Segments()[0].length; // fim da reta da largada
+    t.AppendSegment(60.0f, 0.0f, true);
+    t.AppendSegment(100.0f, 0.0f, false);
+    float b = a + 60.0f;
+    assert(!t.IsTunnelAt(0.0f) && !t.IsTunnelAt(a - 0.01f));
+    assert(t.IsTunnelAt(a + 0.01f) && t.IsTunnelAt(a + 30.0f) && t.IsTunnelAt(b - 0.01f));
+    assert(!t.IsTunnelAt(b + 0.01f) && !t.IsTunnelAt(b + 50.0f));
+    assert(!t.TunnelOverlaps(0.0f, a - 1.0f));
+    assert(t.TunnelOverlaps(a - 1.0f, a + 1.0f));
+    assert(t.TunnelOverlaps(a - 10.0f, b + 10.0f));
+    assert(t.TunnelOverlaps(b - 1.0f, b + 1.0f));
+    assert(!t.TunnelOverlaps(b + 1.0f, b + 90.0f));
+    // A mesma semente continua gerando a mesma pista com túneis.
+    Track u(7), v(7);
+    u.EnsureGeneratedUntil(5000.0f);
+    v.EnsureGeneratedUntil(2000.0f);
+    v.EnsureGeneratedUntil(5000.0f);
+    assert(u.Segments().size() == v.Segments().size());
+    for (size_t i = 0; i < u.Segments().size(); i++)
+        assert(u.Segments()[i].tunnel == v.Segments()[i].tunnel &&
+               u.Segments()[i].length == v.Segments()[i].length);
 }
 
 // ---------------------------------------------------------------- Game (1.2)
@@ -480,6 +558,9 @@ void Test_CameraTunnelLowerCloser()
     assert(std::fabs(pi.z - f.position.z) < std::fabs(po.z - f.position.z)); // mais perto
     assert(nearf(pi.y, CAMERA_TUNNEL_HEIGHT));
     assert(nearf(pi.z, f.position.z + CAMERA_TUNNEL_BACK));
+    // Acessores (main.cpp usa Back() para saber se a CÂMERA está no túnel).
+    assert(nearf(in.Height(), CAMERA_TUNNEL_HEIGHT) && nearf(in.Back(), CAMERA_TUNNEL_BACK));
+    assert(nearf(out.Height(), CAMERA_HEIGHT) && nearf(out.Back(), CAMERA_BACK));
     // A transição é suave: um passo de 1/60 s não chega ao alvo do túnel.
     out.Update(t, 20.0f, 0.0f, true, 1.0f / 60.0f);
     float y = out.Pose().position.y;
@@ -611,7 +692,7 @@ void Test_SleepersUnderRailsFitCapacity()
 void Test_BuildingsCoverVisibleRange()
 {
     std::vector<BuildingInstance> a, b;
-    ComputeBuildings(100.0f, &a);
+    ComputeBuildings(StraightTrack(), 100.0f, &a);
     assert(!a.empty());
     for (size_t i = 0; i < a.size(); i++) {
         assert(a[i].s >= 100.0f - DESPAWN_BEHIND && a[i].s <= 100.0f + SPAWN_AHEAD);
@@ -620,7 +701,7 @@ void Test_BuildingsCoverVisibleRange()
         assert(a[i].tint >= 0 && a[i].tint < BUILDING_TINT_COUNT);
     }
     // Mesmo prédio (mesmo s e lado) mantém modelo e tom quando o jogador anda.
-    ComputeBuildings(130.0f, &b);
+    ComputeBuildings(StraightTrack(), 130.0f, &b);
     int matched = 0;
     std::vector<int> seen(BUILDING_VARIANT_COUNT, 0);
     for (size_t i = 0; i < a.size(); i++) {
@@ -704,7 +785,7 @@ void Test_InnerCurveBuildingsDontOverlap()
     std::vector<BuildingInstance> bs;
     float min_dist = 1e9f;
     for (float ps = 0.0f; ps < 2800.0f; ps += 150.0f) {
-        ComputeBuildings(ps, &bs);
+        ComputeBuildings(t, ps, &bs);
         for (size_t i = 0; i < bs.size(); i++)
             for (size_t j = i + 1; j < bs.size(); j++) {
                 if (bs[i].x != bs[j].x)
@@ -725,7 +806,7 @@ void Test_InnerCurveBuildingsDontOverlap()
 void Test_LampsCoverVisibleRange()
 {
     std::vector<LampInstance> lamps;
-    ComputeLamps(100.0f, &lamps);
+    ComputeLamps(StraightTrack(), 100.0f, &lamps);
     assert(!lamps.empty());
     int left = 0, right = 0;
     for (size_t i = 0; i < lamps.size(); i++) {
@@ -789,7 +870,7 @@ void Test_PickNearestLampsAroundPlayer()
     // perto do jogador, em ordem crescente de distância.
     std::vector<LampInstance> lamps;
     const float ps = 100.0f;
-    ComputeLamps(ps, &lamps);
+    ComputeLamps(StraightTrack(), ps, &lamps);
     std::vector<glm::vec3> pos;
     for (size_t i = 0; i < lamps.size(); i++)
         pos.push_back(glm::vec3(lamps[i].x, LAMP_HEIGHT, -lamps[i].s)); // pista reta: s = -Z
@@ -809,6 +890,170 @@ void Test_PickNearestLampsAroundPlayer()
         assert(dist < 0.5f * (DESPAWN_BEHIND + SPAWN_AHEAD));
         prev = dist;
     }
+}
+
+// ------------------------------------------- Cenário dos túneis (4.2)
+
+// Pista com um túnel de 60 m em [*ts, *te]: largada, reta de 50 m, túnel,
+// reta de 300 m.
+static Track TunnelTrack(float* ts, float* te)
+{
+    Track t(1);
+    t.AppendSegment(50.0f, 0.0f, false);
+    *ts = t.Segments().back().s_start + 50.0f;
+    t.AppendSegment(60.0f, 0.0f, true);
+    *te = *ts + 60.0f;
+    t.AppendSegment(300.0f, 0.0f, false);
+    return t;
+}
+
+// Prédios e postes de rua não aparecem ao longo do túnel nem colados nos
+// portais (o poste em x = ±5.5 atravessaria a parede; o prédio, o portal),
+// mas continuam antes e depois dele.
+void Test_SceneryAvoidsTunnels()
+{
+    float ts, te;
+    Track t = TunnelTrack(&ts, &te);
+    const float lo = ts - TUNNEL_PORTAL_DEPTH - TUNNEL_CLEAR_MARGIN;
+    const float hi = te + TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
+    std::vector<BuildingInstance> bs;
+    std::vector<LampInstance> ls;
+    int before = 0, after = 0, lamps_before = 0, lamps_after = 0;
+    for (float ps = 0.0f; ps <= te + 100.0f; ps += 5.0f) {
+        ComputeBuildings(t, ps, &bs);
+        for (size_t i = 0; i < bs.size(); i++) {
+            float b0 = bs[i].s - 0.5f * BUILDING_WIDTH, b1 = bs[i].s + 0.5f * BUILDING_WIDTH;
+            assert(b1 < lo || b0 > hi);
+            if (b1 < lo && b1 > lo - BUILDING_SPACING) before++;
+            if (b0 > hi && b0 < hi + BUILDING_SPACING) after++;
+        }
+        ComputeLamps(t, ps, &ls);
+        for (size_t i = 0; i < ls.size(); i++) {
+            assert(ls[i].s < lo || ls[i].s > hi);
+            if (ls[i].s < lo && ls[i].s > lo - LAMP_SPACING) lamps_before++;
+            if (ls[i].s > hi && ls[i].s < hi + LAMP_SPACING) lamps_after++;
+        }
+    }
+    // Logo antes e logo depois do túnel o cenário continua.
+    assert(before > 0 && after > 0 && lamps_before > 0 && lamps_after > 0);
+}
+
+// Módulos do túnel (TUNNEL_SECTION_LENGTH cada) cobrem o segmento de ponta a
+// ponta, sem sobra nem buraco; um portal antes da entrada e outro depois da
+// saída; lâmpadas de teto a cada TUNNEL_LAMP_SPACING, todas dentro do túnel.
+void Test_TunnelPiecesAndLamps()
+{
+    float ts, te;
+    Track t = TunnelTrack(&ts, &te);
+    std::vector<TunnelPiece> pieces;
+    ComputeTunnelPieces(t, ts + 10.0f, &pieces); // túnel inteiro no trecho visível
+    int sections = 0, entries = 0, exits = 0;
+    float smin = 1e9f, smax = -1e9f;
+    for (size_t i = 0; i < pieces.size(); i++) {
+        const TunnelPiece& p = pieces[i];
+        if (p.kind == TUNNEL_PIECE_SECTION) {
+            sections++;
+            smin = std::min(smin, p.s);
+            smax = std::max(smax, p.s);
+            float k = (p.s - ts - 0.5f * TUNNEL_SECTION_LENGTH) / TUNNEL_SECTION_LENGTH;
+            assert(nearf(k, std::floor(k + 0.5f), 1e-3f));
+        } else if (p.kind == TUNNEL_PIECE_ENTRY) {
+            entries++;
+            assert(nearf(p.s, ts - 0.5f * TUNNEL_PORTAL_DEPTH, 1e-3f));
+        } else {
+            assert(p.kind == TUNNEL_PIECE_EXIT);
+            exits++;
+            assert(nearf(p.s, te + 0.5f * TUNNEL_PORTAL_DEPTH, 1e-3f));
+        }
+    }
+    assert(sections == (int)(60.0f / TUNNEL_SECTION_LENGTH + 0.5f));
+    assert(entries == 1 && exits == 1);
+    assert(nearf(smin - 0.5f * TUNNEL_SECTION_LENGTH, ts, 1e-3f));
+    assert(nearf(smax + 0.5f * TUNNEL_SECTION_LENGTH, te, 1e-3f));
+
+    std::vector<float> lamps;
+    ComputeTunnelLamps(t, ts + 10.0f, &lamps);
+    assert(lamps.size() == 6); // 5, 15, ..., 55 m depois da entrada
+    for (size_t i = 0; i < lamps.size(); i++) {
+        assert(lamps[i] > ts && lamps[i] < te);
+        assert(nearf(lamps[i], ts + 0.5f * TUNNEL_LAMP_SPACING + i * TUNNEL_LAMP_SPACING, 1e-3f));
+    }
+
+    // Só o que cruza o trecho visível: longe antes do túnel, nada; com o
+    // horizonte no meio do túnel, só o começo dele.
+    ComputeTunnelPieces(t, ts - SPAWN_AHEAD - 10.0f, &pieces);
+    ComputeTunnelLamps(t, ts - SPAWN_AHEAD - 10.0f, &lamps);
+    assert(pieces.empty() && lamps.empty());
+    const float ps = ts + 30.0f - SPAWN_AHEAD;
+    ComputeTunnelPieces(t, ps, &pieces);
+    assert(!pieces.empty());
+    for (size_t i = 0; i < pieces.size(); i++)
+        assert(pieces[i].s <= ps + SPAWN_AHEAD + TUNNEL_SECTION_LENGTH && pieces[i].kind != TUNNEL_PIECE_EXIT);
+}
+
+// Regra R9: o vão interno do túnel comporta as 3 faixas, os trens (3.2 m de
+// altura, inclusive nas faixas externas), a câmera (dentro e durante a
+// transição) e as lâmpadas do teto; o portal é maior que o tubo.
+void Test_TunnelClearance()
+{
+    const float train_w = OBSTACLE_SIZE[(int)ObstacleType::TRAIN][0];
+    const float train_h = OBSTACLE_SIZE[(int)ObstacleType::TRAIN][1];
+    const float x_edge = LANE_WIDTH + 0.5f * train_w; // lateral do trem na faixa externa
+    assert(TunnelCeilingHeight(0.0f) >= 5.5f);
+    assert(TunnelCeilingHeight(x_edge) > train_h + 0.5f);
+    assert(TUNNEL_INNER_HALF_WIDTH > x_edge + 0.5f);          // parede longe do trem
+    assert(TUNNEL_INNER_HALF_WIDTH > TRACK_BED_HALF_WIDTH);   // leito inteiro dentro
+    // Teto monotônico: mais baixo junto às paredes, nunca acima do centro.
+    float prev = TunnelCeilingHeight(0.0f);
+    for (float x = 0.25f; x <= TUNNEL_INNER_HALF_WIDTH; x += 0.25f) {
+        float h = TunnelCeilingHeight(x);
+        assert(h <= prev + 1e-4f && h >= TUNNEL_SPRING_HEIGHT - 1e-4f);
+        assert(nearf(TunnelCeilingHeight(-x), h));
+        prev = h;
+    }
+    // Câmera (desloca no máximo 1/3 da faixa externa): nem a altura de fora
+    // (durante a transição) chega perto do teto.
+    const float cam_x = LANE_WIDTH * CAMERA_LATERAL_FACTOR;
+    assert(TunnelCeilingHeight(cam_x) > CAMERA_HEIGHT + 1.0f);
+    assert(CAMERA_TUNNEL_HEIGHT < CAMERA_HEIGHT);
+    // Lâmpadas do teto: abaixo do teto e bem acima dos trens.
+    assert(TUNNEL_LAMP_HEIGHT < TunnelCeilingHeight(0.0f));
+    assert(TUNNEL_LAMP_HEIGHT > train_h + 1.0f);
+    // Portal envolve o tubo (cobre a borda da parede).
+    assert(TUNNEL_PORTAL_HALF_WIDTH > TUNNEL_INNER_HALF_WIDTH + TUNNEL_WALL_THICKNESS);
+    assert(TUNNEL_PORTAL_HEIGHT > TunnelCeilingHeight(0.0f) + TUNNEL_WALL_THICKNESS);
+    // Os módulos têm o mesmo comprimento que a "grade" do gerador de túneis.
+    assert(TUNNEL_SECTION_LENGTH == TRACK_TUNNEL_SECTION);
+}
+
+// Escurecimento do sol com a câmera dentro do túnel: rampa linear de
+// TUNNEL_DIM_TIME s nos dois sentidos, sem saltos (cada passo muda no máximo
+// dt / TUNNEL_DIM_TIME), presa em [0, 1] e independente do dt.
+void Test_TunnelDimmingSmooth()
+{
+    float d = 0.0f;
+    const float dt = 1.0f / 60.0f;
+    float t = 0.0f;
+    while (d < 1.0f) {
+        float nd = StepTunnelDimming(d, true, dt);
+        assert(nd >= d && nd - d <= dt / TUNNEL_DIM_TIME + 1e-5f);
+        d = nd;
+        t += dt;
+        assert(t < TUNNEL_DIM_TIME + 2.0f * dt);
+    }
+    assert(t > TUNNEL_DIM_TIME - 2.0f * dt);
+    assert(StepTunnelDimming(1.0f, true, 1.0f) == 1.0f);
+    // Saída: volta a 0 pelo mesmo caminho.
+    float half = StepTunnelDimming(1.0f, false, 0.5f * TUNNEL_DIM_TIME);
+    assert(nearf(half, 0.5f, 1e-4f));
+    assert(StepTunnelDimming(half, false, 10.0f) == 0.0f);
+    // 30 Hz e 120 Hz chegam ao mesmo valor.
+    float a = 0.0f, b = 0.0f;
+    for (int i = 0; i < 9; i++) a = StepTunnelDimming(a, true, 1.0f / 30.0f);
+    for (int i = 0; i < 36; i++) b = StepTunnelDimming(b, true, 1.0f / 120.0f);
+    assert(nearf(a, b, 1e-4f));
+    // dt negativo não anda para trás.
+    assert(StepTunnelDimming(0.3f, true, -1.0f) == 0.3f);
 }
 
 // ------------------------------------------------------- Colisões (2.1)
@@ -1401,6 +1646,8 @@ int main()
     Test_Curve90EndsPerpendicular();
     Test_TrackGeneratorRules();
     Test_CurveContinuity();
+    Test_TunnelOnlyOnStraight();
+    Test_IsTunnelAtBounds();
     Test_LaneClamp();
     Test_LaneMoveTime();
     Test_LaneNoOvershoot();
@@ -1432,6 +1679,11 @@ int main()
     Test_LampsCoverVisibleRange();
     Test_PickNearestPoints();
     Test_PickNearestLampsAroundPlayer();
+    // Túneis (4.2)
+    Test_SceneryAvoidsTunnels();
+    Test_TunnelPiecesAndLamps();
+    Test_TunnelClearance();
+    Test_TunnelDimmingSmooth();
     // Colisões (2.1)
     Test_MakeAABB();
     Test_AABBTouchingIsHit();

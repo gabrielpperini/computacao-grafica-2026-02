@@ -3,6 +3,7 @@
 
 Uso (na raiz do repositório):   python tools/gen_models.py
 Saída: data/procedural/*.obj e data/procedural/atlas.png (sobrescreve).
+(Os modelos do túnel usam data/red_brick_diff_1k.jpg em vez do atlas.)
 
 Só biblioteca padrão (math, struct, zlib). Tudo é determinístico: rodar de novo
 gera exatamente os mesmos arquivos.
@@ -706,13 +707,159 @@ def model_flying_pig():
 
 
 # ---------------------------------------------------------------------------
+# Túnel (Tarefa 4.2): módulo de abóbada e portal. Medidas IGUAIS às de
+# include/scenery.h (TUNNEL_*): alterar lá e aqui juntos. Estes modelos usam a
+# textura de tijolos (red_brick_diff_1k.jpg, Poly Haven), não o atlas: as UV
+# estão em metros / TUNNEL_TILE (o padrão nunca estica e se repete sem emenda
+# entre módulos vizinhos).
+# ---------------------------------------------------------------------------
+
+TUNNEL_HALF_WIDTH = 5.0         # TUNNEL_INNER_HALF_WIDTH (raio da abóbada)
+TUNNEL_SPRING = 2.0             # TUNNEL_SPRING_HEIGHT (altura das paredes retas)
+TUNNEL_THICK = 0.6              # TUNNEL_WALL_THICKNESS
+TUNNEL_SECTION = 4.0            # TUNNEL_SECTION_LENGTH (= TRACK_TUNNEL_SECTION)
+TUNNEL_PORTAL_HALF_WIDTH = 7.5  # TUNNEL_PORTAL_HALF_WIDTH
+TUNNEL_PORTAL_HEIGHT = 9.0      # TUNNEL_PORTAL_HEIGHT
+TUNNEL_PORTAL_DEPTH = 1.0       # TUNNEL_PORTAL_DEPTH
+TUNNEL_TILE = 2.0               # m por repetição da textura de tijolos
+TUNNEL_ARC_SEGMENTS = 24        # segmentos da abóbada (meia-volta)
+ARCHIVOLT_WIDTH = 0.7           # m: moldura em volta da abertura do portal
+ARCHIVOLT_DEPTH = 0.15          # m: quanto a moldura avança à frente da fachada
+
+
+def tunnel_profile(r, extra_angles=()):
+    """Perfil da seção (de baixo à direita, subindo, passando pelo topo e
+    descendo à esquerda) com raio r: paredes retas em x = ±r de y = 0 a
+    TUNNEL_SPRING e o semicírculo de centro (0, TUNNEL_SPRING). Devolve
+    [(x, y, nx, ny, comprimento acumulado, ângulo)], normal para FORA do eixo.
+    O ângulo é None nos pés das paredes."""
+    angles = [math.pi * i / TUNNEL_ARC_SEGMENTS for i in range(TUNNEL_ARC_SEGMENTS + 1)]
+    angles = sorted(set(angles) | set(extra_angles))
+    pts = [(r, 0.0, 1.0, 0.0, None)]
+    for a in angles:
+        c, s = math.cos(a), math.sin(a)
+        pts.append((r * c, TUNNEL_SPRING + r * s, c, s, a))
+    pts.append((-r, 0.0, -1.0, 0.0, None))
+    out = []
+    length = 0.0
+    for i, (x, y, nx, ny, a) in enumerate(pts):
+        if i > 0:
+            length += math.hypot(x - pts[i - 1][0], y - pts[i - 1][1])
+        out.append((x, y, nx, ny, length, a))
+    return out
+
+
+def tunnel_shell(m, r, z0, z1, inward):
+    """Superfície do perfil de raio r entre z0 e z1. inward: normais para o
+    eixo (vista de dentro). UV: U ao longo do túnel (as fiadas de tijolo
+    acompanham o comprimento), V ao longo do perfil, em metros/TUNNEL_TILE."""
+    prof = tunnel_profile(r)
+    sign = -1.0 if inward else 1.0
+    rows = []
+    for z in (z0, z1):
+        row = []
+        for (x, y, nx, ny, length, _) in prof:
+            row.append(m.vertex((x, y, z), (sign * nx, sign * ny, 0.0),
+                                ((z - z0) / TUNNEL_TILE, length / TUNNEL_TILE)))
+        rows.append(row)
+    for i in range(len(prof) - 1):
+        m.quad(rows[0][i], rows[0][i + 1], rows[1][i + 1], rows[1][i])
+
+
+def model_tunnel_section():
+    """Módulo do túnel: TUNNEL_SECTION m ao longo de z (centrado em z = 0),
+    face interna (normais para dentro, vista de dentro do túnel) e externa.
+    Não tem piso nem tampas: o chão é o leito da pista e as pontas ficam
+    encostadas no módulo vizinho ou atrás de um portal."""
+    m = Mesh("tunnel_section")
+    z0, z1 = -0.5 * TUNNEL_SECTION, 0.5 * TUNNEL_SECTION
+    tunnel_shell(m, TUNNEL_HALF_WIDTH, z0, z1, inward=True)
+    tunnel_shell(m, TUNNEL_HALF_WIDTH + TUNNEL_THICK, z0, z1, inward=False)
+    return m
+
+
+def ray_to_rect(a, hw, h):
+    """Ponto em que o raio que sai de (0, TUNNEL_SPRING) com ângulo a encontra
+    a borda do retângulo |x| <= hw, y <= h (lados ou topo)."""
+    c, s = math.cos(a), math.sin(a)
+    if abs(c) > 1e-9:
+        t = hw / abs(c)
+        y = TUNNEL_SPRING + t * s
+        if y <= h + 1e-9:
+            return (math.copysign(hw, c), y)
+    t = (h - TUNNEL_SPRING) / s
+    return (t * c, h)
+
+
+def flat_ring(m, r, z, normal_z, hw, h, outer_r=None):
+    """Face plana em z (normal (0, 0, normal_z)) entre o perfil de raio r
+    (borda interna) e o contorno externo: o retângulo |x| <= hw, 0 <= y <= h,
+    ou o perfil de raio outer_r. Cada ponto do perfil é ligado ao ponto do
+    contorno externo no mesmo ângulo (quadriláteros convexos); os cantos do
+    retângulo entram como ângulos extras. UV planar em metros."""
+    corner = math.atan2(h - TUNNEL_SPRING, hw)
+    extra = (corner, math.pi - corner) if outer_r is None else ()
+    inner = tunnel_profile(r, extra)
+    outer = tunnel_profile(outer_r, extra) if outer_r is not None else None
+    n = (0.0, 0.0, normal_z)
+
+    def uv(x, y):
+        return ((x if normal_z > 0 else -x) / TUNNEL_TILE, y / TUNNEL_TILE)
+
+    a_ids, b_ids = [], []
+    for i, (x, y, nx, ny, _, a) in enumerate(inner):
+        if outer is not None:
+            ox, oy = outer[i][0], outer[i][1]
+        elif a is None:
+            ox, oy = math.copysign(hw, x), 0.0   # pés das paredes
+        else:
+            ox, oy = ray_to_rect(a, hw, h)
+        a_ids.append(m.vertex((x, y, z), n, uv(x, y)))
+        b_ids.append(m.vertex((ox, oy, z), n, uv(ox, oy)))
+    for i in range(len(inner) - 1):
+        m.quad(a_ids[i], a_ids[i + 1], b_ids[i + 1], b_ids[i])
+
+
+def model_tunnel_portal():
+    """Portal (fachada) de 2*TUNNEL_PORTAL_HALF_WIDTH x TUNNEL_PORTAL_HEIGHT x
+    TUNNEL_PORTAL_DEPTH com a abertura do perfil interno do túnel e uma
+    moldura (arquivolta) saliente em volta da abertura, na frente (+Z, voltada
+    para quem chega). Corpo em z de -DEPTH/2 a DEPTH/2; a moldura avança até
+    DEPTH/2 + ARCHIVOLT_DEPTH. Base em y = 0, centrado em x = 0 no corpo (o
+    jogo posiciona o portal pelas coordenadas do modelo, sem recentrar)."""
+    m = Mesh("tunnel_portal")
+    hw, h, d = TUNNEL_PORTAL_HALF_WIDTH, TUNNEL_PORTAL_HEIGHT, 0.5 * TUNNEL_PORTAL_DEPTH
+    r, ra = TUNNEL_HALF_WIDTH, TUNNEL_HALF_WIDTH + ARCHIVOLT_WIDTH
+    zf = d + ARCHIVOLT_DEPTH
+    # Fachada da frente (fora da moldura) e de trás (até a abertura).
+    flat_ring(m, ra, d, 1.0, hw, h)
+    flat_ring(m, r, -d, -1.0, hw, h)
+    # Moldura: face da frente, borda externa e o vão (intradorso), contínuo
+    # com o do túnel, da face de trás até a frente da moldura.
+    flat_ring(m, r, zf, 1.0, hw, h, outer_r=ra)
+    tunnel_shell(m, ra, d, zf, inward=False)
+    tunnel_shell(m, r, -d, zf, inward=True)
+
+    # Laterais e topo do bloco da fachada (as faces ±Z têm a abertura, feitas
+    # acima, e a de baixo nunca aparece).
+    def side_uv(face, u_m, v_m, w, hh):
+        return (u_m / TUNNEL_TILE, v_m / TUNNEL_TILE)
+
+    blk = box("p", (-hw, 0.0, -d), (hw, h, d), side_uv)
+    # box() faz 2 triângulos por face, na ordem pz, nz, px, nx, py, ny.
+    blk.tris = blk.tris[4:10]
+    m.append(blk)
+    return m
+
+
+# ---------------------------------------------------------------------------
 # Escrita
 # ---------------------------------------------------------------------------
 
-def write_obj(path, meshes, description):
+def write_obj(path, meshes, description, texture="atlas.png (mesmo diretorio)"):
     lines = ["# %s" % description,
              "# Gerado por tools/gen_models.py (Rail Rush, INF01047). Licenca: CC0.",
-             "# Textura: atlas.png (mesmo diretorio)."]
+             "# Textura: %s." % texture]
     vbase = 0
     total = 0
     for m in meshes:
@@ -746,9 +893,15 @@ def main():
         ("powerup_multiplier.obj", [model_multiplier()], "Power-up: multiplicador x2"),
         ("piggy_bank.obj", [model_piggy_bank()], "Power-up: cofrinho"),
         ("flying_pig.obj", model_flying_pig(), "Porco voador (corpo + 2 asas)"),
+        ("tunnel_section.obj", [model_tunnel_section()], "Tunel: modulo de 4 m (abobada)",
+         "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
+        ("tunnel_portal.obj", [model_tunnel_portal()], "Tunel: portal de entrada/saida",
+         "data/red_brick_diff_1k.jpg (UV em metros / 2)"),
     ]
-    for filename, meshes, desc in models:
-        tris = write_obj(os.path.join(OUT_DIR, filename), meshes, desc)
+    for entry in models:
+        filename, meshes, desc = entry[:3]
+        texture = entry[3] if len(entry) > 3 else "atlas.png (mesmo diretorio)"
+        tris = write_obj(os.path.join(OUT_DIR, filename), meshes, desc, texture)
         mn = tuple(min(m.bbox()[0][i] for m in meshes) for i in range(3))
         mx = tuple(max(m.bbox()[1][i] for m in meshes) for i in range(3))
         print("%-26s %5d triangulos  bbox (%.3f, %.3f, %.3f) .. (%.3f, %.3f, %.3f)" % (

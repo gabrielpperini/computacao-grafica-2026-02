@@ -53,6 +53,12 @@ public:
 
     CameraPose Pose() const;
 
+    // Recuo e altura atuais (suavizados). main.cpp usa Back() para saber se a
+    // própria câmera (em s - Back()) já está dentro do túnel; o E2E confere
+    // que a altura diminui dentro dele.
+    float Back() const { return back_; }
+    float Height() const { return height_; }
+
 private:
     void ComputePose(const Track& track, float player_s);
 

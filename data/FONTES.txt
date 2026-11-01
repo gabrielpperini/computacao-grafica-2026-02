@@ -7,7 +7,7 @@ Os arquivos de terceiros estao sem modificacao (copiados como vieram no pacote).
 
 == Poly Haven (texturas; licenca CC0, https://polyhaven.com/license) ==
 rocky_terrain_02_diff_1k.jpg   https://polyhaven.com/a/rocky_terrain_02   terreno dos lados da pista
-red_brick_diff_1k.jpg          https://polyhaven.com/a/red_brick          (sem uso no momento)
+red_brick_diff_1k.jpg          https://polyhaven.com/a/red_brick          tuneis (abobada e portais)
 metal_plate_diff_1k.jpg        https://polyhaven.com/a/metal_plate        trilhos
 gravel_stones_diff_1k.jpg      https://polyhaven.com/a/gravel_stones      brita do leito da pista
   download direto: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gravel_stones/gravel_stones_diff_1k.jpg
@@ -30,6 +30,8 @@ procedural/barrier_low.obj, barrier_high.obj, sign_board.obj       barreiras e p
 procedural/coin.obj                                                 moeda
 procedural/powerup_magnet.obj, powerup_sneaker.obj, powerup_multiplier.obj, piggy_bank.obj   power-ups
 procedural/flying_pig.obj                                           porco voador (corpo + 2 asas)
+procedural/tunnel_section.obj, tunnel_portal.obj                    tunel: modulo de abobada (4 m) e portal
+  (estes dois usam a textura red_brick_diff_1k.jpg acima, nao o atlas)
 Para regerar: python tools/gen_models.py (na raiz do repositorio).
 
 == Codigo base da disciplina ==

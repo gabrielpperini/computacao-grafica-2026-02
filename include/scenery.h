@@ -109,8 +109,9 @@ struct BuildingInstance {
 
 // Limpa *out e lista os prédios em s = k*BUILDING_SPACING no trecho visível,
 // dos dois lados. Modelo e tom dependem só de (k, lado): o mesmo prédio não
-// muda de um quadro para o outro.
-void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out);
+// muda de um quadro para o outro. Prédios que encostariam num túnel (ou nos
+// seus portais, com folga TUNNEL_CLEAR_MARGIN) são omitidos.
+void ComputeBuildings(const Track& track, float player_s, std::vector<BuildingInstance>* out);
 
 // Um poste de luz: posição na pista (s, x lateral).
 struct LampInstance {
@@ -119,8 +120,9 @@ struct LampInstance {
 };
 
 // Limpa *out e lista os postes em s = k*LAMP_SPACING no trecho visível, dos
-// dois lados.
-void ComputeLamps(float player_s, std::vector<LampInstance>* out);
+// dois lados, exceto ao longo dos túneis e junto aos portais (o poste em
+// x = ±LAMP_OFFSET_X atravessaria a parede do túnel).
+void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out);
 
 // Par (distância², índice) usado por PickNearestPoints.
 struct PointDistance {
@@ -137,5 +139,75 @@ struct PointDistance {
 void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& from,
                        int max_count, std::vector<PointDistance>* scratch,
                        std::vector<int>* out_indices);
+
+// ---------------------------------------------------------------------------
+// Túneis (Tarefa 4.2)
+// ---------------------------------------------------------------------------
+// Seção transversal interna (intradorso): paredes verticais em
+// x = ±TUNNEL_INNER_HALF_WIDTH, de y = 0 a TUNNEL_SPRING_HEIGHT, e por cima uma
+// abóbada semicircular de raio TUNNEL_INNER_HALF_WIDTH (topo a 7 m: trens de
+// 3.2 m passam com folga em todas as faixas). Parede de espessura
+// TUNNEL_WALL_THICKNESS. O túnel não tem piso próprio: o chão é o leito e o
+// terreno de BuildGroundStrips (sem Z-fighting). As malhas vêm de
+// tools/gen_models.py (data/procedural/tunnel_section.obj e
+// tunnel_portal.obj), que usa ESTES MESMOS valores: alterar lá e aqui juntos.
+const float TUNNEL_INNER_HALF_WIDTH  = 5.0f;  // m (cobre o leito, ±TRACK_BED_HALF_WIDTH)
+const float TUNNEL_SPRING_HEIGHT     = 2.0f;  // m (altura das paredes retas)
+const float TUNNEL_WALL_THICKNESS    = 0.6f;  // m
+const float TUNNEL_SECTION_LENGTH    = TRACK_TUNNEL_SECTION; // m por módulo (instância)
+// Portal (fachada de entrada/saída): parede de 2*HALF_WIDTH x HEIGHT x DEPTH
+// com a abertura do perfil interno; fica fora do segmento (antes da entrada /
+// depois da saída), encostado no 1º/último módulo.
+const float TUNNEL_PORTAL_HALF_WIDTH = 7.5f;  // m
+const float TUNNEL_PORTAL_HEIGHT     = 9.0f;  // m
+const float TUNNEL_PORTAL_DEPTH      = 1.0f;  // m (ao longo da pista)
+// Folga além dos portais sem prédios nem postes de rua.
+const float TUNNEL_CLEAR_MARGIN      = 1.5f;  // m
+// Lâmpadas do teto: uma a cada TUNNEL_LAMP_SPACING, a partir de meio
+// espaçamento depois da entrada, no centro da pista. A luz pontual fica em
+// TUNNEL_LAMP_HEIGHT (logo abaixo da luminária emissiva).
+const float TUNNEL_LAMP_SPACING      = 10.0f; // m
+const float TUNNEL_LAMP_HEIGHT       = 6.5f;  // m
+// Escurecimento com a câmera dentro do túnel: o sol é multiplicado por
+// TUNNEL_SUN_FACTOR e o ambiente por TUNNEL_AMBIENT_FACTOR, numa rampa linear
+// de TUNNEL_DIM_TIME s (sem "piscar" na entrada/saída).
+const float TUNNEL_DIM_TIME          = 0.5f;  // s
+const float TUNNEL_SUN_FACTOR        = 0.2f;
+const float TUNNEL_AMBIENT_FACTOR    = 0.6f;
+
+// Altura do teto (intradorso) na lateral x; 0 fora de |x| <= TUNNEL_INNER_HALF_WIDTH.
+float TunnelCeilingHeight(float x);
+
+// Peça do túnel desenhada como instância: módulo de TUNNEL_SECTION_LENGTH ou
+// portal (de entrada, voltado para quem chega; ou de saída, girado 180°).
+const int TUNNEL_PIECE_SECTION = 0;
+const int TUNNEL_PIECE_ENTRY   = 1;
+const int TUNNEL_PIECE_EXIT    = 2;
+struct TunnelPiece {
+    float s;   // centro da peça ao longo da pista
+    int kind;  // TUNNEL_PIECE_*
+};
+
+// Trecho [s0, s1] de um túnel.
+struct TunnelSpan {
+    float s0;
+    float s1;
+};
+
+// Limpa *out e lista os túneis (segmentos com tunnel = true) que cruzam o
+// trecho visível [player_s - DESPAWN_BEHIND, player_s + SPAWN_AHEAD] (contando
+// os portais), em ordem de s.
+void ComputeVisibleTunnels(const Track& track, float player_s, std::vector<TunnelSpan>* out);
+
+// Limpa *out e lista as peças (módulos a cada TUNNEL_SECTION_LENGTH a partir
+// da entrada, mais os dois portais) que cruzam o trecho visível.
+void ComputeTunnelPieces(const Track& track, float player_s, std::vector<TunnelPiece>* out);
+
+// Limpa *out_s e lista o s das lâmpadas de teto do trecho visível.
+void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s);
+
+// Um passo da rampa de escurecimento (0 = fora, 1 = câmera dentro do túnel):
+// anda dt / TUNNEL_DIM_TIME em direção ao alvo, sem passar dele.
+float StepTunnelDimming(float dimming, bool camera_in_tunnel, float dt);
 
 #endif // _SCENERY_H

@@ -532,9 +532,9 @@ extraído do jogo de referência.
   4 m; lâmpadas pontuais no teto a cada 10 m alimentando a 3.1; entrada do túnel com luz do sol
   atenuada (`sun_color` multiplicado por 0.2 quando a câmera está dentro).
 - Câmera já recebe `in_tunnel` (1.3) — verificar que a transição é suave nos dois sentidos.
-- [ ] **Passo 1:** teste `Test_TunnelOnlyOnStraight`; implementar; `OK`.
-- [ ] **Passo 2:** rodar: câmera abaixa ao entrar e volta ao sair, sem atravessar o teto.
-- [ ] **Passo 3:** commit `IA: túneis com iluminação e câmera adaptativa`.
+- [x] **Passo 1:** teste `Test_TunnelOnlyOnStraight`; implementar; `OK`.
+- [x] **Passo 2:** rodar: câmera abaixa ao entrar e volta ao sair, sem atravessar o teto.
+- [x] **Passo 3:** commit `IA: túneis com iluminação e câmera adaptativa`.
 
 ### Tarefa 4.3: Trens móveis
 

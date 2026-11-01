@@ -37,13 +37,18 @@
 #include "stb_image_write.h"
 
 #include "autotest.h"
+#include "camera.h"
 #include "game.h"
+#include "scenery.h"
 
 // Definida em main.cpp: o mesmo tratamento de teclas que o KeyCallback usa.
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
 
 // Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
 extern Game g_Game;
+// Câmera em 3ª pessoa e rampa de escurecimento do túnel (main.cpp).
+extern ThirdPersonCamera g_Camera;
+extern float g_TunnelDimming;
 
 // ---------------------------------------------------------------------------
 // Cenários
@@ -310,14 +315,53 @@ static bool Check_restart(std::string* why)
     return true;
 }
 
-// curve: sem spawn, a semente fixa (12345) põe a 1ª curva (85°, à esquerda)
-// em s = 146.5..205.9 (t = 11.4..15.6 s). Fotos na entrada, no meio (logo
-// depois de trocar de faixa dentro da curva) e na saída. O frame_hook registra
-// se o jogador esteve num segmento curvo e se a troca de faixa terminou
-// dentro dele.
+// Primeiro segmento da pista 'track' que é curva (want_tunnel = false) ou
+// túnel (true), gerando a pista aos poucos até achá-lo. Devolve uma cópia (o
+// vetor de segmentos realoca ao crescer). Os cenários de curva e de túnel
+// tiram daqui as posições, em vez de fixar valores de s ligados à semente:
+// continuam válidos se o gerador mudar.
+static TrackSegment FindFirstSegment(Track* track, bool want_tunnel)
+{
+    for (float s = 200.0f; s <= 50000.0f; s += 200.0f)
+    {
+        track->EnsureGeneratedUntil(s);
+        const std::vector<TrackSegment>& segs = track->Segments();
+        for (size_t i = 0; i < segs.size(); ++i)
+            if (want_tunnel ? segs[i].tunnel : segs[i].curvature != 0.0f)
+                return segs[i];
+    }
+    fprintf(stderr, "E2E: nenhum segmento %s em 50 km de pista\n", want_tunnel ? "de tunel" : "curvo");
+    std::exit(1);
+}
+
+// Tempo (s) para o jogador andar d metros a partir da velocidade inicial,
+// com aceleração constante (sem chegar à máxima): d = v0 t + a t²/2.
+static float TimeToRun(float d)
+{
+    const float v0 = PLAYER_START_SPEED, a = PLAYER_ACCEL;
+    return (-v0 + std::sqrt(v0 * v0 + 2.0f * a * d)) / a;
+}
+
+// curve: sem spawn, jogador CURVE_LEAD m antes da 1ª curva da pista (achada
+// em tempo de execução). Fotos na entrada, no meio (logo depois de trocar de
+// faixa dentro da curva) e na saída. Os tempos servem para qualquer curva do
+// gerador (45° a 90°, 31 a 63 m): a troca de faixa termina ~6 m depois do
+// início da curva e a foto/checagem final é ~13 m depois do fim da mais longa.
+// O frame_hook registra se o jogador esteve num segmento curvo e se a troca
+// de faixa terminou dentro dele.
+static const float CURVE_LEAD = 24.0f;
 static bool  g_SawCurve        = false; // jogador num segmento com curvature != 0
 static bool  g_LaneChangeInCurve = false; // chegou na faixa 1 (x = LANE_WIDTH) dentro da curva
-static float g_MaxHeadingChange  = 0.0f;  // |heading| máximo do referencial do jogador (rad)
+static float g_StartHeading      = 0.0f;  // heading do referencial do jogador no início
+static float g_MaxHeadingChange  = 0.0f;  // maior |heading - inicial| (rad)
+
+static void SetupCurve()
+{
+    SetupNoSpawn();
+    TrackSegment c = FindFirstSegment(&g_Game.track, false);
+    g_Game.player.s = c.s_start - CURVE_LEAD;
+    g_StartHeading = g_Game.track.FrameAt(g_Game.player.s).heading;
+}
 
 static void Hook_Curve()
 {
@@ -331,7 +375,7 @@ static void Hook_Curve()
             g_LaneChangeInCurve = true;
     }
     g_MaxHeadingChange = std::max(g_MaxHeadingChange,
-                                  std::fabs(g_Game.track.FrameAt(p.s).heading));
+                                  std::fabs(g_Game.track.FrameAt(p.s).heading - g_StartHeading));
 }
 
 static bool Check_curve(std::string* why)
@@ -343,7 +387,7 @@ static bool Check_curve(std::string* why)
         *why = "modo de jogo diferente de PLAYING";
         return false;
     }
-    if (!g_SawCurve || g_MaxHeadingChange < 0.785398f) // 45°
+    if (!g_SawCurve || g_MaxHeadingChange < 0.785398f - 1e-3f) // 45°
     {
         snprintf(buf, sizeof(buf), "nao passou por curva: viu curva = %d, heading max = %.1f graus",
                  (int)g_SawCurve, g_MaxHeadingChange * 57.29578f);
@@ -365,23 +409,172 @@ static bool Check_curve(std::string* why)
     return true;
 }
 
-// curve_obstacles: sem spawn, jogador colocado pouco antes da 1ª curva
-// (s = 136), com barreiras, placa e moedas posicionadas DENTRO da curva e um
-// trem na reta seguinte: todos devem acompanhar a direção local da pista.
+// curve_obstacles: sem spawn, jogador colocado pouco antes da 1ª curva (10.5 m),
+// com barreiras, placa e moedas posicionadas DENTRO da curva (até 25.5 m
+// depois do início; a curva mais curta tem 31 m) e um trem na reta seguinte:
+// todos devem acompanhar a direção local da pista.
 static void SetupCurveObstacles()
 {
     SetupNoSpawn();
-    g_Game.player.s = 136.0f;
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 152.0f));
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 156.0f));
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 164.0f));
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, 1, 172.0f));
-    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 0, 222.0f));
+    TrackSegment c = FindFirstSegment(&g_Game.track, false);
+    const float c0 = c.s_start, c1 = c.s_start + c.length;
+    g_Game.player.s = c0 - 10.5f;
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, c0 + 5.5f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, c0 + 9.5f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, c0 + 17.5f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, 1, c0 + 25.5f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 0, c1 + 16.0f));
     for (int i = 0; i < 8; ++i)
     {
-        Coin c = {0, 142.0f + i * COIN_SPACING, COIN_HEIGHT, false};
-        g_Game.coins.push_back(c);
+        Coin coin = {0, c0 - 4.5f + i * COIN_SPACING, COIN_HEIGHT, false};
+        g_Game.coins.push_back(coin);
     }
+}
+
+// tunnel_side: sem spawn, jogador no fim da curva que antecede a reta de
+// chegada do 1º túnel (o gerador sempre faz curva, reta, túnel): o portal
+// visto de longe, saindo da curva, para conferir que ele se destaca na rua e
+// que não há prédios nem postes encostados nele. (A casca externa da abóbada
+// fica escondida atrás do portal e dos prédios: de dentro da curva os
+// prédios a encobrem.)
+static void SetupTunnelSide()
+{
+    SetupNoSpawn();
+    TrackSegment t = FindFirstSegment(&g_Game.track, true);
+    const std::vector<TrackSegment>& segs = g_Game.track.Segments();
+    for (size_t i = 2; i < segs.size(); ++i)
+        if (segs[i].s_start == t.s_start)
+        {
+            const TrackSegment& curve = segs[i - 2];
+            g_Game.player.s = curve.s_start + curve.length - 12.0f;
+            return;
+        }
+}
+
+// tunnel: sem spawn, jogador TUNNEL_LEAD m antes do 1º túnel da pista (achado
+// em tempo de execução), um trem parado na faixa -1 dentro do túnel e troca
+// para a faixa 1 (junto à parede) lá dentro. Fotos chegando ao portal, na
+// entrada (câmera ainda fora), no meio, perto da saída e depois dela. O
+// frame_hook mede a altura da câmera (antes, dentro, depois), o maior salto
+// por quadro da altura e do escurecimento, e a folga entre a câmera e o teto/
+// parede sempre que ela está no túnel ou no vão de um portal.
+static const float TUNNEL_LEAD = 30.0f;
+static float g_TunnelS0 = 0.0f, g_TunnelS1 = 0.0f;    // trecho do túnel
+static float g_CamHeightBefore   = -1.0f;  // altura da câmera antes do jogador entrar
+static float g_CamHeightMinInside = 1e9f;  // menor altura com o jogador no túnel
+static float g_PrevCamHeight     = -1.0f;
+static float g_MaxCamHeightStep  = 0.0f;   // maior variação da altura entre quadros
+static float g_PrevDimming       = -1.0f;
+static float g_MaxDimmingStep    = 0.0f;   // maior variação do escurecimento entre quadros
+static float g_MaxDimming        = 0.0f;
+static float g_MinCeilingGap     = 1e9f;   // menor (teto - câmera) no túnel/portal
+static float g_MaxCamLateral     = 0.0f;   // maior |lateral| da câmera no túnel/portal
+static bool  g_PlayerWasInTunnel = false;
+
+static void SetupTunnel()
+{
+    SetupNoSpawn();
+    TrackSegment t = FindFirstSegment(&g_Game.track, true);
+    g_TunnelS0 = t.s_start;
+    g_TunnelS1 = t.s_start + t.length;
+    g_Game.player.s = g_TunnelS0 - TUNNEL_LEAD;
+    // Trem parado na faixa externa esquerda, logo depois do meio do túnel.
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1,
+                                                   0.5f * (g_TunnelS0 + g_TunnelS1) + 8.0f));
+}
+
+static void Hook_Tunnel()
+{
+    const Track& track = g_Game.track;
+    const Player& p = g_Game.player;
+    const float h = g_Camera.Height();
+    const float cam_s = p.s - g_Camera.Back();
+
+    if (g_PrevCamHeight >= 0.0f)
+        g_MaxCamHeightStep = std::max(g_MaxCamHeightStep, std::fabs(h - g_PrevCamHeight));
+    g_PrevCamHeight = h;
+    if (g_PrevDimming >= 0.0f)
+        g_MaxDimmingStep = std::max(g_MaxDimmingStep, std::fabs(g_TunnelDimming - g_PrevDimming));
+    g_PrevDimming = g_TunnelDimming;
+    g_MaxDimming = std::max(g_MaxDimming, g_TunnelDimming);
+
+    if (track.IsTunnelAt(p.s))
+    {
+        g_PlayerWasInTunnel = true;
+        g_CamHeightMinInside = std::min(g_CamHeightMinInside, h);
+    }
+    else if (!g_PlayerWasInTunnel)
+        g_CamHeightBefore = h;
+
+    // Câmera dentro do túnel ou atravessando um portal (com a moldura):
+    // altura e lateral (no referencial da pista no ponto da câmera) têm de
+    // caber no vão.
+    const float margin = TUNNEL_PORTAL_DEPTH + 0.5f;
+    if (cam_s >= g_TunnelS0 - margin && cam_s <= g_TunnelS1 + margin)
+    {
+        const CameraPose pose = g_Camera.Pose();
+        const TrackFrame f = track.FrameAt(cam_s);
+        const glm::vec4 d = pose.position - f.position;
+        const float lateral = d.x * f.right.x + d.z * f.right.z;
+        g_MaxCamLateral = std::max(g_MaxCamLateral, std::fabs(lateral));
+        g_MinCeilingGap = std::min(g_MinCeilingGap, TunnelCeilingHeight(lateral) - d.y);
+    }
+}
+
+static bool Check_tunnel(std::string* why)
+{
+    char buf[240];
+    const Player& p = g_Game.player;
+    const float dt = Autotest_FixedDt();
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "o jogador bateu (modo diferente de PLAYING)";
+        return false;
+    }
+    if (!g_PlayerWasInTunnel || p.s < g_TunnelS1 + 10.0f || p.lane != 1)
+    {
+        snprintf(buf, sizeof(buf), "nao atravessou o tunel [%.1f, %.1f] na faixa 1: s = %.1f, faixa = %d",
+                 g_TunnelS0, g_TunnelS1, p.s, p.lane);
+        *why = buf;
+        return false;
+    }
+    // Câmera mais baixa dentro do túnel e de volta à altura normal depois.
+    if (!(g_CamHeightMinInside < g_CamHeightBefore - 1.0f) ||
+        std::fabs(g_CamHeightMinInside - CAMERA_TUNNEL_HEIGHT) > 0.05f ||
+        std::fabs(g_Camera.Height() - CAMERA_HEIGHT) > 0.05f)
+    {
+        snprintf(buf, sizeof(buf), "altura da camera: antes %.2f, dentro (min) %.2f, depois %.2f",
+                 g_CamHeightBefore, g_CamHeightMinInside, g_Camera.Height());
+        *why = buf;
+        return false;
+    }
+    // Transições suaves: a altura anda no máximo a fração (1 - e^(-6 dt)) do
+    // desnível por quadro; o escurecimento, dt / TUNNEL_DIM_TIME.
+    const float max_h_step = (CAMERA_HEIGHT - CAMERA_TUNNEL_HEIGHT) *
+                             (1.0f - std::exp(-CAMERA_SMOOTHING_RATE * dt)) + 1e-3f;
+    if (g_MaxCamHeightStep > max_h_step || g_MaxDimmingStep > dt / TUNNEL_DIM_TIME + 1e-4f)
+    {
+        snprintf(buf, sizeof(buf), "salto entre quadros: altura %.3f m (max %.3f), escurecimento %.3f",
+                 g_MaxCamHeightStep, max_h_step, g_MaxDimmingStep);
+        *why = buf;
+        return false;
+    }
+    if (g_MaxDimming < 1.0f || g_TunnelDimming != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "escurecimento: maximo %.2f (esperava 1), no fim %.2f (esperava 0)",
+                 g_MaxDimming, g_TunnelDimming);
+        *why = buf;
+        return false;
+    }
+    // A câmera nunca atravessa o teto nem a parede (folga de 1 m no teto).
+    if (g_MinCeilingGap < 1.0f || g_MaxCamLateral > TUNNEL_INNER_HALF_WIDTH - 1.0f)
+    {
+        snprintf(buf, sizeof(buf), "camera perto demais do teto/parede: folga %.2f m, lateral %.2f m",
+                 g_MinCeilingGap, g_MaxCamLateral);
+        *why = buf;
+        return false;
+    }
+    return true;
 }
 
 static std::vector<AutotestScenario> BuildScenarios()
@@ -533,14 +726,14 @@ static std::vector<AutotestScenario> BuildScenarios()
     {
         AutotestScenario s;
         s.name        = "curve";
-        s.duration    = 16.5f;
+        s.duration    = 8.0f;
         s.final_check = Check_curve;
-        s.setup       = SetupNoSpawn;
+        s.setup       = SetupCurve;
         s.frame_hook  = Hook_Curve;
-        s.steps.push_back(AutotestStep{10.6f, 0, 0, "entering"});
-        s.steps.push_back(AutotestStep{12.5f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
-        s.steps.push_back(AutotestStep{13.4f, 0, 0, "mid"});
-        s.steps.push_back(AutotestStep{16.2f, 0, 0, "exiting"});
+        s.steps.push_back(AutotestStep{1.0f, 0, 0, "entering"});
+        s.steps.push_back(AutotestStep{2.3f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.0f, 0, 0, "mid"});
+        s.steps.push_back(AutotestStep{7.5f, 0, 0, "exiting"});
         scenarios.push_back(s);
     }
 
@@ -552,6 +745,42 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = NULL;
         s.setup       = SetupCurveObstacles;
         s.steps.push_back(AutotestStep{0.1f, 0, 0, "scene"});
+        scenarios.push_back(s);
+    }
+
+    // tunnel: atravessa o 1º túnel da pista. Os tempos das fotos dependem do
+    // comprimento desse túnel: ele é achado numa CÓPIA da pista de g_Game
+    // (mesma semente; já construída, pois g_Game é global), sem alterá-la.
+    {
+        Track probe = g_Game.track;
+        const TrackSegment t = FindFirstSegment(&probe, true);
+        const float L = t.length;
+        AutotestScenario s;
+        s.name        = "tunnel";
+        s.final_check = Check_tunnel;
+        s.setup       = SetupTunnel;
+        s.frame_hook  = Hook_Tunnel;
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD - 18.0f), 0, 0, "approach"});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD - 1.0f), 0, 0, "portal"});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD + 3.0f), 0, 0, "entering"});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD + 0.5f * L) - 0.6f, GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD + 0.5f * L), 0, 0, "inside"});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD + L - 3.0f), 0, 0, "exit"});
+        s.steps.push_back(AutotestStep{TimeToRun(TUNNEL_LEAD + L + 3.0f), 0, 0, "outside"});
+        const float t_after = TimeToRun(TUNNEL_LEAD + L + 30.0f);
+        s.steps.push_back(AutotestStep{t_after, 0, 0, "after"});
+        s.duration = t_after + 0.3f;
+        scenarios.push_back(s);
+    }
+
+    // tunnel_side: portal e abóbada vistos de viés, da curva antes do túnel.
+    {
+        AutotestScenario s;
+        s.name        = "tunnel_side";
+        s.duration    = 0.3f;
+        s.final_check = NULL;
+        s.setup       = SetupTunnelSide;
+        s.steps.push_back(AutotestStep{0.1f, 0, 0, "view"});
         scenarios.push_back(s);
     }
 

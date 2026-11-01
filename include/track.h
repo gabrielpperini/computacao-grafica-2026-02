@@ -18,12 +18,23 @@
 // é mais longa, para não haver curva logo no começo da corrida. Os ângulos
 // estão em radianos (45° e 90°). Trens, rampas e túneis só ficam em retas
 // (o spawn de Game confere com IsStraightRange).
+//
+// Túneis (Tarefa 4.2): depois de uma reta que veio de uma curva, com
+// probabilidade TRACK_TUNNEL_PROBABILITY o gerador põe um túnel (segmento reto
+// com tunnel = true) seguido de outra reta comum, antes da próxima curva:
+// reta, túnel, reta. Assim o portal é visto de frente, de longe, e a saída dá
+// numa reta. Nunca na reta da largada. O comprimento é múltiplo de
+// TRACK_TUNNEL_SECTION (o comprimento de um módulo da malha do túnel).
 const float TRACK_CURVE_RADIUS              = 40.0f;  // m (|curvature| = 1/40)
 const float TRACK_CURVE_MIN_ANGLE           = 0.78539816f; // rad (45°)
 const float TRACK_CURVE_MAX_ANGLE           = 1.57079633f; // rad (90°)
 const float TRACK_STRAIGHT_MIN_LENGTH       = 60.0f;  // m
 const float TRACK_STRAIGHT_MAX_LENGTH       = 150.0f; // m
 const float TRACK_FIRST_STRAIGHT_MIN_LENGTH = 100.0f; // m (reta da largada)
+const float TRACK_TUNNEL_PROBABILITY        = 1.0f / 3.0f; // por reta elegível
+const float TRACK_TUNNEL_SECTION            = 4.0f;   // m (módulo da malha do túnel)
+const float TRACK_TUNNEL_MIN_LENGTH         = 40.0f;  // m (múltiplo de TRACK_TUNNEL_SECTION)
+const float TRACK_TUNNEL_MAX_LENGTH         = 80.0f;  // m (idem)
 
 struct TrackSegment {
     float s_start;          // distância (ao longo da pista) em que o segmento começa
@@ -48,7 +59,8 @@ public:
     // Anexa segmentos sorteados até cobrir s (o fim do último segmento passa
     // de s). Alterna reta (TRACK_STRAIGHT_*_LENGTH) e curva (raio
     // TRACK_CURVE_RADIUS, ângulo total entre TRACK_CURVE_MIN/MAX_ANGLE, para a
-    // esquerda ou a direita), sempre na mesma sequência para a mesma semente.
+    // esquerda ou a direita), às vezes com um túnel no meio da reta (veja
+    // acima), sempre na mesma sequência para a mesma semente.
     void EnsureGeneratedUntil(float s);
 
     // Descarta segmentos que terminam antes de s. Sempre mantém ao menos o
@@ -67,6 +79,10 @@ public:
     TrackFrame FrameAt(float s) const;
 
     bool IsTunnelAt(float s) const;
+
+    // true se algum segmento de túnel mantido cruza o intervalo [s0, s1].
+    // Usado para tirar prédios e postes de perto dos túneis.
+    bool TunnelOverlaps(float s0, float s1) const;
 
     // true se todo o intervalo [s0, s1] está em segmentos mantidos e retos
     // (curvature == 0); pode atravessar a emenda entre duas retas. Usado para
@@ -92,12 +108,17 @@ public:
 private:
     static TrackFrame FrameInSegment(const TrackSegment& seg, float s);
 
-    // Sorteia e anexa o próximo segmento (reta depois de curva e vice-versa).
+    // Sorteia e anexa o próximo segmento (reta depois de curva e vice-versa,
+    // às vezes reta, túnel, reta; veja o comentário do topo).
     void AppendGeneratedSegment();
     float Random01(); // [0, 1), portável (só usa a saída do mt19937)
+    float RandomStraightLength(); // [TRACK_STRAIGHT_MIN_LENGTH, MAX); 1 sorteio
 
     std::vector<TrackSegment> segments_;
     std::mt19937 rng_;
+    // A última reta veio de uma curva (pode ser seguida de um túnel). Falso
+    // na reta da largada e na reta de saída de um túnel.
+    bool tunnel_candidate_;
 };
 
 #endif // _TRACK_H

@@ -10,7 +10,7 @@ const float kMinCurvature = 1e-6f;
 
 } // namespace
 
-Track::Track(unsigned seed) : rng_(seed)
+Track::Track(unsigned seed) : rng_(seed), tunnel_candidate_(false)
 {
     // A pista nunca fica vazia: já nasce com a reta da largada (s = 0), mais
     // longa que as demais para a corrida não começar numa curva.
@@ -29,19 +29,43 @@ float Track::Random01()
 
 void Track::AppendGeneratedSegment()
 {
-    if (std::fabs(segments_.back().curvature) < kMinCurvature) {
-        // Depois de uma reta, uma curva: ângulo total sorteado em [45°, 90°]
-        // e lado sorteado; comprimento = ângulo * raio.
-        const float angle = TRACK_CURVE_MIN_ANGLE +
-                            (TRACK_CURVE_MAX_ANGLE - TRACK_CURVE_MIN_ANGLE) * Random01();
-        const float sign = (Random01() < 0.5f) ? 1.0f : -1.0f;
-        AppendSegment(angle * TRACK_CURVE_RADIUS, sign / TRACK_CURVE_RADIUS, false);
-    } else {
-        // Depois de uma curva, uma reta.
-        const float len = TRACK_STRAIGHT_MIN_LENGTH +
-                          (TRACK_STRAIGHT_MAX_LENGTH - TRACK_STRAIGHT_MIN_LENGTH) * Random01();
-        AppendSegment(len, 0.0f, false);
+    const TrackSegment& last = segments_.back();
+    if (std::fabs(last.curvature) >= kMinCurvature) {
+        // Depois de uma curva, uma reta (que pode ganhar um túnel em seguida).
+        AppendSegment(RandomStraightLength(), 0.0f, false);
+        tunnel_candidate_ = true;
+        return;
     }
+    if (last.tunnel) {
+        // Depois de um túnel, a reta de saída (sem novo túnel depois dela).
+        AppendSegment(RandomStraightLength(), 0.0f, false);
+        tunnel_candidate_ = false;
+        return;
+    }
+    // Depois de uma reta comum: túnel (só se a reta veio de uma curva; o
+    // sorteio só acontece nesse caso) ou curva.
+    const bool candidate = tunnel_candidate_;
+    tunnel_candidate_ = false;
+    if (candidate && Random01() < TRACK_TUNNEL_PROBABILITY) {
+        // Comprimento em múltiplos de TRACK_TUNNEL_SECTION, de MIN a MAX.
+        const int steps = (int)((TRACK_TUNNEL_MAX_LENGTH - TRACK_TUNNEL_MIN_LENGTH) /
+                                TRACK_TUNNEL_SECTION + 0.5f);
+        const int k = std::min(steps, (int)(Random01() * (float)(steps + 1)));
+        AppendSegment(TRACK_TUNNEL_MIN_LENGTH + k * TRACK_TUNNEL_SECTION, 0.0f, true);
+        return;
+    }
+    // Curva: ângulo total sorteado em [45°, 90°] e lado sorteado;
+    // comprimento = ângulo * raio.
+    const float angle = TRACK_CURVE_MIN_ANGLE +
+                        (TRACK_CURVE_MAX_ANGLE - TRACK_CURVE_MIN_ANGLE) * Random01();
+    const float sign = (Random01() < 0.5f) ? 1.0f : -1.0f;
+    AppendSegment(angle * TRACK_CURVE_RADIUS, sign / TRACK_CURVE_RADIUS, false);
+}
+
+float Track::RandomStraightLength()
+{
+    return TRACK_STRAIGHT_MIN_LENGTH +
+           (TRACK_STRAIGHT_MAX_LENGTH - TRACK_STRAIGHT_MIN_LENGTH) * Random01();
 }
 
 void Track::AppendSegment(float length, float curvature, bool tunnel)
@@ -105,6 +129,16 @@ bool Track::IsTunnelAt(float s) const
 {
     const TrackSegment* seg = SegmentAt(s);
     return seg != nullptr && seg->tunnel;
+}
+
+bool Track::TunnelOverlaps(float s0, float s1) const
+{
+    for (size_t i = 0; i < segments_.size(); ++i) {
+        const TrackSegment& seg = segments_[i];
+        if (seg.tunnel && seg.s_start <= s1 && s0 <= seg.s_start + seg.length)
+            return true;
+    }
+    return false;
 }
 
 bool Track::IsStraightRange(float s0, float s1) const

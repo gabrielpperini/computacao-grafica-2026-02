@@ -199,7 +199,7 @@ void BuildSleeperStrips(const Track& track, float player_s, StripBatch* out)
     }
 }
 
-void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out)
+void ComputeBuildings(const Track& track, float player_s, std::vector<BuildingInstance>* out)
 {
     out->clear();
     const int k0 = (int)std::ceil((player_s - DESPAWN_BEHIND) / BUILDING_SPACING);
@@ -212,6 +212,10 @@ void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out)
             h ^= h >> 15;
             BuildingInstance b;
             b.s = k * BUILDING_SPACING;
+            // Nada de prédio encostado no túnel ou no portal.
+            const float reach = 0.5f * BUILDING_WIDTH + TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
+            if (track.TunnelOverlaps(b.s - reach, b.s + reach))
+                continue;
             b.x = side * BUILDING_OFFSET_X;
             b.variant = (int)(h % (unsigned)BUILDING_VARIANT_COUNT);
             b.tint = (int)((h >> 8) % (unsigned)BUILDING_TINT_COUNT);
@@ -220,12 +224,16 @@ void ComputeBuildings(float player_s, std::vector<BuildingInstance>* out)
     }
 }
 
-void ComputeLamps(float player_s, std::vector<LampInstance>* out)
+void ComputeLamps(const Track& track, float player_s, std::vector<LampInstance>* out)
 {
     out->clear();
     const int k0 = (int)std::ceil((player_s - DESPAWN_BEHIND) / LAMP_SPACING);
     const int k1 = (int)std::floor((player_s + SPAWN_AHEAD) / LAMP_SPACING);
+    const float reach = TUNNEL_PORTAL_DEPTH + TUNNEL_CLEAR_MARGIN;
     for (int k = k0; k <= k1; ++k) {
+        // Dentro do túnel a iluminação é a do teto (ComputeTunnelLamps).
+        if (track.TunnelOverlaps(k * LAMP_SPACING - reach, k * LAMP_SPACING + reach))
+            continue;
         for (int side = -1; side <= 1; side += 2) {
             LampInstance l;
             l.s = k * LAMP_SPACING;
@@ -265,4 +273,97 @@ void PickNearestPoints(const std::vector<glm::vec3>& points, const glm::vec3& fr
     const size_t n = std::min(all.size(), (size_t)max_count);
     for (size_t i = 0; i < n; ++i)
         out_indices->push_back(all[i].index);
+}
+
+// ---------------------------------------------------------------- Túneis (4.2)
+
+float TunnelCeilingHeight(float x)
+{
+    const float r = TUNNEL_INNER_HALF_WIDTH;
+    if (std::fabs(x) > r)
+        return 0.0f;
+    return TUNNEL_SPRING_HEIGHT + std::sqrt(r * r - x * x);
+}
+
+void ComputeVisibleTunnels(const Track& track, float player_s, std::vector<TunnelSpan>* out)
+{
+    out->clear();
+    const float v0 = player_s - DESPAWN_BEHIND;
+    const float v1 = player_s + SPAWN_AHEAD;
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size(); ++i) {
+        const TrackSegment& g = segs[i];
+        if (!g.tunnel)
+            continue;
+        TunnelSpan span = {g.s_start, g.s_start + g.length};
+        // Os portais ficam fora do segmento: entram na conta da visibilidade.
+        if (span.s1 + TUNNEL_PORTAL_DEPTH >= v0 && span.s0 - TUNNEL_PORTAL_DEPTH <= v1)
+            out->push_back(span);
+    }
+}
+
+void ComputeTunnelPieces(const Track& track, float player_s, std::vector<TunnelPiece>* out)
+{
+    out->clear();
+    const float v0 = player_s - DESPAWN_BEHIND;
+    const float v1 = player_s + SPAWN_AHEAD;
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size(); ++i) {
+        if (!segs[i].tunnel)
+            continue;
+        const float s0 = segs[i].s_start;
+        const float s1 = s0 + segs[i].length;
+        // Portal de entrada em [s0 - DEPTH, s0].
+        if (s0 >= v0 && s0 - TUNNEL_PORTAL_DEPTH <= v1) {
+            TunnelPiece p = {s0 - 0.5f * TUNNEL_PORTAL_DEPTH, TUNNEL_PIECE_ENTRY};
+            out->push_back(p);
+        }
+        // Módulos [s0 + k*L, s0 + (k+1)*L]; o comprimento do túnel é múltiplo
+        // de L (gerador), então o último termina exatamente em s1.
+        const int n = (int)((s1 - s0) / TUNNEL_SECTION_LENGTH + 0.5f);
+        for (int k = 0; k < n; ++k) {
+            const float a = s0 + k * TUNNEL_SECTION_LENGTH;
+            if (a + TUNNEL_SECTION_LENGTH < v0 || a > v1)
+                continue;
+            TunnelPiece p = {a + 0.5f * TUNNEL_SECTION_LENGTH, TUNNEL_PIECE_SECTION};
+            out->push_back(p);
+        }
+        // Portal de saída em [s1, s1 + DEPTH].
+        if (s1 + TUNNEL_PORTAL_DEPTH >= v0 && s1 <= v1) {
+            TunnelPiece p = {s1 + 0.5f * TUNNEL_PORTAL_DEPTH, TUNNEL_PIECE_EXIT};
+            out->push_back(p);
+        }
+    }
+}
+
+void ComputeTunnelLamps(const Track& track, float player_s, std::vector<float>* out_s)
+{
+    out_s->clear();
+    const float v0 = player_s - DESPAWN_BEHIND;
+    const float v1 = player_s + SPAWN_AHEAD;
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size(); ++i) {
+        if (!segs[i].tunnel)
+            continue;
+        const float s0 = segs[i].s_start;
+        const float s1 = s0 + segs[i].length;
+        for (int k = 0;; ++k) {
+            const float s = s0 + 0.5f * TUNNEL_LAMP_SPACING + k * TUNNEL_LAMP_SPACING;
+            if (s >= s1)
+                break;
+            if (s >= v0 && s <= v1)
+                out_s->push_back(s);
+        }
+    }
+}
+
+float StepTunnelDimming(float dimming, bool camera_in_tunnel, float dt)
+{
+    if (dt <= 0.0f)
+        return dimming;
+    const float target = camera_in_tunnel ? 1.0f : 0.0f;
+    const float step = dt / TUNNEL_DIM_TIME;
+    if (dimming < target)
+        return std::min(target, dimming + step);
+    return std::max(target, dimming - step);
 }
