@@ -497,12 +497,14 @@ extraído do jogo de referência.
 | Moeda | cilindro achatado | ouro |
 | Power-ups (ímã, tênis, ×2, cofrinho), porco voador | modelos | próprias |
 
-- [ ] **Passo 1:** baixar para `data/`, registrar cada um em `data/FONTES.txt` (link + licença).
+- [x] **Passo 1:** baixar para `data/`, registrar cada um em `data/FONTES.txt` (link + licença).
   Se algum arquivo não puder ir para o GitHub, anotar para o `README.md` (escrito pela dupla).
-- [ ] **Passo 2:** garantir que cada OBJ tem objeto nomeado (tinyobjloader lança exceção sem nome)
+- [x] **Passo 2:** garantir que cada OBJ tem objeto nomeado (tinyobjloader lança exceção sem nome)
   e escalar via `Matrix_Scale` usando a bbox, não editando o arquivo.
-- [ ] **Passo 3:** trocar placeholders; conferir que nenhuma textura está esticada.
-- [ ] **Passo 4:** commits separados: assets (humano) e código de carga (`IA:` se gerado).
+- [x] **Passo 3:** trocar placeholders; conferir que nenhuma textura está esticada.
+- [x] **Passo 4:** commits separados: assets (humano) e código de carga (`IA:` se gerado).
+  (Execução automatizada, Ruling R1: os assets foram baixados/gerados pela IA, então o commit de
+  assets também leva `IA:` — o script `tools/gen_models.py` é código de IA.)
 
 ---
 

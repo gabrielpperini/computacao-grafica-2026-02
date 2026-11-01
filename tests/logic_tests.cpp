@@ -445,10 +445,52 @@ void Test_RailsAboveGroundAndInsideBed()
     t.EnsureGeneratedUntil(200);
     StripBatch rails;
     BuildRailStrips(t, 50.0f, &rails);
+    int top = 0;
     for (size_t v = 0; v < rails.VertexCount(); v++) {
-        assert(nearf(rails.positions[4 * v + 1], RAIL_HEIGHT));
+        // Trilho = barra apoiada nos dormentes: topo em RAIL_HEIGHT, laterais
+        // descendo até o topo dos dormentes (nunca até o chão: sem Z-fighting).
+        float y = rails.positions[4 * v + 1];
+        assert(y > SLEEPER_HEIGHT - 1e-4f && y < RAIL_HEIGHT + 1e-4f);
+        if (nearf(y, RAIL_HEIGHT) && nearf(rails.normals[4 * v + 1], 1.0f))
+            top++;
         assert(std::fabs(rails.positions[4 * v + 0]) < TRACK_BED_HALF_WIDTH);
+        // Normal unitária (topo: +Y; laterais: horizontais).
+        float nx = rails.normals[4 * v + 0], ny = rails.normals[4 * v + 1], nz = rails.normals[4 * v + 2];
+        assert(nearf(nx * nx + ny * ny + nz * nz, 1.0f));
     }
+    assert(top > 0 && top < (int)rails.VertexCount());
+}
+
+void Test_SleepersUnderRailsFitCapacity()
+{
+    Game g(3);
+    StripBatch sleepers;
+    const float ss[] = {0.0f, 7.3f, 1234.567f, 98765.4f};
+    for (float s : ss) {
+        g.track.EnsureGeneratedUntil(s + SPAWN_AHEAD);
+        BuildSleeperStrips(g.track, s, &sleepers);
+        assert(!sleepers.first.empty());
+        assert(sleepers.VertexCount() <= MaxSleeperVertices());
+        assert(sleepers.first.size() % (3 * SLEEPER_FACES) == 0);
+        for (size_t i = 0; i < sleepers.count.size(); i++)
+            assert(sleepers.count[i] == 4);
+        for (size_t v = 0; v < sleepers.VertexCount(); v++) {
+            float y = sleepers.positions[4 * v + 1];
+            assert(y > -1e-4f && y < SLEEPER_HEIGHT + 1e-4f && SLEEPER_HEIGHT < RAIL_HEIGHT);
+        }
+        assert(sleepers.uvs.size() == sleepers.VertexCount() * 2);
+    }
+    // Pista reta (s = -Z): o dormente cobre os dois trilhos da faixa e não
+    // invade a faixa vizinha.
+    Track t(1);
+    t.EnsureGeneratedUntil(100);
+    BuildSleeperStrips(t, 30.0f, &sleepers);
+    float max_x = 0.0f;
+    for (size_t v = 0; v < sleepers.VertexCount(); v++)
+        max_x = std::max(max_x, std::fabs(sleepers.positions[4 * v + 0]));
+    assert(nearf(max_x, LANE_WIDTH + 0.5f * SLEEPER_LENGTH));
+    assert(0.5f * SLEEPER_LENGTH > 0.5f * RAIL_GAUGE + RAIL_WIDTH);
+    assert(SLEEPER_LENGTH < LANE_WIDTH);
 }
 
 void Test_BuildingsCoverVisibleRange()
@@ -459,18 +501,25 @@ void Test_BuildingsCoverVisibleRange()
     for (size_t i = 0; i < a.size(); i++) {
         assert(a[i].s >= 100.0f - DESPAWN_BEHIND && a[i].s <= 100.0f + SPAWN_AHEAD);
         assert(nearf(std::fabs(a[i].x), BUILDING_OFFSET_X));
-        assert(a[i].height >= BUILDING_MIN_HEIGHT && a[i].height <= BUILDING_MIN_HEIGHT + 8.0f);
+        assert(a[i].variant >= 0 && a[i].variant < BUILDING_VARIANT_COUNT);
+        assert(a[i].tint >= 0 && a[i].tint < BUILDING_TINT_COUNT);
     }
-    // Mesmo prédio (mesmo s e lado) mantém a altura quando o jogador anda.
+    // Mesmo prédio (mesmo s e lado) mantém modelo e tom quando o jogador anda.
     ComputeBuildings(130.0f, &b);
     int matched = 0;
-    for (size_t i = 0; i < a.size(); i++)
+    std::vector<int> seen(BUILDING_VARIANT_COUNT, 0);
+    for (size_t i = 0; i < a.size(); i++) {
+        seen[a[i].variant]++;
         for (size_t j = 0; j < b.size(); j++)
             if (a[i].s == b[j].s && a[i].x == b[j].x) {
-                assert(a[i].height == b[j].height);
+                assert(a[i].variant == b[j].variant && a[i].tint == b[j].tint);
                 matched++;
             }
+    }
     assert(matched > 10);
+    // Variedade: todos os modelos aparecem no trecho visível.
+    for (int v = 0; v < BUILDING_VARIANT_COUNT; v++)
+        assert(seen[v] > 0);
 }
 
 // ------------------------------------------------- Luzes pontuais (3.1)
@@ -503,17 +552,18 @@ void Test_PickNearestPoints()
     pts.push_back(vec3(0, 0, -3)); // 3: dist 3
     pts.push_back(vec3(-2, 0, 0)); // 4: dist 2
     std::vector<int> idx;
+    std::vector<PointDistance> scratch;
 
-    PickNearestPoints(pts, vec3(0, 0, 0), 3, &idx);
+    PickNearestPoints(pts, vec3(0, 0, 0), 3, &scratch, &idx);
     assert(idx.size() == 3);
     assert(idx[0] == 1 && idx[1] == 4 && idx[2] == 3);
 
     // A origem de referência importa (distância em 3D, não só em s).
-    PickNearestPoints(pts, vec3(10, 0, 0), 2, &idx);
+    PickNearestPoints(pts, vec3(10, 0, 0), 2, &scratch, &idx);
     assert(idx.size() == 2 && idx[0] == 0 && idx[1] == 1);
 
     // Menos pontos que o máximo: devolve todos, sem repetir, e limpa a saída anterior.
-    PickNearestPoints(pts, vec3(0, 0, 0), 8, &idx);
+    PickNearestPoints(pts, vec3(0, 0, 0), 8, &scratch, &idx);
     assert(idx.size() == 5);
     assert(idx[4] == 0);
     std::vector<int> seen(5, 0);
@@ -521,9 +571,9 @@ void Test_PickNearestPoints()
     for (int i = 0; i < 5; i++) assert(seen[i] == 1);
 
     // Vazio e max_count <= 0.
-    PickNearestPoints(std::vector<vec3>(), vec3(0, 0, 0), 8, &idx);
+    PickNearestPoints(std::vector<vec3>(), vec3(0, 0, 0), 8, &scratch, &idx);
     assert(idx.empty());
-    PickNearestPoints(pts, vec3(0, 0, 0), 0, &idx);
+    PickNearestPoints(pts, vec3(0, 0, 0), 0, &scratch, &idx);
     assert(idx.empty());
 
     // Empate de distância: estável (menor índice primeiro).
@@ -531,7 +581,7 @@ void Test_PickNearestPoints()
     tie.push_back(vec3(2, 0, 0));
     tie.push_back(vec3(-2, 0, 0));
     tie.push_back(vec3(0, 2, 0));
-    PickNearestPoints(tie, vec3(0, 0, 0), 2, &idx);
+    PickNearestPoints(tie, vec3(0, 0, 0), 2, &scratch, &idx);
     assert(idx.size() == 2 && idx[0] == 0 && idx[1] == 1);
 }
 
@@ -546,7 +596,12 @@ void Test_PickNearestLampsAroundPlayer()
     for (size_t i = 0; i < lamps.size(); i++)
         pos.push_back(glm::vec3(lamps[i].x, LAMP_HEIGHT, -lamps[i].s)); // pista reta: s = -Z
     std::vector<int> idx;
-    PickNearestPoints(pos, glm::vec3(0, 0, -ps), MAX_POINT_LIGHTS, &idx);
+    std::vector<PointDistance> scratch;
+    PickNearestPoints(pos, glm::vec3(0, 0, -ps), MAX_POINT_LIGHTS, &scratch, &idx);
+    // O buffer de trabalho é reaproveitado: a 2ª chamada não realoca.
+    const PointDistance* before = scratch.data();
+    PickNearestPoints(pos, glm::vec3(0, 0, -ps), MAX_POINT_LIGHTS, &scratch, &idx);
+    assert(scratch.data() == before);
     assert((int)idx.size() == MAX_POINT_LIGHTS);
     float prev = 0.0f;
     for (size_t i = 0; i < idx.size(); i++) {
@@ -812,6 +867,30 @@ void Test_ObstaclesInsideLane()
     }
 }
 
+// Fonte única das medidas: as extensões padrão do Game são OBSTACLE_SIZE / 2
+// (nenhuma é cortada pelos limites de faixa/chunk, senão o modelo desenhado
+// na medida da tabela ficaria maior que a caixa de colisão), e a caixa de cada
+// tipo tem exatamente essas medidas.
+void Test_ObstacleSizeTableIsSourceOfTruth()
+{
+    Game g = QuietGame();
+    for (int t = 0; t < OBSTACLE_TYPE_COUNT; t++) {
+        glm::vec3 h = g.ObstacleExtents((ObstacleType)t);
+        assert(nearf(2.0f * h.x, OBSTACLE_SIZE[t][0]));
+        assert(nearf(2.0f * h.y, OBSTACLE_SIZE[t][1]));
+        assert(nearf(2.0f * h.z, OBSTACLE_SIZE[t][2]));
+        Obstacle o = g.MakeObstacle((ObstacleType)t, 1, 100.0f);
+        assert(nearf(o.box.max.x - o.box.min.x, OBSTACLE_SIZE[t][0]));
+        assert(nearf(o.box.max.y - o.box.min.y, OBSTACLE_SIZE[t][1]));
+        assert(nearf(o.box.max.z - o.box.min.z, OBSTACLE_SIZE[t][2]));
+    }
+    // Barreira alta: vão livre de 1.1 m e topo fora do alcance do pulo.
+    Obstacle hb = g.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 50.0f);
+    assert(nearf(hb.box.min.y, BARRIER_HIGH_CLEARANCE));
+    assert(hb.box.max.y > JUMP_VELOCITY * JUMP_VELOCITY / (2.0f * GRAVITY)); // pés não passam do topo
+    assert(PLAYER_ROLL_HEIGHT < BARRIER_HIGH_CLEARANCE);
+}
+
 void Test_ObstacleExtentsSetter()
 {
     Game g(1);
@@ -1066,6 +1145,7 @@ int main()
     Test_SceneryFitsCapacity();
     Test_RailsAboveGroundAndInsideBed();
     Test_BuildingsCoverVisibleRange();
+    Test_SleepersUnderRailsFitCapacity();
     // Luzes pontuais (3.1)
     Test_LampsCoverVisibleRange();
     Test_PickNearestPoints();
@@ -1091,6 +1171,7 @@ int main()
     Test_LowHighNeverTogetherInLane();
     Test_FirstMetersObstacleFree();
     Test_ObstaclesInsideLane();
+    Test_ObstacleSizeTableIsSourceOfTruth();
     Test_ObstacleExtentsSetter();
     Test_PlayerBoxRollHeight();
     Test_HitBarrierGameOver();

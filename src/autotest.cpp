@@ -191,6 +191,40 @@ static bool Check_obstacle_types(std::string* why)
     return true;
 }
 
+// showcase: arranjo fixo, à mão, com um exemplar de cada coisa do jogo à
+// vista (barreira baixa, barreira alta, placa, dois trens, moedas), para o
+// README/vídeo. Sem spawn: nada muda de uma execução para outra.
+static void SetupShowcase()
+{
+    SetupNoSpawn();
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 13.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 0, 19.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 13.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, -1, 30.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 1, 34.0f));
+    for (int i = 0; i < 5; ++i)
+    {
+        Coin c = {0, 6.0f + i * COIN_SPACING, COIN_HEIGHT, false};
+        g_Game.coins.push_back(c);
+    }
+    // Moedas no ar sobre a barreira baixa (o caminho do pulo).
+    for (int i = 0; i < 3; ++i)
+    {
+        Coin c = {-1, 11.0f + i * COIN_SPACING, 2.2f, false};
+        g_Game.coins.push_back(c);
+    }
+}
+
+static bool Check_showcase(std::string* why)
+{
+    if (g_Game.mode != GameMode::PLAYING || g_Game.obstacles.size() != 5)
+    {
+        *why = "o jogador bateu ou os obstaculos do showcase sumiram";
+        return false;
+    }
+    return true;
+}
+
 // coins: sem entrada, o jogador passa pela fileira de boas-vindas do 1º chunk
 // (WELCOME_COIN_COUNT moedas na faixa inicial, antes de qualquer obstáculo) e
 // coleta todas. Não depende da semente: o 1º chunk é sempre igual.
@@ -346,7 +380,7 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
-    // lighting: spawn ligado (semente fixa), sem entrada; fotos em 2 s e 8 s para
+    // lighting: spawn ligado (semente fixa), sem entrada; fotos em 2 s e 6 s para
     // conferir a iluminação Blinn-Phong: faces voltadas para a câmera iluminadas,
     // brilho especular em moedas/obstáculos, cabeças dos postes acesas e o chão
     // clareado perto delas. Sem verificação de estado (só erros de GL).
@@ -357,6 +391,32 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.final_check = NULL;
         s.steps.push_back(AutotestStep{2.0f, 0, 0, "t2"});
         s.steps.push_back(AutotestStep{6.0f, 0, 0, "t6"});
+        scenarios.push_back(s);
+    }
+
+    // showcase: um exemplar de cada obstáculo, trens e moedas, em arranjo fixo.
+    {
+        AutotestScenario s;
+        s.name        = "showcase";
+        s.duration    = 0.5f;
+        s.final_check = Check_showcase;
+        s.setup       = SetupShowcase;
+        s.steps.push_back(AutotestStep{0.1f, 0, 0, "scene"});
+        s.steps.push_back(AutotestStep{0.35f, GLFW_KEY_UP, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{0.45f, 0, 0, "jump"});
+        scenarios.push_back(s);
+    }
+
+    // showcase_props: modelos dos power-ups (ímã, tênis, x2, cofrinho) e do
+    // porco voador, que só entram no jogo nas Tarefas 5.2/5.3.
+    {
+        AutotestScenario s;
+        s.name        = "showcase_props";
+        s.duration    = 0.3f;
+        s.final_check = NULL;
+        s.setup       = SetupNoSpawn;
+        s.show_props  = true;
+        s.steps.push_back(AutotestStep{0.1f, 0, 0, "props"});
         scenarios.push_back(s);
     }
 
@@ -411,6 +471,7 @@ static AutotestScenario g_Scenario;
 static size_t           g_NextStep = 0;
 
 bool  Autotest_Active()    { return g_Active; }
+bool  Autotest_ShowProps() { return g_Active && g_Scenario.show_props; }
 float Autotest_FixedDt()   { return AUTOTEST_DT; }
 
 void Autotest_Start()

@@ -126,14 +126,14 @@ implementado** — o base é só um visualizador.
 | Requisito | Estado |
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
-| Malhas poligonais complexas | ✅ `bunny.obj`; quanto mais variedade, melhor |
+| Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho e porco voador (até ~3.9k) |
 | Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
-| Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado |
+| Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`); falta a câmera livre |
-| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ prédios e obstáculos: o VAO de `the_cube` desenhado várias vezes, cada um com sua `model`; moedas: o VAO de `the_sphere` achatado, uma `model` por moeda |
+| Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes |
 | Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta. Rampa/pouso no trem (`RampHeightAt`/`LandsOnTop`) entram na 4.4 |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes, atenuação quadrática); **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
-| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 3 imagens (`red_brick`, `rocky_terrain_02`, `metal_plate`); revisar quando entrarem os modelos finais |
+| Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 9 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt` |
 | Objetivo e lógica de controle não-triviais | ⚠️ parcial — corrida infinita com obstáculos gerados por chunks (sempre há faixa livre), pular/rolar/desviar, moedas, pontuação e game over com reinício; faltam menu, pausa e power-ups |
@@ -210,7 +210,10 @@ passos além da duração ou se a janela fechar antes do fim. Opcionais por cen�
 cenários que não podem terminar em colisão) e `frame_hook` (registra estados intermediários).
 Cenários atuais: `smoke`, `lane_jump_roll` (faixa, pulo, rolamento; sem spawn), `long_run`
 (60 s de corrida; sem spawn), `obstacle_types` (close-up de cada obstáculo e das moedas),
-`coins` (fileira de boas-vindas coletada), `game_over` (bate sem entrada) e `restart` /
+`coins` (fileira de boas-vindas coletada), `lighting` (Blinn-Phong com spawn), `showcase`
+(arranjo fixo com um exemplar de cada obstáculo, 2 trens e moedas, + foto do pulo — imagem para
+o README/vídeo), `showcase_props` (power-ups e porco voador em exposição: `show_props = true`
+faz `main.cpp` chamar `DrawShowcaseProps()`), `game_over` (bate sem entrada) e `restart` /
 `restart_space` (Enter/Espaço reiniciam; Espaço não vira pulo).
 
 ### Ao adicionar um novo arquivo `.cpp`
@@ -234,28 +237,37 @@ referencial `FrameAt(s)`), `game.cpp` (estado, jogador, regras, spawn de obstác
 chunks, colisões, pontuação; global `g_Game` em `main.cpp`), `collisions.cpp` (todos os testes
 de intersecção),
 `camera.cpp` (`ThirdPersonCamera`: pose look-at suavizada no referencial da pista) e
-`scenery.cpp` (faixas de chão/trilhos e prédios do trecho visível `[s-20, s+150]`). Os demais
+`scenery.cpp` (faixas de chão/dormentes/trilhos, prédios e postes do trecho visível
+`[s-20, s+150]`). Os demais
 `.cpp` são bibliotecas de apoio: `textrendering.cpp` (texto na janela via `include/dejavufont.h`),
 `tiny_obj_loader.cpp`, `stb_image.cpp` e `glad.c` são apenas *wrappers* de header-only libs,
 `autotest.cpp` é o harness E2E e `correcao.cpp` é infraestrutura de correção automatizada.
 
-**Faixas dinâmicas:** chão e trilhos não são OBJ: `DynamicStripMesh` (em `main.cpp`) cria VAO e
-VBOs uma vez com capacidade máxima (`GL_DYNAMIC_DRAW`), e a cada quadro `scenery.cpp` gera os
-vértices em coordenadas de mundo e `UpdateDynamicStripMesh()` os reenvia com `glBufferSubData`;
-o desenho é `GL_TRIANGLE_STRIP` com `model` = identidade.
+**Faixas dinâmicas:** chão, dormentes e trilhos não são OBJ: `DynamicStripMesh` (em `main.cpp`)
+cria VAO e VBOs uma vez com capacidade máxima (`GL_DYNAMIC_DRAW`), e a cada quadro `scenery.cpp`
+gera os vértices em coordenadas de mundo e `UpdateDynamicStripMesh()` os reenvia com
+`glBufferSubData`; o desenho é `GL_TRIANGLE_STRIP` com `model` = identidade, todas as faixas num
+único `glMultiDrawArrays` (os dormentes são ~3.4k faixas de 4 vértices, uma por face). O chão tem
+2 texturas: a faixa 0 (leito, brita) e as faixas 1–2 (terreno) são desenhadas separadas
+(`first_strip`/`strip_count`). Trilhos = topo + 2 laterais (`AppendWallStrip`) sobre os dormentes
+(`RAIL_HEIGHT` 0.18 m, `SLEEPER_HEIGHT` 0.06 m).
 
 ### Pipeline de carga de geometria
 
 ```
-ObjModel("../../data/x.obj")            // tinyobjloader; lança se algum shape estiver sem nome
+LoadObjToScene("../../data/x.obj", merge_as = NULL)
+  → ObjModel(...)                       // tinyobjloader; lança se algum shape estiver sem nome
   → ComputeNormals(&model)              // gera normais por vértice se o OBJ não trouxer
   → BuildTrianglesAndAddToVirtualScene  // cria VAO + VBOs + índices, calcula a AABB
   → g_VirtualScene["<nome do shape>"]   // std::map<std::string, SceneObject>
-  → DrawVirtualObject("<nome do shape>")// bind VAO, envia bbox_min/max, glDrawElements
+  → DrawObject("<nome do shape>", ...)  // textura + uniforms + DrawVirtualObject (glDrawElements)
 ```
 
-A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`the_bunny`,
-`the_cube`, `the_sphere`), não o nome do arquivo. Use `FindSceneObject()`/`ObjectSize()`, que
+A chave de `g_VirtualScene` é o **nome do objeto dentro do arquivo OBJ** (`coin`,
+`barrier_low`, `torso`, `the_cube`...), não o nome do arquivo — **exceto** com `merge_as`: todos os
+shapes do arquivo viram um único objeto com esse nome (usado nos modelos da Kenney, que repetem o
+nome do grupo e usam nomes genéricos como `wheels-front` em vários arquivos: `train_front`,
+`building_a`, `lamp_post`...). Use `FindSceneObject()`/`ObjectSize()`, que
 abortam com mensagem se o nome não existir (nunca `g_VirtualScene[nome]`, que insere um objeto
 vazio em silêncio). Um OBJ com vários shapes vira várias entradas
 compartilhando o mesmo VAO. Objetos sem nome no OBJ fazem o programa lançar exceção.
@@ -299,25 +311,46 @@ idênticos. As cabeças dos postes (`LAMP`) são emissivas.
 **Obstáculos e moedas**: `Game` gera um chunk de `CHUNK_LENGTH` por vez (até `s + SPAWN_AHEAD`)
 e descarta o que fica `DESPAWN_BEHIND` para trás. Cada obstáculo é uma `AABB` em coordenadas
 de pista; `ObstacleParts()` devolve as caixas sólidas (a barreira alta tem viga + 2 postes) e é
-usada **tanto na colisão quanto no desenho** (o cubo é escalado para cada caixa), então o que se
-vê é o que colide. As dimensões vêm de `ConfigureObstacleExtents()` em `main.cpp` (AABB do
-modelo escalado → `Game::SetObstacleExtents`). A colisão usa a caixa varrida do jogador (antes ∪
-depois do passo) contra tunneling. `spawn_enabled = false` desliga a geração (testes de física).
+usada **tanto na colisão quanto no desenho**. As medidas vêm de **uma única tabela**,
+`OBSTACLE_SIZE` em `game.h` (extensões padrão do `Game`); `DrawObstacle()` escala o modelo do tipo
+para a união das partes, então a AABB do modelo desenhado **coincide** com a caixa de colisão (os
+modelos procedurais já são feitos nessas medidas; o trem são 3 carros em fila, escala
+≈ 2.0 × 2.0 × 1.7). Mudou uma medida? Mude só `OBSTACLE_SIZE` (e, se for um modelo procedural,
+`tools/gen_models.py`). A colisão usa a caixa varrida do jogador (antes ∪ depois do passo) contra
+tunneling. `spawn_enabled = false` desliga a geração (testes de física).
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler
-object) e não depende mais da ordem das chamadas. Quem desenha usa
-`DrawObject(nome, model, object_id, textura, uv_mode, uv_scale)`, que liga a textura na unidade 0,
-envia os uniforms e chama `DrawVirtualObject()`. Para textura repetida (chão, paredes) use
+object) e não depende mais da ordem das chamadas; os ids ficam em `g_Tex` (`main.cpp`). Quem desenha usa
+`DrawObject(nome, model, object_id, textura, uv_mode, uv_scale, tint)`, que liga a textura na unidade 0,
+envia os uniforms (o `tint` multiplica o Kd do material: tons dos prédios) e chama
+`DrawVirtualObject()`. Para textura repetida (chão, paredes) use
 `uv_scale > 1` ou `UV_PLANAR_XZ`. Para caixas escaladas de forma não uniforme (prédios) use
 `UV_BOX`: projeção por face em metros do objeto (escala lida das colunas de `model`), com
 `uv_scale` = repetições por metro — os tijolos não esticam.
 
+**Assets (Tarefa 3.2)** — fontes e licenças em `data/FONTES.txt`, todos CC0:
+- `data/kenney/<kit>/`: OBJ + MTL + `Textures/*.png` + `License.txt` da Kenney, **sem modificação**
+  (UV para uma "colormap"; desenhar com `UV_OBJ`). Para trocar/adicionar um modelo da Kenney,
+  copie OBJ+MTL+textura do pacote e carregue com `merge_as`.
+- `data/procedural/`: gerados por `tools/gen_models.py` (só stdlib; `python tools/gen_models.py`
+  na raiz regera tudo, inclusive `atlas.png`). **Não edite os OBJ à mão**: edite o script. Convenção:
+  metros, base em y = 0, frente para +Z, objetos nomeados, normais e UV em todos os vértices,
+  triângulos anti-horários (o script corrige pela normal). Obstáculos têm exatamente as medidas de
+  `OBSTACLE_SIZE`.
+- Personagem: partes `leg-left`, `leg-right`, `torso`, `arm-left`, `arm-right`, `head`;
+  `DrawPlayer()` gira braços/pernas em torno do topo da AABB de cada parte (`g_RunPhase` acumula
+  `speed·dt`). O modelo olha para +Z, por isso `PLAYER_MODEL_YAW = π`.
+- Postes: `light-curved` com a cabeça em `LAMP_MODEL_HEAD` (coordenadas do modelo);
+  `LampHeadPosition()` dá o centro da cabeça no mundo, usado **tanto** para a luz pontual quanto
+  para o bloco emissivo `LAMP`.
+- `bunny.obj`, `sphere.obj`, `plane.obj` e `red_brick` não são mais carregados.
+
 ### Matemática e câmera
 
 Além da proibição do item 6, note que `near`/`far` são **negativos** no sistema de coordenadas da
-câmera (`nearplane = -0.3f`, `farplane = -250.0f`; o near maior evita Z-fighting dos trilhos a
-0.03 m do chão), e que as matrizes de `matrices.h` são escritas em row-major no código mas
+câmera (`nearplane = -0.3f`, `farplane = -250.0f`; o near maior dá precisão ao Z-buffer para
+dormentes/trilhos rentes ao chão), e que as matrizes de `matrices.h` são escritas em row-major no código mas
 armazenadas column-major.
 
 A câmera é a `ThirdPersonCamera` (`include/camera.h`): `Snap()` no início da corrida e

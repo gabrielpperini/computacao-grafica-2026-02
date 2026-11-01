@@ -7,19 +7,6 @@
 
 namespace {
 
-// Semi-extensões padrão (m) de cada ObstacleType, na ordem do enum. main.cpp
-// as substitui pelas dos modelos escalados (SetObstacleExtents). São floats
-// simples (e não glm::vec3) para terem inicialização constante: o g_Game
-// global de main.cpp é construído antes de main() e lê esta tabela, e a ordem
-// de inicialização dinâmica entre arquivos .cpp não é garantida.
-const float kDefaultExtents[OBSTACLE_TYPE_COUNT][3] = {
-    {1.0f, 0.45f, 0.15f}, // BARRIER_LOW: 2.0 x 0.9 x 0.3, pula-se por cima
-    {1.0f, 0.95f, 0.15f}, // BARRIER_HIGH: viga de y = 1.1 a 3.0, rola-se por baixo
-    {1.0f, 1.5f,  0.15f}, // SIGN: placa 2.0 x 3.0 x 0.3
-    {1.1f, 1.6f,  6.0f},  // TRAIN: vagão 2.2 x 3.2 x 12
-    {1.0f, 0.75f, 4.0f},  // RAMP (Tarefa 4.4)
-};
-
 // Mistura a semente do jogo para o gerador do spawn, de modo que a sequência
 // não seja a mesma do gerador da pista (que usa a semente pura).
 const unsigned kSpawnSeedMix = 0x9E3779B9u;
@@ -51,8 +38,8 @@ Game::Game(unsigned seed)
       rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0)
 {
     for (int i = 0; i < OBSTACLE_TYPE_COUNT; i++)
-        SetObstacleExtents((ObstacleType)i, glm::vec3(kDefaultExtents[i][0], kDefaultExtents[i][1],
-                                                      kDefaultExtents[i][2]));
+        SetObstacleExtents((ObstacleType)i, 0.5f * glm::vec3(OBSTACLE_SIZE[i][0], OBSTACLE_SIZE[i][1],
+                                                             OBSTACLE_SIZE[i][2]));
     Reset();
 }
 

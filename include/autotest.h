@@ -34,6 +34,9 @@ struct AutotestScenario
     // Opcional: chamado a cada quadro (antes das teclas do quadro), para
     // registrar estados intermediários que o final_check confere no fim.
     void (*frame_hook)() = NULL;
+    // Opcional: desenhar os modelos dos power-ups e do porco voador em
+    // exposição (ainda não fazem parte do jogo; veja DrawShowcaseProps()).
+    bool show_props = false;
 };
 
 // Procura "--autotest <nome>" em argv. Retorna true se o cenário existe.
@@ -43,6 +46,7 @@ struct AutotestScenario
 bool  Autotest_Begin(int argc, char* argv[]);
 bool  Autotest_Active();
 float Autotest_FixedDt();   // 1/60 s: no autotest o dt é fixo (execução determinística)
+bool  Autotest_ShowProps(); // cenário ativo pede os modelos de power-up em exposição
 
 // Chamar uma vez, depois de criar/configurar o jogo e antes do 1º quadro:
 // roda o 'setup' do cenário (se houver).

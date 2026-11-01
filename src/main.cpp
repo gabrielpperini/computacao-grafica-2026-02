@@ -41,6 +41,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/common.hpp>   // glm::min/max de vetores (AABBs)
 
 // Headers da biblioteca para carregar modelos obj
 #include <tiny_obj_loader.h>
@@ -125,13 +126,21 @@ float ComputeFrameDt(double now, double* last);
 
 // Declaração de várias funções utilizadas em main().  Essas estão definidas
 // logo após a definição de main() neste arquivo.
-void BuildTrianglesAndAddToVirtualScene(ObjModel*); // Constrói representação de um ObjModel como malha de triângulos para renderização
+// Constrói representação de um ObjModel como malha de triângulos para
+// renderização. Com merge_as != NULL, todos os shapes do arquivo viram UM
+// objeto de g_VirtualScene com esse nome (modelos da Kenney repetem o nome do
+// grupo e usam nomes genéricos como "wheels-front" em vários arquivos).
+void BuildTrianglesAndAddToVirtualScene(ObjModel*, const char* merge_as = NULL);
+// Carrega um OBJ (com normais calculadas se faltarem) para g_VirtualScene.
+void LoadObjToScene(const char* filename, const char* merge_as = NULL);
 void ComputeNormals(ObjModel* model); // Computa normais de um ObjModel, caso não existam.
 void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, criando um programa de GPU
 GLuint LoadTextureImage(const char* filename); // Carrega uma imagem de textura e devolve o id da textura OpenGL
 void DrawVirtualObject(const char* object_name); // Desenha um objeto armazenado em g_VirtualScene
-// Desenha um objeto da cena com sua matriz de modelagem, id, textura (ligada na unidade 0) e modo de UV
-void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode, float uv_scale = 1.0f);
+// Desenha um objeto da cena com sua matriz de modelagem, id, textura (ligada
+// na unidade 0), modo de UV e um tom extra (multiplica o Kd do material).
+void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode,
+                float uv_scale = 1.0f, const glm::vec3& tint = glm::vec3(1.0f, 1.0f, 1.0f));
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -224,37 +233,79 @@ struct DynamicStripMesh
 };
 void CreateDynamicStripMesh(DynamicStripMesh* mesh, size_t capacity);
 void UpdateDynamicStripMesh(DynamicStripMesh* mesh, const StripBatch& batch);
-void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode, float uv_scale = 1.0f);
+// Desenha as faixas [first_strip, first_strip + strip_count) da malha
+// (strip_count < 0 = até o fim) com um único glMultiDrawArrays.
+void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode,
+                          float uv_scale = 1.0f, const glm::vec3& tint = glm::vec3(1.0f, 1.0f, 1.0f),
+                          int first_strip = 0, int strip_count = -1);
 
-DynamicStripMesh g_TrackGround; // leito da pista + terreno dos lados
-DynamicStripMesh g_TrackRails;  // 6 trilhos (2 por faixa)
+DynamicStripMesh g_TrackGround;   // leito da pista (faixa 0) + terreno dos lados
+DynamicStripMesh g_TrackRails;    // 6 trilhos (2 por faixa), topo e laterais
+DynamicStripMesh g_TrackSleepers; // dormentes de madeira (uma faixa de 4 vértices por face)
 
-// Rotação em torno de Y que vira o coelho para o "forward" local -Z, isto é,
-// de costas para a câmera.
-const float PLAYER_MODEL_YAW = -1.5707963f;
-
-// Obstáculos provisórios (até os modelos finais da Tarefa 3.2): o cubo
-// unitário escalado para estas dimensões (m), na ordem de ObstacleType. As
-// semi-extensões entregues ao Game (SetObstacleExtents) saem da AABB do modelo
-// escalado, e o desenho escala o modelo a partir das caixas que o Game devolve
-// (ObstacleParts): o que se vê é exatamente o que colide.
-const glm::vec3 OBSTACLE_PLACEHOLDER_SIZE[OBSTACLE_TYPE_COUNT] = {
-    glm::vec3(2.0f, 0.9f, 0.3f),  // BARRIER_LOW
-    glm::vec3(2.0f, 1.9f, 0.3f),  // BARRIER_HIGH (viga; o vão de 1.1 m fica embaixo)
-    glm::vec3(2.0f, 3.0f, 0.3f),  // SIGN
-    glm::vec3(2.2f, 3.2f, 12.0f), // TRAIN
-    glm::vec3(2.0f, 1.5f, 8.0f),  // RAMP (ainda não gerada)
+// Imagens de textura carregadas em main() (veja data/FONTES.txt).
+struct Textures
+{
+    GLuint terrain;  // rocky_terrain_02 (Poly Haven): terreno dos lados
+    GLuint gravel;   // gravel_stones (Poly Haven): brita do leito da pista
+    GLuint wood;     // rough_wood (Poly Haven): dormentes
+    GLuint metal;    // metal_plate (Poly Haven): trilhos
+    GLuint atlas;    // data/procedural/atlas.png: barreiras, placa, moeda, power-ups
+    GLuint train;    // Kenney Train Kit (colormap)
+    GLuint player;   // Kenney Blocky Characters (texture-b)
+    GLuint city;     // Kenney City Kit Commercial (colormap): prédios
+    GLuint roads;    // Kenney City Kit Roads (colormap): postes de luz
 };
-const int OBSTACLE_OBJECT_ID[OBSTACLE_TYPE_COUNT] = {BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP};
-void ConfigureObstacleExtents();
+Textures g_Tex;
 
-// Moedas: a esfera achatada como um disco de pé, girando em torno do eixo
-// vertical. O disco desenhado é um pouco menor que a esfera de coleta
+// Personagem (Kenney Blocky Characters, "character-b"): seis partes nomeadas
+// no OBJ, desenhadas com uma hierarquia de matrizes (corpo -> braços/pernas
+// girando em torno do ombro/quadril). O modelo olha para +Z; o jogador corre
+// para -Z local (forward com heading 0), então gira 180 graus.
+const float PLAYER_MODEL_YAW    = 3.14159265f;
+const float RUN_CYCLE_PER_METER = 0.75f; // rad de fase da passada por metro corrido
+const float LEG_SWING           = 0.75f; // rad (amplitude das pernas)
+const float ARM_SWING           = 0.65f; // rad (amplitude dos braços)
+float g_RunPhase = 0.0f;                 // fase da passada (acumula speed*dt)
+void DrawPlayer(const Player& player, const TrackFrame& frame);
+
+// Obstáculos: cada tipo é um modelo escalado para que a sua AABB coincida com
+// a caixa de colisão (a união de ObstacleParts), cujas medidas vêm da tabela
+// única OBSTACLE_SIZE (game.h). O trem são TRAIN_CARS carros em fila.
+const int TRAIN_CARS = 3;
+const char* const TRAIN_CAR_MODELS[TRAIN_CARS] = {"train_front", "train_middle", "train_rear"};
+const int OBSTACLE_OBJECT_ID[OBSTACLE_TYPE_COUNT] = {BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP};
+void DrawObstacle(const Obstacle& o);
+
+// Moedas: modelo de moeda (data/procedural/coin.obj) em pé, girando em torno
+// do eixo vertical. O disco desenhado é um pouco menor que a esfera de coleta
 // (COIN_RADIUS), para a coleta ser "generosa".
 const float COIN_DRAW_DIAMETER  = 0.8f;  // m
-const float COIN_DRAW_THICKNESS = 0.12f; // m
 const float COIN_SPIN_SPEED     = 3.0f;  // rad/s
 float g_CoinSpin = 0.0f;                 // ângulo atual (acumula dt)
+void DrawCoin(const Coin& c);
+
+// Prédios (Kenney City Kit Commercial): nomes em g_VirtualScene e tons de
+// pintura (pastéis) que multiplicam a textura, para variar a rua.
+const char* const BUILDING_MODELS[BUILDING_VARIANT_COUNT] = {
+    "building_a", "building_d", "building_f", "building_h", "building_skyscraper_a", "building_skyscraper_e"};
+const glm::vec3 BUILDING_TINTS[BUILDING_TINT_COUNT] = {
+    glm::vec3(0.90f, 0.90f, 0.90f), glm::vec3(1.00f, 0.76f, 0.60f),
+    glm::vec3(0.70f, 0.84f, 1.00f), glm::vec3(0.78f, 0.95f, 0.74f)};
+void DrawBuilding(const Track& track, const BuildingInstance& b);
+
+// Postes de luz (Kenney City Kit Roads, "light-curved"): haste com braço
+// curvo para o lado da pista. No modelo, a haste fica em x = z = 0 e a cabeça
+// da luminária é a caixa centrada em LAMP_MODEL_HEAD (unidades do modelo).
+// A escala põe o centro da cabeça em LAMP_HEIGHT; ali fica também a luz pontual
+// e o bloco emissivo (LAMP) que a representa acesa.
+const glm::vec3 LAMP_MODEL_HEAD = glm::vec3(0.0f, 0.6639f, -0.175f);
+glm::vec4 LampHeadPosition(const Track& track, const LampInstance& l); // centro da cabeça (mundo)
+void DrawLamp(const Track& track, const LampInstance& l);
+
+// Power-ups e porco voador: modelos já carregados (usados nas Fases 5.2/5.3);
+// por enquanto só aparecem no cenário E2E "showcase_props".
+void DrawShowcaseProps();
 
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
@@ -293,6 +344,7 @@ const glm::vec4 SUN_DIRECTION    = glm::vec4(0.30f, 1.00f, 0.70f, 0.0f);
 const glm::vec3 SUN_COLOR        = glm::vec3(0.95f, 0.92f, 0.82f);
 const glm::vec3 AMBIENT_COLOR    = glm::vec3(0.22f, 0.25f, 0.32f); // céu azulado
 const glm::vec3 LAMP_LIGHT_COLOR = glm::vec3(2.8f, 2.0f, 1.0f);   // luz quente, intensidade > 1
+const glm::vec3 GRAVEL_TINT      = glm::vec3(0.95f, 0.90f, 0.85f); // brita um pouco mais quente
 
 // Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
 // ks/q = especular de Blinn-Phong; emissive = cor somada sem depender das luzes.
@@ -307,8 +359,9 @@ struct Material
 
 // Material (Kd/Ks/q/emissivo/modo de sombreamento) de cada tipo de objeto.
 Material MaterialFor(int object_id);
-// Envia o material do tipo de objeto para os uniforms do shader.
-void ApplyMaterial(int object_id);
+// Envia o material do tipo de objeto (com o Kd multiplicado por 'tint') para
+// os uniforms do shader.
+void ApplyMaterial(int object_id, const glm::vec3& tint);
 
 int main(int argc, char* argv[])
 {
@@ -385,26 +438,50 @@ int main(int argc, char* argv[])
     //
     LoadShadersFromFiles();
 
-    // Carregamos as imagens de textura. Cada objeto escolhe a sua em DrawObject(),
-    // que a liga na unidade de textura 0 antes de desenhar.
-    GLuint tex_brick = LoadTextureImage("../../data/red_brick_diff_1k.jpg");
-    GLuint tex_rock  = LoadTextureImage("../../data/rocky_terrain_02_diff_1k.jpg");
-    GLuint tex_metal = LoadTextureImage("../../data/metal_plate_diff_1k.jpg");
+    // Carregamos as imagens de textura (fontes e licenças em data/FONTES.txt).
+    // Cada objeto escolhe a sua em DrawObject(), que a liga na unidade de
+    // textura 0 antes de desenhar.
+    g_Tex.terrain = LoadTextureImage("../../data/rocky_terrain_02_diff_1k.jpg");
+    g_Tex.gravel  = LoadTextureImage("../../data/gravel_stones_diff_1k.jpg");
+    g_Tex.wood    = LoadTextureImage("../../data/rough_wood_diff_1k.jpg");
+    g_Tex.metal   = LoadTextureImage("../../data/metal_plate_diff_1k.jpg");
+    g_Tex.atlas   = LoadTextureImage("../../data/procedural/atlas.png");
+    g_Tex.train   = LoadTextureImage("../../data/kenney/train-kit/Textures/colormap.png");
+    g_Tex.player  = LoadTextureImage("../../data/kenney/blocky-characters/Textures/texture-b.png");
+    g_Tex.city    = LoadTextureImage("../../data/kenney/city-kit-commercial/Textures/colormap.png");
+    g_Tex.roads   = LoadTextureImage("../../data/kenney/city-kit-roads/Textures/colormap.png");
 
-    // Construímos a representação de objetos geométricos através de malhas de triângulos.
-    // Coelho: jogador provisório. Cubo: prédios provisórios (instâncias).
-    ObjModel bunnymodel("../../data/bunny.obj");
-    ComputeNormals(&bunnymodel);
-    BuildTrianglesAndAddToVirtualScene(&bunnymodel);
-
-    ObjModel cubemodel("../../data/cube.obj");
-    ComputeNormals(&cubemodel);
-    BuildTrianglesAndAddToVirtualScene(&cubemodel);
-
-    // Esfera: moedas provisórias (achatadas como disco).
-    ObjModel spheremodel("../../data/sphere.obj");
-    ComputeNormals(&spheremodel);
-    BuildTrianglesAndAddToVirtualScene(&spheremodel);
+    // Construímos a representação de objetos geométricos através de malhas de
+    // triângulos. Cada objeto é desenhado várias vezes (instâncias) com
+    // matrizes de modelagem diferentes, reaproveitando o mesmo VAO.
+    //
+    // Personagem: partes "leg-left", "leg-right", "torso", "arm-left",
+    // "arm-right" e "head" (nomes do OBJ da Kenney), desenhadas separadas.
+    LoadObjToScene("../../data/kenney/blocky-characters/character-b.obj");
+    // Trem: três carros de metrô (cabine da frente, meio, cabine de trás).
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-a.obj", "train_front");
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-b.obj", "train_middle");
+    LoadObjToScene("../../data/kenney/train-kit/train-electric-subway-c.obj", "train_rear");
+    // Prédios e poste de luz.
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-a.obj", "building_a");
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-d.obj", "building_d");
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-f.obj", "building_f");
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-h.obj", "building_h");
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-skyscraper-a.obj", "building_skyscraper_a");
+    LoadObjToScene("../../data/kenney/city-kit-commercial/building-skyscraper-e.obj", "building_skyscraper_e");
+    LoadObjToScene("../../data/kenney/city-kit-roads/light-curved.obj", "lamp_post");
+    // Malhas procedurais (tools/gen_models.py), com a textura atlas.png.
+    LoadObjToScene("../../data/procedural/barrier_low.obj");
+    LoadObjToScene("../../data/procedural/barrier_high.obj");
+    LoadObjToScene("../../data/procedural/sign_board.obj");
+    LoadObjToScene("../../data/procedural/coin.obj");
+    LoadObjToScene("../../data/procedural/powerup_magnet.obj");
+    LoadObjToScene("../../data/procedural/powerup_sneaker.obj");
+    LoadObjToScene("../../data/procedural/powerup_multiplier.obj");
+    LoadObjToScene("../../data/procedural/piggy_bank.obj");
+    LoadObjToScene("../../data/procedural/flying_pig.obj"); // corpo + 2 asas (objetos separados)
+    // Cubo: cabeça emissiva dos postes e a rampa (Tarefa 4.4, ainda sem modelo).
+    LoadObjToScene("../../data/cube.obj");
 
     if ( argc > 1 && !autotest && argv[1][0] != '-' )
     {
@@ -415,31 +492,34 @@ int main(int argc, char* argv[])
     // Inicializamos o código para renderização de texto.
     TextRendering_Init();
 
-    // Malhas dinâmicas do chão e dos trilhos, com capacidade para o trecho
-    // visível inteiro (veja MaxVerticesPerStrip() em scenery.cpp).
+    // Malhas dinâmicas do chão, dos trilhos e dos dormentes, com capacidade
+    // para o trecho visível inteiro (veja MaxVerticesPerStrip() e
+    // MaxSleeperVertices() em scenery.cpp).
     CreateDynamicStripMesh(&g_TrackGround, GROUND_STRIP_COUNT * MaxVerticesPerStrip());
     CreateDynamicStripMesh(&g_TrackRails, RAIL_STRIP_COUNT * MaxVerticesPerStrip());
+    CreateDynamicStripMesh(&g_TrackSleepers, MaxSleeperVertices());
 
     // Lotes de vértices das faixas e lista de prédios: reaproveitados a cada
     // quadro (sem realocar memória).
     StripBatch ground_batch;
     StripBatch rails_batch;
+    StripBatch sleepers_batch;
     std::vector<BuildingInstance> buildings;
 
     // Postes de luz: lista do trecho visível, posição de mundo da luz de cada
-    // um e os índices dos mais próximos do jogador (reaproveitados por quadro).
+    // um, os índices dos mais próximos do jogador e o buffer de trabalho da
+    // escolha (todos reaproveitados por quadro, sem alocar).
     std::vector<LampInstance> lamps;
     std::vector<glm::vec3> lamp_positions;
     std::vector<int> picked_lamps;
+    std::vector<PointDistance> pick_scratch;
 
     // Corrida: no autotest a semente fixa (12345) de g_Game é mantida para que
     // o cenário seja determinístico; no jogo normal, semente pelo relógio.
+    // As medidas dos obstáculos vêm de OBSTACLE_SIZE (game.h), a mesma tabela
+    // em que os modelos são escalados no desenho.
     if (!autotest)
         g_Game = Game((unsigned)time(NULL));
-
-    // Dimensões dos obstáculos a partir dos modelos carregados (depois de
-    // criar g_Game, que nasce com as dimensões padrão).
-    ConfigureObstacleExtents();
 
     // Configuração do cenário E2E (ex.: desligar o spawn), antes do 1º quadro.
     if (autotest)
@@ -478,6 +558,11 @@ int main(int argc, char* argv[])
         // Atualizamos a simulação do jogo e a câmera que segue o jogador.
         g_Game.Update(dt);
         g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
+        // Passada do personagem: a fase avança com a distância corrida (para
+        // de mexer as pernas no GAME_OVER).
+        if (g_Game.mode == GameMode::PLAYING)
+            g_RunPhase = std::fmod(g_RunPhase + RUN_CYCLE_PER_METER * g_Game.player.speed * dt,
+                                   6.2831853f);
 
         const Player& player = g_Game.player;
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
@@ -529,18 +614,19 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
         // Luzes: sol fixo + as MAX_POINT_LIGHTS lâmpadas de poste mais próximas
-        // do jogador (as demais ficam longe demais para fazer diferença).
+        // do jogador (as demais ficam longe demais para fazer diferença). A
+        // posição de cada luz é o centro da cabeça do poste desenhado
+        // (LampHeadPosition), na altura do chão da pista + LAMP_HEIGHT.
         ComputeLamps(player.s, &lamps);
         lamp_positions.clear();
         for (size_t i = 0; i < lamps.size(); ++i)
         {
-            TrackFrame f = g_Game.track.FrameAt(lamps[i].s);
-            glm::vec4 p = f.position + f.right * lamps[i].x;
-            lamp_positions.push_back(glm::vec3(p.x, LAMP_HEIGHT, p.z));
+            glm::vec4 h = LampHeadPosition(g_Game.track, lamps[i]);
+            lamp_positions.push_back(glm::vec3(h.x, h.y, h.z));
         }
         glm::vec4 player_pos = player_frame.position + player_frame.right * player.x;
         PickNearestPoints(lamp_positions, glm::vec3(player_pos.x, player_pos.y, player_pos.z),
-                          MAX_POINT_LIGHTS, &picked_lamps);
+                          MAX_POINT_LIGHTS, &pick_scratch, &picked_lamps);
         float light_pos[4 * MAX_POINT_LIGHTS] = {0};
         float light_col[3 * MAX_POINT_LIGHTS] = {0};
         for (size_t i = 0; i < picked_lamps.size(); ++i)
@@ -561,125 +647,49 @@ int main(int argc, char* argv[])
         glUniform4fv(g_point_light_position_uniform, MAX_POINT_LIGHTS, light_pos);
         glUniform3fv(g_point_light_color_uniform, MAX_POINT_LIGHTS, light_col);
 
-        // Chão e trilhos: faixas reconstruídas a partir da pista no trecho
-        // visível em torno do jogador. As UV das faixas já estão em
-        // "ladrilhos" de tamanho fixo em metros (sem esticar).
+        // Chão, dormentes e trilhos: faixas reconstruídas a partir da pista no
+        // trecho visível em torno do jogador. As UV das faixas já estão em
+        // "ladrilhos" de tamanho fixo em metros (sem esticar). O chão tem duas
+        // texturas: brita no leito da pista (faixa 0) e terra nos lados.
         BuildGroundStrips(g_Game.track, player.s, &ground_batch);
         UpdateDynamicStripMesh(&g_TrackGround, ground_batch);
-        DrawDynamicStripMesh(g_TrackGround, GROUND, tex_rock, UV_OBJ);
+        DrawDynamicStripMesh(g_TrackGround, GROUND, g_Tex.gravel, UV_OBJ, 1.0f,
+                             GRAVEL_TINT, 0, 1);
+        DrawDynamicStripMesh(g_TrackGround, GROUND, g_Tex.terrain, UV_OBJ, 1.0f,
+                             glm::vec3(1.0f, 1.0f, 1.0f), 1, -1);
+
+        BuildSleeperStrips(g_Game.track, player.s, &sleepers_batch);
+        UpdateDynamicStripMesh(&g_TrackSleepers, sleepers_batch);
+        DrawDynamicStripMesh(g_TrackSleepers, SLEEPER, g_Tex.wood, UV_OBJ);
 
         BuildRailStrips(g_Game.track, player.s, &rails_batch);
         UpdateDynamicStripMesh(&g_TrackRails, rails_batch);
-        DrawDynamicStripMesh(g_TrackRails, RAIL, tex_metal, UV_OBJ);
+        DrawDynamicStripMesh(g_TrackRails, RAIL, g_Tex.metal, UV_OBJ);
 
-        // Jogador (coelho provisório): matriz de pista
-        //   T(posição na pista + right*x + up*y) * R_y(heading) * <modelo>,
-        // com altura total PLAYER_HEIGHT e os pés em y = 0. Rolando, é
-        // achatado na vertical para PLAYER_ROLL_HEIGHT.
-        {
-            glm::vec4 p = player_frame.position + player_frame.right * player.x
-                        + glm::vec4(0.0f, player.y, 0.0f, 0.0f);
-            float k = PLAYER_HEIGHT / ObjectSize("the_bunny").y;
-            float squash = (player.roll_timer > 0.0f) ? PLAYER_ROLL_HEIGHT / PLAYER_HEIGHT : 1.0f;
-            glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
-                            * Matrix_Rotate_Y(player_frame.heading + PLAYER_MODEL_YAW)
-                            * Matrix_OnGround("the_bunny", k, k * squash, k);
-            DrawObject("the_bunny", model, PLAYER, tex_metal, UV_SPHERICAL);
-        }
+        // Jogador: personagem articulado (veja DrawPlayer()).
+        DrawPlayer(player, player_frame);
 
-        // Prédios provisórios: o MESMO VAO do cubo desenhado várias vezes
-        // (instâncias), cada um com sua matriz de modelagem. A textura usa
-        // UV_BOX (em metros), para os tijolos não esticarem com a escala não
-        // uniforme: uma repetição a cada 3 m.
+        // Prédios: instâncias dos modelos de prédio, um por posição.
         ComputeBuildings(player.s, &buildings);
-        glm::vec3 cube_size = ObjectSize("the_cube");
         for (size_t i = 0; i < buildings.size(); ++i)
-        {
-            const BuildingInstance& b = buildings[i];
-            TrackFrame f = g_Game.track.FrameAt(b.s);
-            glm::vec4 p = f.position + f.right * b.x;
-            glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
-                            * Matrix_Rotate_Y(f.heading)
-                            * Matrix_OnGround("the_cube",
-                                              b.width  / cube_size.x,
-                                              b.height / cube_size.y,
-                                              b.depth  / cube_size.z);
-            DrawObject("the_cube", model, BUILDING, tex_brick, UV_BOX, 1.0f / 3.0f);
-        }
+            DrawBuilding(g_Game.track, buildings[i]);
 
-        // Postes de luz: mais duas instâncias do cubo por poste, a haste fina e
-        // a cabeça emissiva (a luz pontual fica no centro da cabeça).
+        // Postes de luz: modelo do poste + cabeça emissiva.
         for (size_t i = 0; i < lamps.size(); ++i)
-        {
-            TrackFrame f = g_Game.track.FrameAt(lamps[i].s);
-            glm::vec4 p = f.position + f.right * lamps[i].x;
-            const float head_bottom = LAMP_HEIGHT - 0.5f * LAMP_HEAD_HEIGHT;
-            glm::mat4 pole = Matrix_Translate(p.x, p.y, p.z)
-                           * Matrix_Rotate_Y(f.heading)
-                           * Matrix_OnGround("the_cube",
-                                             LAMP_POLE_WIDTH / cube_size.x,
-                                             head_bottom     / cube_size.y,
-                                             LAMP_POLE_WIDTH / cube_size.z);
-            DrawObject("the_cube", pole, LAMP_POLE, tex_metal, UV_BOX, 0.5f);
-            glm::mat4 head = Matrix_Translate(p.x, p.y + head_bottom, p.z)
-                           * Matrix_Rotate_Y(f.heading)
-                           * Matrix_OnGround("the_cube",
-                                             LAMP_HEAD_SIZE   / cube_size.x,
-                                             LAMP_HEAD_HEIGHT / cube_size.y,
-                                             LAMP_HEAD_SIZE   / cube_size.z);
-            DrawObject("the_cube", head, LAMP, tex_metal, UV_BOX, 0.5f);
-        }
+            DrawLamp(g_Game.track, lamps[i]);
 
-        // Obstáculos: instâncias do cubo (um VAO para todos), uma matriz de
-        // modelagem por parte sólida. Cada parte é uma caixa em coordenadas de
-        // pista (x lateral, y altura, z = s) vinda do Game; o cubo é escalado
-        // para o tamanho dela, apoiado em y = part.min.y e orientado pelo
-        // referencial da pista no centro da caixa. UV_BOX: textura em metros,
-        // sem esticar (uma repetição a cada 2 m).
-        AABB parts[3];
+        // Obstáculos: cada um é o seu modelo escalado para a caixa de colisão.
         for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
-        {
-            const Obstacle& o = g_Game.obstacles[i];
-            int n = ObstacleParts(o, parts);
-            for (int k = 0; k < n; ++k)
-            {
-                glm::vec3 size = parts[k].max - parts[k].min;
-                float cx = 0.5f * (parts[k].min.x + parts[k].max.x);
-                float cs = 0.5f * (parts[k].min.z + parts[k].max.z);
-                TrackFrame f = g_Game.track.FrameAt(cs);
-                glm::vec4 p = f.position + f.right * cx + glm::vec4(0.0f, parts[k].min.y, 0.0f, 0.0f);
-                glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
-                                * Matrix_Rotate_Y(f.heading)
-                                * Matrix_OnGround("the_cube",
-                                                  size.x / cube_size.x,
-                                                  size.y / cube_size.y,
-                                                  size.z / cube_size.z);
-                DrawObject("the_cube", model, OBSTACLE_OBJECT_ID[(int)o.type], tex_metal, UV_BOX, 0.5f);
-            }
-        }
+            DrawObstacle(g_Game.obstacles[i]);
 
-        // Moedas: instâncias da esfera achatada (disco de pé), girando em
-        // torno do eixo vertical com o ângulo acumulado por dt.
-        {
-            glm::vec3 sphere_size = ObjectSize("the_sphere");
-            for (size_t i = 0; i < g_Game.coins.size(); ++i)
-            {
-                const Coin& c = g_Game.coins[i];
-                if (c.collected)
-                    continue;
-                TrackFrame f = g_Game.track.FrameAt(c.s);
-                glm::vec4 p = f.position + f.right * (c.lane * LANE_WIDTH)
-                            + glm::vec4(0.0f, c.y - 0.5f * COIN_DRAW_DIAMETER, 0.0f, 0.0f);
-                glm::mat4 model = Matrix_Translate(p.x, p.y, p.z)
-                                * Matrix_Rotate_Y(f.heading + g_CoinSpin)
-                                * Matrix_OnGround("the_sphere",
-                                                  COIN_DRAW_DIAMETER  / sphere_size.x,
-                                                  COIN_DRAW_DIAMETER  / sphere_size.y,
-                                                  COIN_DRAW_THICKNESS / sphere_size.z);
-                DrawObject("the_sphere", model, COIN, tex_metal, UV_SPHERICAL);
-            }
-        }
+        // Moedas: instâncias do modelo da moeda, girando (ângulo acumulado por dt).
+        for (size_t i = 0; i < g_Game.coins.size(); ++i)
+            if (!g_Game.coins[i].collected)
+                DrawCoin(g_Game.coins[i]);
 
+        // Cenário E2E "showcase_props": power-ups e porco voador em exposição.
+        if (Autotest_ShowProps())
+            DrawShowcaseProps();
         // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
         // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
@@ -782,13 +792,14 @@ GLuint LoadTextureImage(const char* filename)
 // objeto, o modo de UV e a escala de UV para a GPU, liga a textura do objeto na
 // unidade 0 e desenha a malha. Os valores dos ids e dos modos de UV estão em
 // "object_ids.h" (espelhados em shader_fragment.glsl).
-void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode, float uv_scale)
+void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint texture, int uv_mode,
+                float uv_scale, const glm::vec3& tint)
 {
     glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
     glUniform1i(g_object_id_uniform, object_id);
     glUniform1i(g_uv_mode_uniform, uv_mode);
     glUniform1f(g_uv_scale_uniform, uv_scale);
-    ApplyMaterial(object_id);
+    ApplyMaterial(object_id, tint);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -798,8 +809,9 @@ void DrawObject(const char* name, const glm::mat4& model, int object_id, GLuint 
 
 // Material de cada tipo de objeto: tom sobre a textura (kd_tint), especular
 // (ks, q), emissivo e modo de sombreamento. Concentra aqui o "visual" de cada
-// tipo, em vez de ramificar por object_id no shader. Metais (barreiras, placas,
-// trem, trilhos, moedas) têm Ks alto; chão e tijolo quase não brilham.
+// tipo, em vez de ramificar por object_id no shader. As cores vêm das
+// texturas (kd_tint quase sempre branco); metais (trilhos, moedas, trem) têm
+// Ks alto, chão, madeira e tecido quase não brilham.
 Material MaterialFor(int object_id)
 {
     const glm::vec3 white(1.0f, 1.0f, 1.0f);
@@ -807,26 +819,33 @@ Material MaterialFor(int object_id)
     Material m = { white, glm::vec3(0.3f), 16.0f, none, 0 }; // padrão
     switch (object_id)
     {
-    case PLAYER:      m = { white, glm::vec3(0.35f), 32.0f, none, 0 }; break;
+    case PLAYER:      m = { white, glm::vec3(0.12f), 16.0f, none, 0 }; break;  // roupa/pele: fosco
     case GROUND:      m = { white, glm::vec3(0.04f),  8.0f, none, 0 }; break;
     case RAIL:        m = { white, glm::vec3(0.90f), 96.0f, none, 0 }; break;
-    case BUILDING:    m = { white, glm::vec3(0.05f),  8.0f, none, 0 }; break;
+    case SLEEPER:     m = { glm::vec3(0.80f, 0.62f, 0.46f), glm::vec3(0.04f), 8.0f, none, 0 }; break; // madeira
+    case BUILDING:    m = { white, glm::vec3(0.20f), 32.0f, none, 0 }; break;  // janelas com algum brilho
     case BARRIER_LOW:
-    case BARRIER_HIGH:m = { glm::vec3(1.0f, 0.55f, 0.15f), glm::vec3(0.70f), 128.0f, none, 0 }; break; // laranja de obra
-    case SIGN:        m = { glm::vec3(0.35f, 0.55f, 1.0f), glm::vec3(0.70f), 128.0f, none, 0 }; break;  // placa azul
-    case TRAIN:       m = { glm::vec3(0.75f, 0.25f, 0.20f), glm::vec3(0.80f), 128.0f, none, 0 }; break; // vagão vermelho
+    case BARRIER_HIGH:m = { white, glm::vec3(0.45f), 64.0f, none, 0 }; break;  // tinta esmaltada
+    case SIGN:        m = { white, glm::vec3(0.35f), 64.0f, none, 0 }; break;
+    case TRAIN:       m = { white, glm::vec3(0.55f), 64.0f, none, 0 }; break;  // lataria pintada
     case RAMP:        m = { white, glm::vec3(0.35f), 24.0f, none, 0 }; break;
-    case COIN:        m = { glm::vec3(2.2f, 1.7f, 0.25f), glm::vec3(0.90f), 32.0f, none, 1 }; break;    // dourado; Gouraud
-    case LAMP_POLE:   m = { glm::vec3(0.45f), glm::vec3(0.60f), 32.0f, none, 0 }; break;
-    case LAMP:        m = { glm::vec3(0.10f), none, 1.0f, glm::vec3(1.5f, 1.15f, 0.65f), 0 }; break;    // lâmpada acesa
+    case COIN:        m = { glm::vec3(1.25f, 1.1f, 0.85f), glm::vec3(0.90f), 32.0f, none, 1 }; break; // ouro; Gouraud
+    case POWERUP_MAGNET:
+    case POWERUP_SNEAKERS:
+    case POWERUP_MULTIPLIER:
+    case POWERUP_PIGGY:
+    case FLYING_PIG:  m = { white, glm::vec3(0.50f), 48.0f, none, 0 }; break;  // plástico brilhante
+    case LAMP_POLE:   m = { white, glm::vec3(0.60f), 32.0f, none, 0 }; break;
+    case LAMP:        m = { glm::vec3(0.10f), none, 1.0f, glm::vec3(1.5f, 1.15f, 0.65f), 0 }; break; // lâmpada acesa
     default: break;
     }
     return m;
 }
 
-void ApplyMaterial(int object_id)
+void ApplyMaterial(int object_id, const glm::vec3& tint)
 {
     Material m = MaterialFor(object_id);
+    m.kd_tint = m.kd_tint * tint;
     glUniform3f(g_material_kd_tint_uniform, m.kd_tint.x, m.kd_tint.y, m.kd_tint.z);
     glUniform3f(g_material_ks_uniform, m.ks.x, m.ks.y, m.ks.z);
     glUniform1f(g_material_q_uniform, m.q);
@@ -848,18 +867,210 @@ const SceneObject& FindSceneObject(const char* name)
     return it->second;
 }
 
-// Passa ao Game as semi-extensões de cada obstáculo, tiradas da AABB do modelo
-// que o representa, escalado para OBSTACLE_PLACEHOLDER_SIZE (por enquanto,
-// sempre o cubo; com os modelos finais muda só o modelo/escala aqui).
-void ConfigureObstacleExtents()
+// Matriz de algo apoiado na pista: T(posição na pista + right*x + up*y) * R_y(heading + yaw).
+static glm::mat4 TrackPlacement(const TrackFrame& f, float x, float y, float yaw)
 {
-    glm::vec3 cube_size = ObjectSize("the_cube");
-    for (int t = 0; t < OBSTACLE_TYPE_COUNT; ++t)
+    glm::vec4 p = f.position + f.right * x + glm::vec4(0.0f, y, 0.0f, 0.0f);
+    return Matrix_Translate(p.x, p.y, p.z) * Matrix_Rotate_Y(f.heading + yaw);
+}
+
+// Personagem articulado: o corpo (tronco e cabeça) recebe a matriz do jogador
+// na pista, e cada braço/perna é filho dele, girando em torno do ombro/quadril
+// (topo da AABB da parte) com o ângulo da passada. Pilha de matrizes:
+// PushMatrix(corpo) -> parte = corpo * T(pivô) * R_x(ângulo) * T(-pivô) -> PopMatrix.
+void DrawPlayer(const Player& player, const TrackFrame& frame)
+{
+    static const char* const PARTS[6] = {"torso", "head", "leg-left", "leg-right", "arm-left", "arm-right"};
+
+    // AABB do personagem inteiro (união das partes), em coordenadas do modelo.
+    glm::vec3 mn(std::numeric_limits<float>::max());
+    glm::vec3 mx(std::numeric_limits<float>::lowest());
+    for (int i = 0; i < 6; ++i)
     {
-        glm::vec3 scale = OBSTACLE_PLACEHOLDER_SIZE[t] / cube_size;
-        glm::vec3 half  = 0.5f * cube_size * scale;
-        g_Game.SetObstacleExtents((ObstacleType)t, half);
+        const SceneObject& o = FindSceneObject(PARTS[i]);
+        mn = glm::min(mn, o.bbox_min);
+        mx = glm::max(mx, o.bbox_max);
     }
+
+    // Altura total PLAYER_HEIGHT com os pés em y = 0; rolando, é achatado na
+    // vertical para PLAYER_ROLL_HEIGHT.
+    const bool rolling = player.roll_timer > 0.0f;
+    const float k = PLAYER_HEIGHT / (mx.y - mn.y);
+    const float squash = rolling ? PLAYER_ROLL_HEIGHT / PLAYER_HEIGHT : 1.0f;
+    glm::mat4 body = TrackPlacement(frame, player.x, player.y, PLAYER_MODEL_YAW)
+                   * Matrix_Scale(k, k * squash, k)
+                   * Matrix_Translate(-0.5f * (mn.x + mx.x), -mn.y, -0.5f * (mn.z + mx.z));
+
+    // Ângulos (rad, em torno de X do modelo; negativo = para a frente).
+    // Correndo: pernas e braços em oposição de fase. No ar: pose de salto.
+    // Rolando: encolhido.
+    float swing = std::sin(g_RunPhase);
+    float angle[6] = {0.0f, 0.0f, LEG_SWING * swing, -LEG_SWING * swing,
+                      -ARM_SWING * swing, ARM_SWING * swing};
+    if (rolling)
+    {
+        angle[2] = angle[3] = -1.2f;
+        angle[4] = angle[5] = -1.0f;
+    }
+    else if (!player.grounded)
+    {
+        angle[2] = -0.7f;
+        angle[3] = 0.4f;
+        angle[4] = angle[5] = -2.6f; // braços para cima
+    }
+
+    glm::mat4 model = body;
+    for (int i = 0; i < 6; ++i)
+    {
+        const SceneObject& o = FindSceneObject(PARTS[i]);
+        PushMatrix(model); // guarda a matriz do corpo
+        if (angle[i] != 0.0f)
+        {
+            glm::vec3 pivot(0.5f * (o.bbox_min.x + o.bbox_max.x), o.bbox_max.y,
+                            0.5f * (o.bbox_min.z + o.bbox_max.z));
+            model = model * Matrix_Translate(pivot.x, pivot.y, pivot.z)
+                          * Matrix_Rotate_X(angle[i])
+                          * Matrix_Translate(-pivot.x, -pivot.y, -pivot.z);
+        }
+        DrawObject(PARTS[i], model, PLAYER, g_Tex.player, UV_OBJ);
+        PopMatrix(model); // volta para a matriz do corpo
+    }
+}
+
+// Desenha um obstáculo: o modelo do tipo escalado para a união das partes
+// sólidas (ObstacleParts), isto é, a própria caixa de colisão. Os modelos
+// procedurais já têm as medidas de OBSTACLE_SIZE (escala ~1). O trem são
+// TRAIN_CARS carros em fila, cada um com o referencial da pista no seu centro
+// (seguem a pista), com a cabine da frente voltada para o jogador.
+void DrawObstacle(const Obstacle& o)
+{
+    AABB parts[3];
+    int n = ObstacleParts(o, parts);
+    AABB box = parts[0];
+    for (int k = 1; k < n; ++k)
+    {
+        box.min = glm::min(box.min, parts[k].min);
+        box.max = glm::max(box.max, parts[k].max);
+    }
+    const glm::vec3 size = box.max - box.min;
+    const float cx = 0.5f * (box.min.x + box.max.x);
+    const int id = OBSTACLE_OBJECT_ID[(int)o.type];
+
+    if (o.type == ObstacleType::TRAIN)
+    {
+        // Largura/altura pela AABB do carro do meio (a das cabines inclui os
+        // retrovisores, que ficam um pouco para fora da caixa).
+        const SceneObject& mid = FindSceneObject("train_middle");
+        const glm::vec3 msize = mid.bbox_max - mid.bbox_min;
+        const float car_len = size.z / TRAIN_CARS;
+        for (int i = 0; i < TRAIN_CARS; ++i)
+        {
+            const SceneObject& car = FindSceneObject(TRAIN_CAR_MODELS[i]);
+            const float cs = box.min.z + (i + 0.5f) * car_len;
+            const float car_cz = 0.5f * (car.bbox_min.z + car.bbox_max.z);
+            glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(cs), cx, box.min.y, 0.0f)
+                            * Matrix_Scale(size.x / msize.x, size.y / msize.y, car_len / msize.z)
+                            * Matrix_Translate(0.0f, -car.bbox_min.y, -car_cz);
+            DrawObject(TRAIN_CAR_MODELS[i], model, id, g_Tex.train, UV_OBJ);
+        }
+        return;
+    }
+
+    const char* name = "the_cube";
+    if (o.type == ObstacleType::BARRIER_LOW)       name = "barrier_low";
+    else if (o.type == ObstacleType::BARRIER_HIGH) name = "barrier_high";
+    else if (o.type == ObstacleType::SIGN)         name = "sign_board";
+    const glm::vec3 msize = ObjectSize(name);
+    const float cs = 0.5f * (box.min.z + box.max.z);
+    glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(cs), cx, box.min.y, 0.0f)
+                    * Matrix_OnGround(name, size.x / msize.x, size.y / msize.y, size.z / msize.z);
+    if (o.type == ObstacleType::RAMP) // sem modelo ainda (Tarefa 4.4)
+        DrawObject(name, model, id, g_Tex.metal, UV_BOX, 0.5f);
+    else
+        DrawObject(name, model, id, g_Tex.atlas, UV_OBJ);
+}
+
+// Moeda de pé, centrada na altura c.y, girando em torno do eixo vertical.
+void DrawCoin(const Coin& c)
+{
+    const float k = COIN_DRAW_DIAMETER / ObjectSize("coin").y;
+    glm::mat4 model = TrackPlacement(g_Game.track.FrameAt(c.s), c.lane * LANE_WIDTH,
+                                     c.y - 0.5f * COIN_DRAW_DIAMETER, g_CoinSpin)
+                    * Matrix_OnGround("coin", k, k, k);
+    DrawObject("coin", model, COIN, g_Tex.atlas, UV_OBJ);
+}
+
+// Prédio com a fachada (+Z do modelo) voltada para a pista, escala uniforme
+// para caber em BUILDING_WIDTH x BUILDING_WIDTH (a altura vem do modelo).
+void DrawBuilding(const Track& track, const BuildingInstance& b)
+{
+    const char* name = BUILDING_MODELS[b.variant];
+    const glm::vec3 ms = ObjectSize(name);
+    const float k = BUILDING_WIDTH / std::max(ms.x, ms.z);
+    const float yaw = (b.x < 0.0f) ? 1.5707963f : -1.5707963f; // +Z do modelo -> centro da pista
+    glm::mat4 model = TrackPlacement(track.FrameAt(b.s), b.x, 0.0f, yaw)
+                    * Matrix_OnGround(name, k, k, k);
+    DrawObject(name, model, BUILDING, g_Tex.city, UV_OBJ, 1.0f, BUILDING_TINTS[b.tint]);
+}
+
+// Rotação do poste em torno de Y: o braço (-Z do modelo) aponta para o centro
+// da pista.
+static float LampYaw(const LampInstance& l)
+{
+    return (l.x < 0.0f) ? -1.5707963f : 1.5707963f;
+}
+
+// Centro da cabeça do poste em coordenadas de mundo: a base do poste no chão
+// da pista + a cabeça do modelo escalada (k = LAMP_HEIGHT / altura da cabeça).
+// É a mesma conta da matriz de DrawLamp, então luz e malha coincidem.
+glm::vec4 LampHeadPosition(const Track& track, const LampInstance& l)
+{
+    const float k = LAMP_HEIGHT / LAMP_MODEL_HEAD.y;
+    const glm::mat4 model = TrackPlacement(track.FrameAt(l.s), l.x, 0.0f, LampYaw(l))
+                          * Matrix_Scale(k, k, k);
+    return model * glm::vec4(LAMP_MODEL_HEAD.x, LAMP_MODEL_HEAD.y, LAMP_MODEL_HEAD.z, 1.0f);
+}
+
+// Poste (haste em x = z = 0 do modelo, base em y = 0) e, na cabeça, o bloco
+// emissivo LAMP do tamanho da luminária.
+void DrawLamp(const Track& track, const LampInstance& l)
+{
+    const float k = LAMP_HEIGHT / LAMP_MODEL_HEAD.y;
+    const TrackFrame f = track.FrameAt(l.s);
+    glm::mat4 pole = TrackPlacement(f, l.x, 0.0f, LampYaw(l)) * Matrix_Scale(k, k, k);
+    DrawObject("lamp_post", pole, LAMP_POLE, g_Tex.roads, UV_OBJ);
+
+    const glm::vec4 h = LampHeadPosition(track, l);
+    const glm::vec3 cube = ObjectSize("the_cube");
+    glm::mat4 head = Matrix_Translate(h.x, h.y - 0.5f * LAMP_HEAD_HEIGHT, h.z)
+                   * Matrix_Rotate_Y(f.heading)
+                   * Matrix_OnGround("the_cube", LAMP_HEAD_SIZE / cube.x, LAMP_HEAD_HEIGHT / cube.y,
+                                     LAMP_HEAD_SIZE / cube.z);
+    DrawObject("the_cube", head, LAMP, g_Tex.metal, UV_BOX, 0.5f);
+}
+
+// Cenário E2E "showcase_props": os power-ups (ímã, tênis, x2, cofrinho) em
+// fila sobre a pista e o porco voador acima deles, para conferir os modelos
+// antes das Tarefas 5.2/5.3.
+void DrawShowcaseProps()
+{
+    static const char* const PROPS[4] = {"powerup_magnet", "powerup_sneaker", "powerup_multiplier", "piggy_bank"};
+    static const int PROP_IDS[4] = {POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_PIGGY};
+    const float s = 7.0f, scale = 1.6f;
+    const TrackFrame f = g_Game.track.FrameAt(s);
+    for (int i = 0; i < 4; ++i)
+    {
+        glm::mat4 model = TrackPlacement(f, -3.3f + 2.2f * i, 0.6f, 0.6f)
+                        * Matrix_OnGround(PROPS[i], scale, scale, scale);
+        DrawObject(PROPS[i], model, PROP_IDS[i], g_Tex.atlas, UV_OBJ);
+    }
+    static const char* const PIG[3] = {"flying_pig_body", "flying_pig_wing_left", "flying_pig_wing_right"};
+    // Porco de frente para a câmera, um pouco virado, abaixo da altura da
+    // câmera (as asas, finas, aparecem vistas de cima).
+    glm::mat4 pig = TrackPlacement(g_Game.track.FrameAt(s + 6.0f), 0.0f, 0.4f, 2.6f)
+                  * Matrix_Scale(2.2f, 2.2f, 2.2f);
+    for (int i = 0; i < 3; ++i)
+        DrawObject(PIG[i], pig, FLYING_PIG, g_Tex.atlas, UV_OBJ);
 }
 
 // Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a
@@ -959,8 +1170,15 @@ void UpdateDynamicStripMesh(DynamicStripMesh* mesh, const StripBatch& batch)
 // Desenha as faixas de uma malha dinâmica (GL_TRIANGLE_STRIP). Os vértices já
 // estão em coordenadas de mundo, então model = identidade; os demais uniforms
 // são os mesmos de DrawObject().
-void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode, float uv_scale)
+void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint texture, int uv_mode,
+                          float uv_scale, const glm::vec3& tint, int first_strip, int strip_count)
 {
+    const int total = (int)mesh.first.size();
+    if (strip_count < 0 || first_strip + strip_count > total)
+        strip_count = total - first_strip;
+    if (first_strip < 0 || strip_count <= 0)
+        return;
+
     glm::mat4 model = Matrix_Identity();
     glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
     glUniform1i(g_object_id_uniform, object_id);
@@ -968,14 +1186,15 @@ void DrawDynamicStripMesh(const DynamicStripMesh& mesh, int object_id, GLuint te
     glUniform1f(g_uv_scale_uniform, uv_scale);
     glUniform4f(g_bbox_min_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
     glUniform4f(g_bbox_max_uniform, 0.0f, 0.0f, 0.0f, 1.0f);
-    ApplyMaterial(object_id);
+    ApplyMaterial(object_id, tint);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
 
+    // Todas as faixas pedidas numa única chamada (os dormentes são milhares de
+    // faixas de 4 vértices).
     glBindVertexArray(mesh.vertex_array_object_id);
-    for (size_t i = 0; i < mesh.first.size(); ++i)
-        glDrawArrays(GL_TRIANGLE_STRIP, mesh.first[i], mesh.count[i]);
+    glMultiDrawArrays(GL_TRIANGLE_STRIP, &mesh.first[first_strip], &mesh.count[first_strip], strip_count);
     glBindVertexArray(0);
 }
 
@@ -1213,8 +1432,18 @@ void ComputeNormals(ObjModel* model)
     }
 }
 
+// Carrega um OBJ para g_VirtualScene: leitura (tinyobjloader), normais por
+// vértice se o arquivo não as tiver, e VAO/VBOs. Veja
+// BuildTrianglesAndAddToVirtualScene() sobre merge_as.
+void LoadObjToScene(const char* filename, const char* merge_as)
+{
+    ObjModel model(filename);
+    ComputeNormals(&model);
+    BuildTrianglesAndAddToVirtualScene(&model, merge_as);
+}
+
 // Constrói triângulos para futura renderização a partir de um ObjModel.
-void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
+void BuildTrianglesAndAddToVirtualScene(ObjModel* model, const char* merge_as)
 {
     GLuint vertex_array_object_id;
     glGenVertexArrays(1, &vertex_array_object_id);
@@ -1305,7 +1534,27 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
         theobject.bbox_min = bbox_min;
         theobject.bbox_max = bbox_max;
 
-        g_VirtualScene[model->shapes[shape].name] = theobject;
+        if (merge_as != NULL)
+        {
+            // Todos os shapes do arquivo num só objeto: os índices de cada
+            // shape são acrescentados em sequência, então o objeto é o
+            // intervalo [primeiro índice do 1º shape, último índice] e a AABB
+            // é a união das AABBs.
+            theobject.name = merge_as;
+            if (shape > 0)
+            {
+                const SceneObject& prev = g_VirtualScene[merge_as];
+                theobject.first_index = prev.first_index;
+                theobject.num_indices = last_index - prev.first_index + 1;
+                theobject.bbox_min = glm::min(prev.bbox_min, bbox_min);
+                theobject.bbox_max = glm::max(prev.bbox_max, bbox_max);
+            }
+            g_VirtualScene[merge_as] = theobject;
+        }
+        else
+        {
+            g_VirtualScene[model->shapes[shape].name] = theobject;
+        }
     }
 
     GLuint VBO_model_coefficients_id;

@@ -39,6 +39,24 @@ struct Player {
 enum class ObstacleType { BARRIER_LOW, BARRIER_HIGH, SIGN, TRAIN, RAMP };
 const int OBSTACLE_TYPE_COUNT = 5;
 
+// Dimensões (m) de cada ObstacleType, na ordem do enum: (largura, altura,
+// comprimento ao longo da pista). FONTE ÚNICA de verdade, usada pela colisão
+// (Game, via extensões padrão) e pelo desenho (main.cpp escala cada modelo
+// para que a AABB dele coincida com a caixa de colisão; os modelos de
+// data/procedural já são feitos nessas medidas). Para BARRIER_HIGH a altura é
+// a da viga, que começa em y = BARRIER_HIGH_CLEARANCE (vai de 1.1 a 3.0 m).
+// O trem são 3 carros do Train Kit (Kenney) em fila: 13 m deixa a escala dos
+// carros quase uniforme (2.0 x 2.0 x 1.7). São floats simples (e não
+// glm::vec3) para terem inicialização constante: o g_Game global de main.cpp
+// é construído antes de main() e lê esta tabela.
+const float OBSTACLE_SIZE[OBSTACLE_TYPE_COUNT][3] = {
+    {2.0f, 0.9f, 0.3f},   // BARRIER_LOW: pula-se por cima
+    {2.0f, 1.9f, 0.3f},   // BARRIER_HIGH: viga de y = 1.1 a 3.0, rola-se por baixo
+    {2.0f, 3.0f, 0.3f},   // SIGN: placa de bloqueio
+    {2.2f, 3.2f, 13.0f},  // TRAIN: 3 carros de metrô
+    {2.0f, 1.5f, 8.0f},   // RAMP (Tarefa 4.4)
+};
+
 // box: caixa em coordenadas de pista, já posicionada (z = s). s = centro da
 // caixa ao longo da pista. velocity: trens em movimento (Tarefa 4.4; 0 aqui).
 struct Obstacle { ObstacleType type; int lane; float s, velocity; AABB box; };
@@ -91,8 +109,8 @@ public:
     // rolando, PLAYER_HEIGHT em pé; base em player.y.
     AABB PlayerBox() const;
 
-    // Semi-extensões de cada tipo de obstáculo (main.cpp passa as dos modelos
-    // escalados, depois de carregar os OBJ). A largura é limitada a
+    // Semi-extensões de cada tipo de obstáculo (padrão: OBSTACLE_SIZE / 2;
+    // os testes usam o setter para casos-limite). A largura é limitada a
     // LANE_WIDTH/2 - LANE_OBSTACLE_MARGIN e a profundidade ao miolo do chunk,
     // para manter a garantia de faixa livre. Vale para obstáculos criados
     // depois da chamada.
