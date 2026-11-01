@@ -3404,6 +3404,53 @@ void Test_PowerupSpawnRules()
            total, chunks_total, rate, per_type[0], per_type[1], per_type[2], per_type[3]);
 }
 
+// Revisão final, item 8: o PRIMEIRO power-up de cada corrida é sempre um
+// cofrinho, a partir de FIRST_PIGGY_MIN_S, normalmente até FIRST_PIGGY_MAX_S
+// (só passa disso se a regra do túnel o impede ali), na faixa segura e longe
+// de obstáculos/moedas (Test_PowerupSpawnRules cobre todos). Depois dele, a
+// distribuição normal (todos os tipos aparecem). Reset repete o mesmo.
+void Test_FirstPowerUpIsPiggy()
+{
+    int in_window = 0, late = 0;
+    float latest = 0.0f;
+    int after_by_type[POWERUP_TYPE_COUNT] = {0};
+    for (unsigned seed = 1; seed <= 60; seed++) {
+        Game g(seed);
+        g.GenerateChunksUntil(200 * CHUNK_LENGTH);
+        assert(!g.powerups.empty());
+        const PowerUp& first = g.powerups[0];
+        assert(first.type == PowerUpType::PIGGY);
+        assert(first.s >= FIRST_PIGGY_MIN_S);
+        assert(!g.track.TunnelOverlaps(first.s, first.s + PIGGY_SPAWN_TUNNEL_CLEARANCE));
+        latest = std::max(latest, first.s);
+        if (first.s <= FIRST_PIGGY_MAX_S) {
+            in_window++;
+        } else {
+            late++;
+            // Só atrasa se havia túnel perto da janela.
+            assert(g.track.TunnelOverlaps(FIRST_PIGGY_MIN_S, FIRST_PIGGY_MAX_S + PIGGY_SPAWN_TUNNEL_CLEARANCE));
+        }
+        for (size_t i = 1; i < g.powerups.size(); i++)
+            after_by_type[(int)g.powerups[i].type]++;
+
+        Game h(seed);
+        h.Update(1.0f / 60.0f);
+        h.Reset();
+        h.GenerateChunksUntil(200 * CHUNK_LENGTH);
+        assert(h.powerups[0].type == PowerUpType::PIGGY && h.powerups[0].s == first.s);
+    }
+    assert(in_window > 40);
+    for (int t = 0; t < POWERUP_TYPE_COUNT; t++)
+        assert(after_by_type[t] > 0);
+    printf("  [cofrinho inicial] 60 sementes: %d entre %.0f e %.0f m, %d depois (tunel; o mais tarde em %.0f m)\n",
+           in_window, FIRST_PIGGY_MIN_S, FIRST_PIGGY_MAX_S, late, latest);
+
+    Game none(9);
+    none.powerups_enabled = false;
+    none.GenerateChunksUntil(100 * CHUNK_LENGTH);
+    assert(none.powerups.empty());
+}
+
 // Gerador próprio: ligar/desligar power-ups não muda obstáculos nem moedas, e
 // a mesma semente dá os mesmos power-ups.
 void Test_PowerupSpawnDeterministic()
@@ -4239,6 +4286,7 @@ int main()
     Test_PowerupResetClears();
     Test_PowerupSpawnRules();
     Test_PowerupSpawnDeterministic();
+    Test_FirstPowerUpIsPiggy();
     Test_PowerupDespawnBehind();
     Test_TunnelApproach();
     Test_SneakersTunnelEntryNoPop();

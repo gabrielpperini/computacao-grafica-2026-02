@@ -138,6 +138,16 @@ const float PIGGY_CONTROL[4][3] = {
 // voa mais alto que a abóbada e as moedas cairiam através do teto).
 const float PIGGY_SPAWN_TUNNEL_CLEARANCE = 160.0f; // m
 
+// Cofrinho garantido (Revisão final, item 8): com 1 power-up a cada ~6 chunks
+// e 4 tipos, o cofrinho (a curva de Bézier) podia demorar minutos para
+// aparecer numa demonstração. O PRIMEIRO power-up de cada corrida é sempre um
+// cofrinho, no primeiro ponto livre a partir de FIRST_PIGGY_MIN_S (nenhum
+// power-up antes disso). Normalmente fica antes de FIRST_PIGGY_MAX_S; se a
+// regra do túnel (PIGGY_SPAWN_TUNNEL_CLEARANCE) o impede ali, ele vai para o
+// primeiro ponto permitido depois. Daí em diante, a distribuição normal.
+const float FIRST_PIGGY_MIN_S = 150.0f; // m
+const float FIRST_PIGGY_MAX_S = 300.0f; // m
+
 // Câmera nos pulos altos: acima de CAMERA_JUMP_FREE_HEIGHT m do chão ela sobe
 // CAMERA_JUMP_FOLLOW do excesso (o pulo comum, de ~2 m, não a move).
 const float CAMERA_JUMP_FREE_HEIGHT = 2.2f; // m
@@ -382,6 +392,7 @@ private:
     std::mt19937 moving_rng_;            // decide quais trens são móveis (independe de rng_)
     std::mt19937 ramp_rng_;              // decide quais trens parados têm rampa (idem)
     std::mt19937 powerup_rng_;           // decide onde nascem power-ups (idem)
+    bool first_powerup_pending_;         // o cofrinho inicial ainda não nasceu (item 8)
     std::vector<float> obstacle_dz_;     // deslocamento de cada obstáculo no último Update
     glm::vec3 extents_[OBSTACLE_TYPE_COUNT];
 };

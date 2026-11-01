@@ -72,7 +72,7 @@ Game::Game(unsigned seed)
       powerups_enabled(true), seed_(seed),
       rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0),
       moving_rng_(seed ^ kMovingSeedMix), ramp_rng_(seed ^ kRampSeedMix),
-      powerup_rng_(seed ^ kPowerUpSeedMix)
+      powerup_rng_(seed ^ kPowerUpSeedMix), first_powerup_pending_(true)
 {
     for (int i = 0; i < OBSTACLE_TYPE_COUNT; i++)
         SetObstacleExtents((ObstacleType)i, 0.5f * glm::vec3(OBSTACLE_SIZE[i][0], OBSTACLE_SIZE[i][1],
@@ -120,6 +120,7 @@ void Game::Reset()
     moving_rng_.seed(seed_ ^ kMovingSeedMix);
     ramp_rng_.seed(seed_ ^ kRampSeedMix);
     powerup_rng_.seed(seed_ ^ kPowerUpSeedMix);
+    first_powerup_pending_ = true;
     track = Track(seed_);
     track.EnsureGeneratedUntil(player.s + SPAWN_AHEAD);
 }
@@ -944,16 +945,29 @@ float Game::PowerUpRandom01()
 // primeiro de 16 pontos igualmente espaçados no miolo do chunk (a partir do
 // sorteado) que esteja a pelo menos POWERUP_CLEARANCE de qualquer obstáculo
 // ou moeda da mesma faixa; se nenhum serve, o chunk fica sem power-up.
+// Revisão final, item 8: enquanto o cofrinho inicial não nasceu, nenhum
+// power-up nasce antes de FIRST_PIGGY_MIN_S e, dali em diante, todo chunk
+// tenta pôr um cofrinho (sem depender do sorteio 'roll'), num ponto em que a
+// regra do túnel o permita; o primeiro que der certo encerra a regra.
 void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_coin)
 {
     const float roll = PowerUpRandom01();
     const float kind = PowerUpRandom01();
     const float u = PowerUpRandom01();
-    if (!powerups_enabled || roll >= POWERUP_CHUNK_CHANCE)
+    if (!powerups_enabled)
         return;
 
     const float start = index * CHUNK_LENGTH;
-    const float lo = start + 2.0f, hi = start + CHUNK_LENGTH - 2.0f;
+    float lo = start + 2.0f, hi = start + CHUNK_LENGTH - 2.0f;
+    const bool forced_piggy = first_powerup_pending_;
+    if (forced_piggy) {
+        if (hi < FIRST_PIGGY_MIN_S)
+            return; // nenhum power-up antes do cofrinho inicial
+        lo = std::max(lo, FIRST_PIGGY_MIN_S);
+    } else if (roll >= POWERUP_CHUNK_CHANCE) {
+        return;
+    }
+
     const int tries = 16;
     for (int k = 0; k < tries; ++k) {
         const float f = std::fmod(u + (float)k / (float)tries, 1.0f);
@@ -969,20 +983,26 @@ void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_c
                 free = false;
         if (!free)
             continue;
-        PowerUpType type = (PowerUpType)std::min((int)(kind * (float)POWERUP_TYPE_COUNT),
-                                                 POWERUP_TYPE_COUNT - 1);
+        PowerUpType type = forced_piggy ? PowerUpType::PIGGY
+                                        : (PowerUpType)std::min((int)(kind * (float)POWERUP_TYPE_COUNT),
+                                                                POWERUP_TYPE_COUNT - 1);
         if (type == PowerUpType::PIGGY) {
             // O porco voa sobre os próximos PIGGY_SPAWN_TUNNEL_CLEARANCE m e
             // atravessaria a abóbada de um túnel: nesse caso o cofrinho vira
             // outro tipo (determinístico, a partir do mesmo sorteio u; os 3
-            // sorteios do chunk já foram consumidos).
+            // sorteios do chunk já foram consumidos). O cofrinho inicial não
+            // vira outro tipo: tenta o próximo ponto (ou o próximo chunk).
             track.EnsureGeneratedUntil(s + PIGGY_SPAWN_TUNNEL_CLEARANCE);
-            if (track.TunnelOverlaps(s, s + PIGGY_SPAWN_TUNNEL_CLEARANCE))
+            if (track.TunnelOverlaps(s, s + PIGGY_SPAWN_TUNNEL_CLEARANCE)) {
+                if (forced_piggy)
+                    continue;
                 type = (PowerUpType)std::min((int)(u * (float)POWERUP_TIMED_TYPE_COUNT),
                                              POWERUP_TIMED_TYPE_COUNT - 1);
+            }
         }
         PowerUp p = {type, safe, s, false};
         powerups.push_back(p);
+        first_powerup_pending_ = false;
         return;
     }
 }
