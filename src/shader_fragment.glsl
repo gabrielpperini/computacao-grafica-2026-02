@@ -85,7 +85,9 @@ uniform vec3 material_emissive;
 // shader_vertex.glsl e shader_fragment.glsl (GLSL não tem include):
 // manter idêntico ao shader_vertex.glsl.
 // ---------------------------------------------------------------------------
-#define MAX_POINT_LIGHTS 8
+// MAX_POINT_LIGHTS e MAX_TUNNELS NÃO são definidos aqui: LoadShader() (main.cpp)
+// insere os #define logo depois do #version, com os valores do C++
+// (MAX_POINT_LIGHTS em scenery.h e MAX_SHADER_TUNNELS em main.cpp): uma fonte só.
 
 uniform vec4 sun_direction;   // sentido do ponto da superfície PARA o sol (w = 0)
 uniform vec3 sun_color;
@@ -98,12 +100,12 @@ uniform float material_q;     // expoente especular q do objeto atual
 
 // Túneis visíveis (Tarefa 4.2; veja main.cpp e include/scenery.h). Cada um é
 // um trecho reto: começa em tunnel_start[i].xyz (ponto da pista, no chão, na
-// entrada), segue tunnel_forward[i].xyz (unitário, horizontal) por
-// tunnel_start[i].w metros. Seção: tunnel_shape.x = meia largura e
+// face de fora do portal de entrada), segue tunnel_forward[i].xyz (unitário,
+// horizontal) por tunnel_start[i].w metros (até a face de fora do portal de
+// saída: o vão dos portais também fica na sombra, Tarefa 7.1b). Seção: tunnel_shape.x = meia largura e
 // tunnel_shape.z = raio da abóbada, ambos medidos até o MEIO da parede (a face
 // interna fica dentro, a externa fora); tunnel_shape.y = altura das paredes
 // retas; tunnel_shape.w = fração do ambiente que resta lá dentro.
-#define MAX_TUNNELS 4
 uniform int  num_tunnels;
 uniform vec4 tunnel_start[MAX_TUNNELS];
 uniform vec4 tunnel_forward[MAX_TUNNELS];

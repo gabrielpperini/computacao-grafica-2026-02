@@ -458,8 +458,15 @@ const glm::vec3 LAMP_LIGHT_COLOR = glm::vec3(2.8f, 2.0f, 1.0f);   // luz quente,
 const glm::vec3 TUNNEL_LAMP_LIGHT_COLOR = glm::vec3(0.9f, 0.82f, 0.65f);
 // Fração do ambiente (céu) que sobra nos pontos dentro do túnel (o sol some).
 const float TUNNEL_INSIDE_AMBIENT = 0.35f;
-// Túneis enviados ao shader (= MAX_TUNNELS em shader_*.glsl).
+// Túneis enviados ao shader. É também o MAX_TUNNELS dos shaders: LoadShader()
+// insere "#define MAX_TUNNELS" (e MAX_POINT_LIGHTS, de scenery.h) no código
+// GLSL ao carregá-lo, então o valor só existe aqui.
 const int MAX_SHADER_TUNNELS = 4;
+// A sombra do túnel no shader (SkyVisibility) vai da face de fora de um portal
+// à do outro, menos uma folga: a fachada do portal (em s0 - DEPTH) fica fora do
+// volume, iluminada pelo sol, sem "piscar" por erro de arredondamento; o vão
+// dos portais (antes um anel claro de 1 m) fica na sombra.
+const float TUNNEL_SHADOW_PORTAL_EXTENSION = TUNNEL_PORTAL_DEPTH - 0.05f; // m
 const glm::vec3 GRAVEL_TINT      = glm::vec3(0.95f, 0.90f, 0.85f); // brita um pouco mais quente
 
 // Material de um tipo de objeto (veja MaterialFor()). Kd = textura * kd_tint;
@@ -850,11 +857,14 @@ int main(int argc, char* argv[])
         const int num_tunnels = std::min((int)tunnel_spans.size(), MAX_SHADER_TUNNELS);
         for (int i = 0; i < num_tunnels; ++i)
         {
-            TrackFrame f = g_Game.track.FrameAt(tunnel_spans[i].s0);
+            // Volume da sombra: do portal de entrada ao de saída (o túnel fica
+            // numa reta, então o referencial em s0 - extensão é o da entrada).
+            const float ext = TUNNEL_SHADOW_PORTAL_EXTENSION;
+            TrackFrame f = g_Game.track.FrameAt(tunnel_spans[i].s0 - ext);
             tun_start[4 * i + 0] = f.position.x;
             tun_start[4 * i + 1] = f.position.y;
             tun_start[4 * i + 2] = f.position.z;
-            tun_start[4 * i + 3] = tunnel_spans[i].s1 - tunnel_spans[i].s0;
+            tun_start[4 * i + 3] = tunnel_spans[i].s1 - tunnel_spans[i].s0 + 2.0f * ext;
             tun_fwd[4 * i + 0] = f.forward.x;
             tun_fwd[4 * i + 1] = f.forward.y;
             tun_fwd[4 * i + 2] = f.forward.z;
@@ -2531,6 +2541,15 @@ void LoadShader(const char* filename, GLuint shader_id)
     std::stringstream shader;
     shader << file.rdbuf();
     std::string str = shader.str();
+
+    // Constantes compartilhadas com o C++ (uma fonte só): os #define vão logo
+    // depois da 1ª linha (#version), e "#line 2" mantém os números de linha
+    // das mensagens de erro iguais aos do arquivo.
+    char defines[160];
+    snprintf(defines, sizeof(defines), "#define MAX_POINT_LIGHTS %d\n#define MAX_TUNNELS %d\n#line 2\n",
+             MAX_POINT_LIGHTS, MAX_SHADER_TUNNELS);
+    const size_t first_line_end = str.find('\n');
+    str.insert(first_line_end == std::string::npos ? str.size() : first_line_end + 1, defines);
     const GLchar* shader_string = str.c_str();
     const GLint   shader_string_length = static_cast<GLint>( str.length() );
 
