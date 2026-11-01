@@ -1617,6 +1617,34 @@ void Test_PlayerBoxMatchesModel()
     assert(nose >= train.box.min.z - 1e-3f && nose <= train.box.min.z + 0.06f);
 }
 
+// O passo que vira GAME_OVER não coleta nada nem soma pontos (Tarefa 7.1a): a
+// moeda e o power-up que a caixa varrida tocaria no mesmo passo da batida, e a
+// distância desse passo, ficam de fora.
+void Test_GameOverFrameNoCollectNoScore()
+{
+    Game g = QuietGame();
+    g.player.s = 5.0f;
+    g.obstacles.push_back(g.MakeObstacle(ObstacleType::BARRIER_LOW, 0, 6.0f)); // min.z = 5.85
+    Coin c = {0, 6.3f, COIN_HEIGHT, false};   // dentro da caixa varrida, atrás da barreira
+    g.coins.push_back(c);
+    PowerUp p = {PowerUpType::MULTIPLIER, 0, 6.3f, false};
+    g.powerups.push_back(p);
+    const float score = g.score;
+    g.Update(MAX_DT); // nariz de 5.27 até ~5.87: bate (5.85) e alcançaria a moeda (5.8)
+    assert(g.mode == GameMode::GAME_OVER);
+    assert(g.coins_collected == 0 && !g.coins[0].collected);
+    assert(!g.powerups[0].collected && !g.PowerUpActive(PowerUpType::MULTIPLIER));
+    assert(g.score == score);
+    assert(g.events.empty());
+
+    // Sanidade: sem a barreira, o mesmo passo coleta a moeda e soma distância.
+    Game h = QuietGame();
+    h.player.s = 5.0f;
+    h.coins.push_back(c);
+    h.Update(MAX_DT);
+    assert(h.mode == GameMode::PLAYING && h.coins_collected == 1 && h.score > 10.0f);
+}
+
 void Test_HitBarrierGameOver()
 {
     Game g = QuietGame();
@@ -3744,6 +3772,8 @@ int main()
     Test_SpeedRamp();
     Test_DtIndependent();
     Test_DtClamped();
+    Test_DtSanitized();
+    Test_TrackIgnoresNonFiniteS();
     Test_RollTimerExpires();
     Test_JumpCancelsRoll();
     Test_RollInAirDescendsFaster();
@@ -3776,6 +3806,8 @@ int main()
     Test_AABBTouchingIsHit();
     Test_AABBSeparatedInS();
     Test_AABBOverlap();
+    Test_SweepAABB();
+    Test_SweepAABBAlongZ();
     Test_SphereCornerMiss();
     Test_SphereInside();
     Test_SphereIntersectsSphere();
@@ -3805,6 +3837,7 @@ int main()
     Test_PlayerBoxRollHeight();
     Test_PlayerBoxMatchesModel();
     Test_HitBarrierGameOver();
+    Test_GameOverFrameNoCollectNoScore();
     Test_JumpOverLowBarrier();
     Test_RollUnderHighBarrier();
     Test_HighBarrierPosts();

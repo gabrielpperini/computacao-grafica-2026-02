@@ -238,6 +238,12 @@ void Game::Update(float dt)
         }
     }
 
+    // O passo que acabou em colisão termina aqui: não coleta moeda nem
+    // power-up, não solta moedas do porco e não soma pontos (nem a distância
+    // do passo, que inclui o trecho depois da batida). Fim de jogo congela tudo.
+    if (mode == GameMode::GAME_OVER)
+        return;
+
     // Power-ups (esfera x caixa varrida) e puxão do ímã nas moedas, antes de
     // coletá-las: o multiplicador recém-pego já vale para as moedas do passo.
     CollectPowerUps(swept);

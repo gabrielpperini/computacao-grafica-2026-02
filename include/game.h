@@ -214,6 +214,7 @@ public:
     // ele pousou; sem apoio, cai; no túnel a cabeça não passa da abóbada);
     // colisões com a caixa varrida do jogador e dos obstáculos que andaram
     // (obstáculo -> GAME_OVER, exceto rampas e o trem em cujo teto ele está;
+    // o passo que termina em GAME_OVER para aqui: não coleta nem pontua (7.1a);
     // power-up -> coletado (Tarefa 5.2: os tempos correm no início do passo,
     // o ímã puxa as moedas antes da coleta); moeda -> coletada); pontuação; spawn de chunks até
     // player.s + SPAWN_AHEAD (se spawn_enabled) e descarte do que ficou mais
