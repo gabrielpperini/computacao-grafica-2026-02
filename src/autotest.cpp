@@ -235,9 +235,11 @@ static bool Check_showcase(std::string* why)
     return true;
 }
 
-// powerups (Tarefa 5.2): ímã, multiplicador, tênis e cofrinho em fila na faixa
-// do jogador; moedas nas faixas VIZINHAS (só o ímã as alcança), em seguida
-// duas na faixa dele bem depois de os efeitos acabarem. Sem obstáculos.
+// powerups (Tarefa 5.2): ímã, multiplicador e tênis em fila na faixa do
+// jogador (o cofrinho tem o cenário próprio 'piggy', 5.3: o porco soltaria
+// moedas que bagunçariam a contagem daqui); moedas nas faixas VIZINHAS (só o
+// ímã as alcança), em seguida duas na faixa dele bem depois de os efeitos
+// acabarem. Sem obstáculos.
 static const int PU_SIDE_COINS = 12; // 6 em cada faixa vizinha
 static void SetupPowerups()
 {
@@ -245,11 +247,9 @@ static void SetupPowerups()
     const PowerUp magnet = {PowerUpType::MAGNET, 0, 8.0f, false};
     const PowerUp mult   = {PowerUpType::MULTIPLIER, 0, 14.0f, false};
     const PowerUp shoes  = {PowerUpType::SNEAKERS, 0, 20.0f, false};
-    const PowerUp piggy  = {PowerUpType::PIGGY, 0, 27.0f, false};
     g_Game.powerups.push_back(magnet);
     g_Game.powerups.push_back(mult);
     g_Game.powerups.push_back(shoes);
-    g_Game.powerups.push_back(piggy);
     for (int i = 0; i < 6; ++i)
         for (int lane = -1; lane <= 1; lane += 2)
         {
@@ -327,12 +327,6 @@ static bool Check_powerups(std::string* why)
         *why = "o multiplicador nao ficou ativo ou nao voltou a 1 ao acabar";
         return false;
     }
-    if (g_Game.piggy_pickups != 1)
-    {
-        snprintf(buf, sizeof(buf), "cofrinhos pegos = %d (esperava 1)", g_Game.piggy_pickups);
-        *why = buf;
-        return false;
-    }
     for (int t = 0; t < POWERUP_TYPE_COUNT; ++t)
         if (g_Game.powerup_timer[t] != 0.0f)
         {
@@ -344,6 +338,69 @@ static bool Check_powerups(std::string* why)
     {
         snprintf(buf, sizeof(buf), "altura do pulo com tenis = %.2f m, sem tenis = %.2f m", g_PuMaxYBoost,
                  g_PuMaxYPlain);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
+// piggy (Tarefa 5.3): um cofrinho na faixa do jogador; ao pegá-lo o porco voa
+// em Bézier cúbica no céu soltando moedas, que formam um rastro na pista (e o
+// jogador, na faixa central, pega as que passam por ela). Sem obstáculos.
+static void SetupPiggy()
+{
+    SetupNoSpawn();
+    const PowerUp piggy = {PowerUpType::PIGGY, 0, 6.0f, false};
+    g_Game.powerups.push_back(piggy);
+}
+
+static bool  g_PigSawActive = false;  // o porco esteve ativo
+static float g_PigMinX      = 1e9f;   // menor/maior x do porco (curva lateral)
+static float g_PigMaxX      = -1e9f;
+static float g_PigMaxY      = 0.0f;   // maior altura do porco
+
+static void Hook_Piggy()
+{
+    if (g_Game.pig.active)
+    {
+        g_PigSawActive = true;
+        const glm::vec3 p = g_Game.PigTrackPosition();
+        g_PigMinX = std::min(g_PigMinX, p.x);
+        g_PigMaxX = std::max(g_PigMaxX, p.x);
+        g_PigMaxY = std::max(g_PigMaxY, p.y);
+    }
+}
+
+static bool Check_piggy(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "jogo terminou (nao ha obstaculos neste cenario)";
+        return false;
+    }
+    if (!g_PigSawActive || g_Game.pig.active || g_Game.piggy_pickups != 0)
+    {
+        *why = "o porco nao voou, ou nao terminou o voo, ou sobrou pedido de cofrinho";
+        return false;
+    }
+    if (g_Game.pig_coins_dropped < 20)
+    {
+        snprintf(buf, sizeof(buf), "moedas soltas = %d (esperava >= 20)", g_Game.pig_coins_dropped);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.coins_collected < 1 || g_Game.coins_collected > g_Game.pig_coins_dropped)
+    {
+        snprintf(buf, sizeof(buf), "moedas coletadas = %d de %d soltas (esperava 1..%d)",
+                 g_Game.coins_collected, g_Game.pig_coins_dropped, g_Game.pig_coins_dropped);
+        *why = buf;
+        return false;
+    }
+    if (g_PigMinX > -7.0f || g_PigMaxX < 7.0f || g_PigMaxY < 9.5f)
+    {
+        snprintf(buf, sizeof(buf), "curva do porco x = [%.1f, %.1f], altura max = %.1f (nao parece a Bezier)",
+                 g_PigMinX, g_PigMaxX, g_PigMaxY);
         *why = buf;
         return false;
     }
@@ -1201,6 +1258,23 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{8.0f, 0, 0, "timers_low"});
         s.steps.push_back(AutotestStep{13.0f, GLFW_KEY_UP, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{13.3f, 0, 0, "expired_jump"});
+        scenarios.push_back(s);
+    }
+
+    // piggy: cofrinho coletado em ~0.5 s; o porco voa por PIGGY_FLIGHT_TIME s.
+    // Capturas em t ~ 0.25, 0.5 e 0.9 do voo (lançado em ~0.5 s) e no fim.
+    {
+        AutotestScenario s;
+        s.name        = "piggy";
+        s.duration    = 8.0f;
+        s.final_check = Check_piggy;
+        s.setup       = SetupPiggy;
+        s.frame_hook  = Hook_Piggy;
+        s.steps.push_back(AutotestStep{0.3f, 0, 0, "before"});
+        s.steps.push_back(AutotestStep{1.5f, 0, 0, "t025"});
+        s.steps.push_back(AutotestStep{2.5f, 0, 0, "t050"});
+        s.steps.push_back(AutotestStep{4.1f, 0, 0, "t090"});
+        s.steps.push_back(AutotestStep{7.0f, 0, 0, "after"});
         scenarios.push_back(s);
     }
 

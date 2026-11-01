@@ -11,6 +11,7 @@
 #include <glm/geometric.hpp>
 #include <glm/vec4.hpp>
 
+#include "bezier.h"
 #include "camera.h"
 #include "collisions.h"
 #include "game.h"
@@ -2908,22 +2909,22 @@ void Test_PowerupTimersFrozenOutsidePlaying()
     assert(nearf(g.powerup_timer[(int)PowerUpType::MAGNET], 4.0f, 0.05f));
 }
 
-// O cofrinho não tem duração: pegá-lo só registra o evento (para a Tarefa
-// 5.3) e não mexe nos tempos nem no multiplicador.
-void Test_PiggyPickupRecorded()
+// O cofrinho não tem duração: pegá-lo não mexe nos tempos nem no multiplicador;
+// o pedido de porco (piggy_pickups) é consumido no mesmo passo (Tarefa 5.3) e
+// lança o porco voador. O segundo cofrinho, pego com o porco ainda voando, é
+// ignorado.
+void Test_PiggyPickupLaunchesPig()
 {
     Game g = QuietGame();
     g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 3.0f));
     g.powerups.push_back(MakePowerUp(PowerUpType::PIGGY, 0, 20.0f));
-    assert(g.piggy_pickups == 0);
-    while (g.piggy_pickups == 0) g.Update(1.0f / 60.0f);
-    assert(g.piggy_pickups == 1);
+    assert(g.piggy_pickups == 0 && !g.pig.active);
+    while (!g.pig.active) g.Update(1.0f / 60.0f);
+    assert(g.piggy_pickups == 0); // consumido no lançamento
     for (int t = 0; t < POWERUP_TYPE_COUNT; t++) assert(g.powerup_timer[t] == 0.0f);
     assert(g.multiplier == 1);
     Run(g, 0.5f);
-    assert(g.piggy_pickups == 1); // coletado uma única vez
-    while (g.piggy_pickups == 1) g.Update(1.0f / 60.0f);
-    assert(g.piggy_pickups == 2);
+    assert(g.pig.active && g.pig.t > 0.0f); // um único porco, ainda voando
 }
 
 // Power-up de outra faixa não é coletado; rolando também pega (a esfera de
@@ -3159,6 +3160,211 @@ void Test_SneakersTunnelEntryNoPop()
            cases, entered_cases, TUNNEL_BOUND);
 }
 
+// ------------------------------------------------- Bézier e porco voador (5.3)
+
+static const glm::vec3 kP0(-8.0f, 8.0f, 10.0f), kP1(-2.0f, 12.0f, 25.0f), kP2(4.0f, 12.0f, 35.0f),
+                       kP3(8.0f, 8.0f, 45.0f);
+
+static bool nearv(const glm::vec3& a, const glm::vec3& b, float eps = kEps)
+{
+    return nearf(a.x, b.x, eps) && nearf(a.y, b.y, eps) && nearf(a.z, b.z, eps);
+}
+
+void Test_BezierEndpoints()
+{
+    assert(nearv(CubicBezier(kP0, kP1, kP2, kP3, 0.0f), kP0));
+    assert(nearv(CubicBezier(kP0, kP1, kP2, kP3, 1.0f), kP3));
+}
+
+// B(0.5) = (P0 + 3 P1 + 3 P2 + P3) / 8.
+void Test_BezierMidpoint()
+{
+    const glm::vec3 expected = (kP0 + 3.0f * kP1 + 3.0f * kP2 + kP3) / 8.0f;
+    assert(nearv(CubicBezier(kP0, kP1, kP2, kP3, 0.5f), expected));
+    // Pontos de controle colineares e equidistantes: t é linear.
+    const glm::vec3 a(0.0f), b(1.0f, 0.0f, 0.0f), c(2.0f, 0.0f, 0.0f), d(3.0f, 0.0f, 0.0f);
+    assert(nearv(CubicBezier(a, b, c, d, 0.25f), glm::vec3(0.75f, 0.0f, 0.0f)));
+}
+
+// A tangente é a derivada: bate com a diferença finita central e, nas pontas,
+// com 3 (P1 - P0) e 3 (P3 - P2).
+void Test_BezierTangent()
+{
+    assert(nearv(CubicBezierTangent(kP0, kP1, kP2, kP3, 0.0f), 3.0f * (kP1 - kP0)));
+    assert(nearv(CubicBezierTangent(kP0, kP1, kP2, kP3, 1.0f), 3.0f * (kP3 - kP2)));
+    const float h = 1e-3f;
+    for (float t = 0.1f; t < 0.95f; t += 0.1f) {
+        const glm::vec3 fd = (CubicBezier(kP0, kP1, kP2, kP3, t + h) -
+                              CubicBezier(kP0, kP1, kP2, kP3, t - h)) / (2.0f * h);
+        assert(nearv(CubicBezierTangent(kP0, kP1, kP2, kP3, t), fd, 5e-2f));
+    }
+}
+
+// Lança um porco: um cofrinho pego é consumido no Update seguinte.
+static void LaunchPig(Game& g)
+{
+    g.piggy_pickups = 1;
+    g.Update(1.0f / 60.0f);
+    assert(g.pig.active && g.piggy_pickups == 0);
+}
+
+// Ao longo de PIGGY_FLIGHT_TIME o porco solta ~PIGGY_FLIGHT_TIME /
+// PIGGY_COIN_INTERVAL = 26 moedas, todas numa faixa válida e à frente do
+// jogador, e o porco acaba desativando.
+void Test_PigDropsCoins()
+{
+    Game g = QuietGame();
+    LaunchPig(g);
+    float last_s = -1.0f;
+    for (int i = 0; i < 300 && g.pig.active; i++) {
+        g.Update(1.0f / 60.0f);
+        for (size_t k = 0; k < g.coins.size(); k++) {
+            assert(g.coins[k].lane >= -1 && g.coins[k].lane <= 1);
+            assert(g.coins[k].s > 0.0f);
+            last_s = std::max(last_s, g.coins[k].s);
+        }
+    }
+    assert(!g.pig.active);
+    assert(g.pig_coins_dropped >= 25 && g.pig_coins_dropped <= 27);
+    // O rastro vai até perto do fim da curva (P3.z = 45 à frente do jogador).
+    assert(last_s > g.player.s + 20.0f);
+}
+
+// Cada moeda cai do porco até COIN_HEIGHT (animação por dt, nunca abaixo) e
+// termina parada em COIN_HEIGHT.
+void Test_PigCoinsFallToCoinHeight()
+{
+    Game g = QuietGame();
+    g.player.speed = 0.0f; // jogador fica no lugar: nenhuma moeda é coletada de passagem
+    LaunchPig(g);
+    g.player.lane = 0;
+    bool saw_falling = false;
+    for (int i = 0; i < 60 * 6; i++) {
+        g.player.speed = 0.0f;
+        g.Update(1.0f / 60.0f);
+        for (size_t k = 0; k < g.coins.size(); k++) {
+            const Coin& c = g.coins[k];
+            if (c.collected || c.pulled) continue;
+            assert(c.y >= COIN_HEIGHT - 1e-5f);
+            if (c.falling) { saw_falling = true; assert(c.y > COIN_HEIGHT); }
+        }
+    }
+    assert(saw_falling);
+    for (size_t k = 0; k < g.coins.size(); k++)
+        if (!g.coins[k].collected) assert(!g.coins[k].falling && g.coins[k].y == COIN_HEIGHT);
+}
+
+// Só um porco por vez: cofrinhos pegos com ele voando são descartados (o
+// contador zera, o voo continua de onde estava) e não nasce outro depois.
+void Test_SinglePigActive()
+{
+    Game g = QuietGame();
+    LaunchPig(g);
+    Run(g, 1.0f);
+    const float t_before = g.pig.t;
+    g.piggy_pickups = 2;
+    g.Update(1.0f / 60.0f);
+    assert(g.pig.active && g.piggy_pickups == 0);
+    assert(nearf(g.pig.t, t_before + (1.0f / 60.0f) / PIGGY_FLIGHT_TIME, 1e-4f)); // não reiniciou
+    Run(g, PIGGY_FLIGHT_TIME);
+    assert(!g.pig.active);
+    for (int i = 0; i < 30; i++) g.Update(1.0f / 60.0f);
+    assert(!g.pig.active && g.piggy_pickups == 0); // nenhum segundo porco
+    // Um novo cofrinho, com o porco já parado, lança outro voo.
+    g.piggy_pickups = 1;
+    g.Update(1.0f / 60.0f);
+    assert(g.pig.active && g.pig.t < 0.05f);
+}
+
+// O parâmetro t anda com dt: o estado ao fim do voo não depende da taxa de
+// quadros (30, 60 ou 120 Hz).
+void Test_PigDtIndependent()
+{
+    const float rates[3] = {30.0f, 60.0f, 120.0f};
+    int dropped[3];
+    for (int r = 0; r < 3; r++) {
+        Game g = QuietGame();
+        LaunchPig(g); // 1 passo de 1/60 s já dado
+        Run(g, 2.0f - 1.0f / 60.0f, 1.0f / rates[r]);
+        assert(nearf(g.pig.t, 0.5f, 0.02f));
+        Run(g, 2.5f, 1.0f / rates[r]);
+        assert(!g.pig.active);
+        dropped[r] = g.pig_coins_dropped;
+        assert(dropped[r] >= 25 && dropped[r] <= 27);
+    }
+    assert(std::abs(dropped[0] - dropped[2]) <= 1);
+}
+
+// A posição do porco acompanha o jogador: em t = 0 está em (-8, 8, s + 10) e
+// em t = 1, em (8, 8, s + 45), sendo s o do jogador naquele instante.
+void Test_PigFollowsPlayer()
+{
+    Game g = QuietGame();
+    g.piggy_pickups = 1;
+    g.Update(1e-6f); // lança com t ~ 0
+    glm::vec3 p = g.PigTrackPosition();
+    assert(nearv(p, glm::vec3(-8.0f, 8.0f, g.player.s + 10.0f), 1e-2f));
+    g.pig.t = 1.0f;
+    p = g.PigTrackPosition();
+    assert(nearv(p, glm::vec3(8.0f, 8.0f, g.player.s + 45.0f), 1e-3f));
+    // A velocidade absoluta inclui a do jogador (sempre avançando).
+    g.pig.t = 0.5f;
+    assert(g.PigTrackVelocity().z > g.player.speed);
+}
+
+// Moedas soltas nunca ficam dentro de obstáculo: se o ponto de queda cai
+// numa caixa (trem, barreira, placa), a moeda é pulada.
+void Test_PigCoinsAvoidObstacles()
+{
+    Game g = QuietGame();
+    Game free_game = QuietGame();
+    for (int lane = -1; lane <= 1; lane++) {
+        g.obstacles.push_back(g.MakeObstacle(ObstacleType::BARRIER_LOW, lane, 18.0f));
+        if (lane != 0) g.obstacles.push_back(g.MakeObstacle(ObstacleType::TRAIN, lane, 30.0f));
+        g.obstacles.push_back(g.MakeObstacle(ObstacleType::SIGN, lane, 40.0f));
+    }
+    // Jogador parado (speed = 0 a cada passo): o porco fica sobre o mesmo
+    // trecho e as moedas ficam onde caíram.
+    LaunchPig(g);
+    LaunchPig(free_game);
+    for (int i = 0; i < 60 * 5; i++) {
+        g.player.speed = 0.0f;
+        g.Update(1.0f / 60.0f);
+        free_game.player.speed = 0.0f;
+        free_game.Update(1.0f / 60.0f);
+        assert(g.mode == GameMode::PLAYING);
+        for (size_t k = 0; k < g.coins.size(); k++) {
+            const Coin& c = g.coins[k];
+            const glm::vec3 center(c.lane * LANE_WIDTH, COIN_HEIGHT, c.s);
+            for (size_t j = 0; j < g.obstacles.size(); j++) {
+                AABB parts[3];
+                const int n = ObstacleParts(g.obstacles[j], parts);
+                for (int q = 0; q < n; q++)
+                    assert(!SphereIntersectsAABB(center, COIN_RADIUS, parts[q]));
+            }
+        }
+    }
+    // Sem obstáculos sai o rastro inteiro; com eles, algumas moedas foram puladas.
+    assert(g.pig_coins_dropped < free_game.pig_coins_dropped);
+}
+
+// Pausa (e câmera livre) congela o porco; Reset o apaga junto com as moedas.
+void Test_PigPauseAndReset()
+{
+    Game g = QuietGame();
+    LaunchPig(g);
+    Run(g, 1.0f);
+    const float t = g.pig.t;
+    g.mode = GameMode::PAUSED;
+    Run(g, 2.0f);
+    g.mode = GameMode::FREE_CAMERA;
+    Run(g, 2.0f);
+    assert(g.pig.t == t && g.pig.active);
+    g.mode = GameMode::PLAYING;
+    g.Reset();
+    assert(!g.pig.active && g.pig.t == 0.0f && g.pig_coins_dropped == 0 && g.coins.empty());
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -3292,7 +3498,7 @@ int main()
     Test_MultiplierDoublesCoinScore();
     Test_PowerupExpires();
     Test_PowerupTimersFrozenOutsidePlaying();
-    Test_PiggyPickupRecorded();
+    Test_PiggyPickupLaunchesPig();
     Test_PowerupOtherLaneNotCollected();
     Test_CameraFollowsHighJump();
     Test_PowerupResetClears();
@@ -3301,6 +3507,17 @@ int main()
     Test_PowerupDespawnBehind();
     Test_TunnelApproach();
     Test_SneakersTunnelEntryNoPop();
+    // Bézier cúbica e porco voador (5.3)
+    Test_BezierEndpoints();
+    Test_BezierMidpoint();
+    Test_BezierTangent();
+    Test_PigDropsCoins();
+    Test_PigCoinsFallToCoinHeight();
+    Test_SinglePigActive();
+    Test_PigDtIndependent();
+    Test_PigFollowsPlayer();
+    Test_PigCoinsAvoidObstacles();
+    Test_PigPauseAndReset();
     printf("OK\n");
     return 0;
 }

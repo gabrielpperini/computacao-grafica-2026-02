@@ -6,6 +6,7 @@
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
+#include "bezier.h"
 #include "scenery.h" // TunnelCeilingHeight (perfil do teto do túnel)
 
 namespace {
@@ -46,12 +47,20 @@ glm::vec3 CoinCenter(const Coin& c)
 {
     if (c.pulled)
         return glm::vec3(c.px, c.py, c.ps);
-    return glm::vec3(c.lane * LANE_WIDTH, c.y, c.s);
+    float x = c.lane * LANE_WIDTH;
+    if (c.falling && c.py > COIN_HEIGHT) {
+        // Moeda solta pelo porco (Tarefa 5.3): px/py guardam de onde ela saiu
+        // e o x vai do ponto de saída ao centro da faixa na mesma proporção
+        // da altura que falta cair (a queda desenha uma curva até a faixa).
+        const float frac = std::min(std::max((c.y - COIN_HEIGHT) / (c.py - COIN_HEIGHT), 0.0f), 1.0f);
+        x += (c.px - x) * frac;
+    }
+    return glm::vec3(x, c.y, c.s);
 }
 
 Game::Game(unsigned seed)
     : mode(GameMode::PLAYING), track(seed), elapsed(0.0f), coins_collected(0),
-      score(0.0f), multiplier(1), piggy_pickups(0), spawn_enabled(true), ramps_enabled(true),
+      score(0.0f), multiplier(1), piggy_pickups(0), pig_coins_dropped(0), spawn_enabled(true), ramps_enabled(true),
       powerups_enabled(true), seed_(seed),
       rng_(seed ^ kSpawnSeedMix), next_chunk_(0), safe_lane_(0),
       moving_rng_(seed ^ kMovingSeedMix), ramp_rng_(seed ^ kRampSeedMix),
@@ -84,6 +93,12 @@ void Game::Reset()
     score = 0.0f;
     multiplier = 1;
     piggy_pickups = 0;
+    pig_coins_dropped = 0;
+    pig.active = false;
+    pig.t = 0.0f;
+    pig.coin_timer = 0.0f;
+    for (int i = 0; i < 4; i++)
+        pig.p[i] = glm::vec3(PIGGY_CONTROL[i][0], PIGGY_CONTROL[i][1], PIGGY_CONTROL[i][2]);
     for (int t = 0; t < POWERUP_TYPE_COUNT; t++)
         powerup_timer[t] = 0.0f;
     next_chunk_ = 0;
@@ -222,6 +237,7 @@ void Game::Update(float dt)
     // Power-ups (esfera x caixa varrida) e puxão do ímã nas moedas, antes de
     // coletá-las: o multiplicador recém-pego já vale para as moedas do passo.
     CollectPowerUps(swept);
+    StepFlyingPig(dt);
     PullCoins(dt);
 
     // Moedas: esfera da moeda x caixa do jogador -> coletada (uma única vez).
@@ -290,6 +306,101 @@ void Game::CollectPowerUps(const AABB& swept)
             powerup_timer[(int)p.type] = POWERUP_DURATION;
     }
     multiplier = PowerUpActive(PowerUpType::MULTIPLIER) ? 2 : 1;
+}
+
+glm::vec3 Game::PigTrackPosition() const
+{
+    // Pontos de controle relativos ao jogador: o z soma o s dele agora.
+    return CubicBezier(pig.p[0], pig.p[1], pig.p[2], pig.p[3], pig.t) + glm::vec3(0.0f, 0.0f, player.s);
+}
+
+glm::vec3 Game::PigTrackVelocity() const
+{
+    // dB/dt está em metros por unidade de t; t anda 1 / PIGGY_FLIGHT_TIME por
+    // segundo. O avanço do jogador (que carrega a curva toda) soma em z.
+    glm::vec3 v = CubicBezierTangent(pig.p[0], pig.p[1], pig.p[2], pig.p[3], pig.t) / PIGGY_FLIGHT_TIME;
+    v.z += player.speed;
+    return v;
+}
+
+// Porco voador (Tarefa 5.3). Cofrinho pego e nenhum porco no ar: lança um (t =
+// 0); cofrinhos pegos com o porco voando são descartados (nunca há dois). Em
+// seguida t avança dt / PIGGY_FLIGHT_TIME e, a cada PIGGY_COIN_INTERVAL de
+// voo, uma moeda é solta onde o porco está. Em t >= 1 o porco some. Só roda em
+// PLAYING (Update), então pausa e câmera livre congelam o voo.
+void Game::StepFlyingPig(float dt)
+{
+    if (piggy_pickups > 0) {
+        if (!pig.active) {
+            pig.active = true;
+            pig.t = 0.0f;
+            pig.coin_timer = 0.0f;
+        }
+        piggy_pickups = 0;
+    }
+    if (!pig.active) {
+        StepFallingCoins(dt);
+        return;
+    }
+
+    pig.t = std::min(pig.t + dt / PIGGY_FLIGHT_TIME, 1.0f);
+    pig.coin_timer += dt;
+    while (pig.coin_timer >= PIGGY_COIN_INTERVAL) {
+        pig.coin_timer -= PIGGY_COIN_INTERVAL;
+        DropPigCoin();
+    }
+    if (pig.t >= 1.0f)
+        pig.active = false;
+    StepFallingCoins(dt);
+}
+
+// Solta uma moeda no s absoluto do porco, na faixa mais próxima do x dele
+// (limitada a -1..1), que cai até COIN_HEIGHT. Se o ponto de pouso encosta em
+// qualquer parte sólida de um obstáculo (trem, rampa, barreira, placa), a
+// moeda é pulada: nunca nasce dentro de obstáculo. (Os tetos de trem andáveis
+// não recebem moedas: ficaria uma moeda fora da altura COIN_HEIGHT.)
+void Game::DropPigCoin()
+{
+    const glm::vec3 pos = PigTrackPosition();
+    int lane = (int)std::floor(pos.x / LANE_WIDTH + 0.5f);
+    lane = std::min(std::max(lane, -1), 1);
+
+    const glm::vec3 landing(lane * LANE_WIDTH, COIN_HEIGHT, pos.z);
+    AABB parts[3];
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        const Obstacle& o = obstacles[i];
+        if (o.box.max.z < pos.z - 2.0f * COIN_RADIUS || o.box.min.z > pos.z + 2.0f * COIN_RADIUS)
+            continue;
+        const int n = ObstacleParts(o, parts);
+        for (int k = 0; k < n; ++k)
+            if (SphereIntersectsAABB(landing, COIN_RADIUS, parts[k]))
+                return;
+    }
+
+    Coin c = {lane, pos.z, pos.y, false, false, pos.x, pos.y, 0.0f, true, 0.0f};
+    coins.push_back(c);
+    pig_coins_dropped += 1;
+}
+
+// Queda das moedas soltas: aceleração GRAVITY com dt, parando em COIN_HEIGHT.
+void Game::StepFallingCoins(float dt)
+{
+    for (size_t i = 0; i < coins.size(); ++i) {
+        Coin& c = coins[i];
+        if (!c.falling)
+            continue;
+        if (c.collected || c.pulled) {
+            c.falling = false;
+            continue;
+        }
+        c.vy -= GRAVITY * dt;
+        c.y += c.vy * dt;
+        if (c.y <= COIN_HEIGHT) {
+            c.y = COIN_HEIGHT;
+            c.vy = 0.0f;
+            c.falling = false;
+        }
+    }
 }
 
 // Ímã: com ele ativo, moedas a menos de MAGNET_RADIUS do centro do jogador

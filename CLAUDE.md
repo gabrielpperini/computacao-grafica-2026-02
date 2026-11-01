@@ -134,7 +134,7 @@ implementado** — o base é só um visualizador.
 | Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 10 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos dos túneis (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups); padrões em densidade fixa por metro (nada esticado) |
-| Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
+| Curva de Bézier cúbica movimentando ≥1 objeto | ✅ `include/bezier.h`, `src/bezier.cpp`; porco voador do cofrinho (`Game::pig`, Tarefa 5.3) |
 | Túneis (SPEC) | ✅ Tarefa 4.2: o gerador às vezes (~1 em 3) põe um túnel de 40–80 m (múltiplo de 4 m) entre duas retas (reta, túnel, reta; nunca na largada); módulos de abóbada de tijolos (vão de 10 m, 7 m de altura: trens passam em todas as faixas) e portais como instâncias, luminárias no teto a cada 10 m como luzes pontuais; prédios e postes de rua são omitidos ao longo do túnel |
 | Pista com trechos curvos (SPEC) | ✅ Tarefa 4.1: o gerador de `track.cpp` alterna reta (60–150 m; a da largada ≥ 100 m) e curva (raio 40 m, 45°–90°, para os dois lados); jogador, câmera, obstáculos, moedas, chão/trilhos/dormentes, prédios e postes seguem `FrameAt(s)`; trens (e rampas) só em retas — no spawn, o que cairia numa curva vira placa |
 | Animações baseadas em Δt | ✅ `ComputeFrameDt()` em `main.cpp` (limitado a `MAX_DT`); animações acumulam `dt`; trens em movimento: `velocity * dt` (Tarefa 4.3) |
@@ -402,13 +402,30 @@ m/s até ele, e continuam mesmo se o ímã acabar. **Tênis**: `HandleInput(JUMP
 `JUMP_VELOCITY * SNEAKERS_JUMP_MULT` (apogeu ~4.5 m; passa por cima de placas); a câmera acompanha
 pulos acima de `CAMERA_JUMP_FREE_HEIGHT` (`Game::CameraTargetHeight()`). **Multiplicador**:
 `multiplier = 2` enquanto ativo (moeda = 10·multiplier). **Cofrinho**: sem duração; só incrementa
-`Game::piggy_pickups` (a Tarefa 5.3 consome para lançar o porco). **Túnel**: o teto da abóbada
+`Game::piggy_pickups`, que o `Update` consome no mesmo passo para lançar o porco (Tarefa 5.3, abaixo). **Túnel**: o teto da abóbada
 limita a caixa do jogador inteira (frente ou traseira dentro) e, nos `TUNNEL_APPROACH_LENGTH` m
 antes da boca, vale com folga `TUNNEL_APPROACH_SLOPE` por metro de distância
 (`TunnelApproachCeiling`, `Track::TunnelDistanceAhead`): um pulo alto que entra no túnel no ar
 é achatado aos poucos, sem tranco (`Test_SneakersTunnelEntryNoPop`). Desenho: `DrawPowerUp()`
 (modelo flutuando e girando, `g_PowerUpSpin/Bob` acumulam `dt`; material com leve emissivo por
 tipo). HUD (`TextRendering_ShowRunInfo`): uma linha "IMA/TENIS/x2 [====] Ns" por efeito ativo.
+
+**Cofrinho e porco voador (Tarefa 5.3)**: `include/bezier.h`/`src/bezier.cpp` (sem GL) têm
+`CubicBezier()` (forma de Bernstein, implementação própria) e `CubicBezierTangent()` (derivada).
+`Game::pig` (`FlyingPig { active, t, coin_timer, p[4] }`) voa pelos pontos de controle
+`PIGGY_CONTROL` em coordenadas de pista **relativas ao jogador** (o `z` soma `player.s` a cada
+quadro: `PigTrackPosition()`); `t += dt / PIGGY_FLIGHT_TIME` (só em `PLAYING`: pausa e câmera livre
+congelam). `piggy_pickups` é consumido em `StepFlyingPig`: só lança com nenhum porco ativo, e os
+pedidos recebidos com ele voando são descartados (nunca dois porcos). A cada `PIGGY_COIN_INTERVAL`
+de voo solta uma `Coin` (≈26 por voo) no `s` absoluto do porco, na faixa mais próxima do `x` dele
+(limitada a -1..1); a moeda nasce na altura do porco (`Coin::falling`, `vy`) e cai com `GRAVITY * dt`
+até `COIN_HEIGHT` (o `x` visual vai do ponto de saída ao centro da faixa em `CoinCenter()`); depois é
+moeda normal (coletável, o ímã a puxa). Se o ponto de pouso encosta em qualquer parte de obstáculo
+(trem, rampa, barreira, placa), a moeda é **pulada** (`DropPigCoin`; teto de trem não recebe moeda).
+`PigTrackVelocity()` (derivada/`PIGGY_FLIGHT_TIME` + `player.speed` em z) orienta o desenho:
+`DrawFlyingPig()` (`main.cpp`) usa guinada `atan2(-vx, vz)` e arfagem pela componente vertical no
+referencial da pista no `s` do porco; o modelo `flying_pig` tem a cabeça em +Z (daí o meia-volta) e
+as asas (objetos `flying_pig_wing_*`) batem em torno da raiz com fase em função de `t`. E2E: `piggy`.
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler

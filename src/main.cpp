@@ -353,8 +353,7 @@ float g_TunnelDimming = 0.0f;
 // Power-ups (Tarefa 5.2): o modelo de cada tipo flutua (sobe e desce) e gira
 // em torno do eixo vertical, com o ângulo e a fase acumulados por dt. O maior
 // lado do modelo vira POWERUP_DRAW_SIZE (um pouco menor que a esfera de coleta,
-// de diâmetro 2 * POWERUP_RADIUS). O porco voador (Tarefa 5.3) está carregado
-// mas ainda não é desenhado.
+// de diâmetro 2 * POWERUP_RADIUS).
 const float POWERUP_DRAW_SIZE  = 1.2f;  // m
 const float POWERUP_SPIN_SPEED = 2.0f;  // rad/s
 const float POWERUP_BOB_SPEED  = 3.0f;  // rad/s (fase da flutuação)
@@ -362,6 +361,15 @@ const float POWERUP_BOB_HEIGHT = 0.12f; // m (amplitude)
 float g_PowerUpSpin = 0.0f;             // ângulo atual (acumula dt)
 float g_PowerUpBob  = 0.0f;             // fase da flutuação (acumula dt)
 void DrawPowerUp(const PowerUp& p);
+
+// Porco voador (Tarefa 5.3): comprimento do corpo na tela (o modelo tem ~0.85 m,
+// pequeno demais para ser visto lá no alto), batida das asas (frequência e
+// amplitude) e raiz de cada asa no modelo (x = ±0.16, y = 0.50, z = 0.02, as
+// mesmas de tools/gen_models.py).
+const float PIG_DRAW_LENGTH   = 3.5f;  // m
+const float PIG_FLAP_FREQ     = 2.5f;  // batidas por segundo
+const float PIG_FLAP_AMPLITUDE = 0.6f; // rad
+void DrawFlyingPig(const Game& game);
 
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
 void RestartRun();
@@ -853,6 +861,10 @@ int main(int argc, char* argv[])
         for (size_t i = 0; i < g_Game.powerups.size(); ++i)
             if (!g_Game.powerups[i].collected)
                 DrawPowerUp(g_Game.powerups[i]);
+
+        // Porco voador do cofrinho, voando na curva de Bézier no céu.
+        if (g_Game.pig.active)
+            DrawFlyingPig(g_Game);
         // Placar (pontos, moedas, distância) e, no fim de jogo, a mensagem
         // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
@@ -1283,6 +1295,39 @@ void DrawPowerUp(const PowerUp& p)
                                      POWERUP_HEIGHT + bob - 0.5f * k * size.y, g_PowerUpSpin)
                     * Matrix_OnGround(name, k, k, k);
     DrawObject(name, model, IDS[(int)p.type], g_Tex.atlas, UV_OBJ);
+}
+
+// Porco voador: posicionado em (x, y, s) pela curva de Bézier (relativa ao
+// jogador) e orientado pela velocidade, no referencial da pista no s dele:
+// guinada para onde ele vai e arfagem pela componente vertical. O modelo tem a
+// cabeça em +Z; no referencial da pista "para frente" é -Z do modelo, por isso
+// o meia-volta (pi). As asas batem em torno da raiz com a fase em função de t
+// (que anda com dt), uma para cada lado.
+void DrawFlyingPig(const Game& game)
+{
+    const glm::vec3 pos = game.PigTrackPosition();
+    const glm::vec3 vel = game.PigTrackVelocity();
+    const float yaw = std::atan2(-vel.x, vel.z);                       // relativo à pista
+    const float pitch = std::atan2(vel.y, std::sqrt(vel.x * vel.x + vel.z * vel.z));
+
+    const SceneObject& body = FindSceneObject("flying_pig_body");
+    const glm::vec3 c = 0.5f * (body.bbox_min + body.bbox_max);
+    const float k = PIG_DRAW_LENGTH / (body.bbox_max.z - body.bbox_min.z);
+
+    const glm::mat4 base = TrackPlacement(game.track.FrameAt(pos.z), pos.x, pos.y, yaw + 3.1415927f)
+                         * Matrix_Rotate_X(-pitch) * Matrix_Scale(k, k, k) * Matrix_Translate(-c.x, -c.y, -c.z);
+    DrawObject("flying_pig_body", base, FLYING_PIG, g_Tex.atlas, UV_OBJ);
+
+    const float flap = PIG_FLAP_AMPLITUDE *
+                       std::sin(6.2831853f * PIG_FLAP_FREQ * game.pig.t * PIGGY_FLIGHT_TIME);
+    const char* const names[2] = {"flying_pig_wing_left", "flying_pig_wing_right"};
+    for (int i = 0; i < 2; ++i)
+    {
+        const float side = (i == 0) ? -1.0f : 1.0f;
+        const glm::mat4 wing = base * Matrix_Translate(side * 0.16f, 0.50f, 0.02f)
+                             * Matrix_Rotate_Z(side * flap) * Matrix_Translate(-side * 0.16f, -0.50f, -0.02f);
+        DrawObject(names[i], wing, FLYING_PIG, g_Tex.atlas, UV_OBJ);
+    }
 }
 
 // Recomeça a corrida do zero e reposiciona a câmera atrás do jogador (sem a

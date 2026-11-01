@@ -70,9 +70,11 @@ struct Obstacle { ObstacleType type; int lane; float s, velocity; AABB box; floa
 
 // Moeda: esfera de raio COIN_RADIUS centrada em (lane*LANE_WIDTH, y, s). Com o
 // ímã (Tarefa 5.2) a moeda vira "puxada" (pulled): passa a ter posição livre
-// (px, py, ps), em coordenadas de pista, e voa até o jogador. Os campos extras
-// ficam depois de 'collected' para que {lane, s, y, false} continue valendo.
-struct Coin { int lane; float s, y; bool collected; bool pulled; float px, py, ps; };
+// (px, py, ps), em coordenadas de pista, e voa até o jogador. As moedas soltas
+// pelo porco voador (Tarefa 5.3) nascem na altura dele e caem (falling, com
+// velocidade vertical vy) até COIN_HEIGHT. Os campos extras ficam depois de
+// 'collected' para que {lane, s, y, false} continue valendo.
+struct Coin { int lane; float s, y; bool collected; bool pulled; float px, py, ps; bool falling; float vy; };
 
 // Centro da moeda em coordenadas de pista (x, y, s): o da faixa, ou a posição
 // livre se ela está sendo puxada pelo ímã.
@@ -82,8 +84,8 @@ glm::vec3 CoinCenter(const Coin& c);
 //
 // Ímã, tênis e multiplicador duram POWERUP_DURATION; pegar o mesmo tipo de
 // novo só renova o tempo (não empilha). O cofrinho não tem duração: pegá-lo
-// só registra o evento (Game::piggy_pickups), que a Tarefa 5.3 consome para
-// lançar o porco voador. Aparecem na faixa segura do chunk, a altura de
+// só registra o evento (Game::piggy_pickups), que o Update consome (Tarefa 5.3)
+// para lançar o porco voador. Aparecem na faixa segura do chunk, a altura de
 // moeda, nunca em cima de obstáculo ou moeda.
 enum class PowerUpType { MAGNET, SNEAKERS, MULTIPLIER, PIGGY };
 const int POWERUP_TYPE_COUNT = 4;
@@ -102,6 +104,26 @@ const float POWERUP_CLEARANCE = 1.5f;
 // Velocidade (m/s) com que o ímã puxa uma moeda, somada à do jogador (assim a
 // moeda alcança o jogador mesmo vindo de trás).
 const float MAGNET_PULL_SPEED = 20.0f;
+
+// ---- Porco voador (Tarefa 5.3) ----
+//
+// Ao pegar um cofrinho, um porco com asas voa numa curva de Bézier cúbica no
+// céu e solta moedas pelo caminho. Os 4 pontos de controle p[] estão em
+// coordenadas de pista RELATIVAS ao jogador (x lateral, y altura, z a
+// distância à frente dele): a posição absoluta soma player.s ao z, então o
+// porco acompanha o jogador. O parâmetro t anda com dt / PIGGY_FLIGHT_TIME;
+// em t = 1 o porco some. Só há um porco por vez.
+struct FlyingPig { bool active; float t, coin_timer; glm::vec3 p[4]; };
+
+// Pontos de controle do voo (x, y, z relativos ao jogador). Floats simples (e
+// não glm::vec3) para terem inicialização constante: o g_Game global de
+// main.cpp é construído antes de main() e lê esta tabela no Reset.
+const float PIGGY_CONTROL[4][3] = {
+    {-8.0f, 8.0f, 10.0f},
+    {-2.0f, 12.0f, 25.0f},
+    {4.0f, 12.0f, 35.0f},
+    {8.0f, 8.0f, 45.0f},
+};
 
 // Câmera nos pulos altos: acima de CAMERA_JUMP_FREE_HEIGHT m do chão ela sobe
 // CAMERA_JUMP_FOLLOW do excesso (o pulo comum, de ~2 m, não a move).
@@ -231,11 +253,22 @@ public:
 
     // Power-ups (Tarefa 5.2). powerup_timer[tipo] = segundos restantes (0 =
     // inativo; o cofrinho nunca tem tempo). piggy_pickups = cofrinhos pegos e
-    // ainda não consumidos pela Tarefa 5.3 (quem lança o porco decrementa).
+    // ainda não consumidos (o Update zera no passo seguinte, Tarefa 5.3).
     std::vector<PowerUp> powerups;  // ordenados por s (ordem de geração)
     float powerup_timer[POWERUP_TYPE_COUNT];
     int piggy_pickups;
     bool PowerUpActive(PowerUpType type) const { return powerup_timer[(int)type] > 0.0f; }
+
+    // Porco voador (Tarefa 5.3). pig_coins_dropped = moedas soltas por ele
+    // desde o Reset (as puladas por cair dentro de obstáculo não contam).
+    FlyingPig pig;
+    int pig_coins_dropped;
+    // Posição do porco em coordenadas de pista (x, y, s ABSOLUTO) e sua
+    // velocidade (m/s) no mesmo sistema: a derivada da curva relativa ao
+    // jogador, dividida por PIGGY_FLIGHT_TIME, mais o avanço do jogador em s.
+    // Só têm sentido com pig.active.
+    glm::vec3 PigTrackPosition() const;
+    glm::vec3 PigTrackVelocity() const;
 
     // false = não gera obstáculos/moedas (testes de física e cenários E2E que
     // não devem terminar em colisão). Colisões com os que já existem continuam.
@@ -282,6 +315,12 @@ private:
     void StepPowerUpTimers(float dt);
     void CollectPowerUps(const AABB& swept);
     void PullCoins(float dt);
+    // Lança o porco se há cofrinho pego e nenhum voando (descarta os pedidos
+    // extras), avança t e solta as moedas do passo; depois anima a queda das
+    // moedas soltas.
+    void StepFlyingPig(float dt);
+    void DropPigCoin();
+    void StepFallingCoins(float dt);
     float Random01();             // [0, 1), portável (só usa a saída do mt19937)
     int RandomInt(int lo, int hi); // [lo, hi]
 

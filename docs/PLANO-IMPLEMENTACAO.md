@@ -604,11 +604,11 @@ struct FlyingPig { bool active; float t, coin_timer; glm::vec3 p[4]; };  // em G
   A cada `PIGGY_COIN_INTERVAL` solta uma moeda em `s` absoluto atual, na faixa mais próxima de `x`,
   altura `COIN_HEIGHT`. Orientação do porco pela tangente (heading = `atan2` da tangente). Coletar
   outro cofrinho com o porco ativo não cria um segundo porco.
-- [ ] **Passo 1: testes** — `Test_BezierEndpoints` (`t=0 → P0`, `t=1 → P3`),
+- [x] **Passo 1: testes** — `Test_BezierEndpoints` (`t=0 → P0`, `t=1 → P3`),
   `Test_BezierMidpoint` (`t=0.5` = `(P0+3P1+3P2+P3)/8`), `Test_PigDropsCoins`
   (após `PIGGY_FLIGHT_TIME` de updates: ~26 moedas, todas com `lane ∈ [-1,1]`),
   `Test_SinglePigActive`.
-- [ ] **Passo 2:** implementar; `OK`; rodar: porco faz caminho curvo suave no céu e deixa rastro;
+- [x] **Passo 2:** implementar; `OK`; rodar: porco faz caminho curvo suave no céu e deixa rastro;
   commit `IA: cofrinho com porco voador em curva de Bézier cúbica`.
 
 ---
