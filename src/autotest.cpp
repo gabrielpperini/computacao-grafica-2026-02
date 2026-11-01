@@ -1801,6 +1801,115 @@ static bool Check_gui_small_window(std::string* why)
     return true;
 }
 
+
+// visual_audit (Tarefa 7.1b): varredura de Z-fighting e texturas esticadas.
+// Sem spawn, com rampa + trem na faixa 0, barreiras e placa; C liga a câmera
+// livre e o hook a posiciona (StartAt) em poses fixas, uma a cada
+// AUDIT_POSE_TIME s, levando o jogador junto (o cenário só existe em torno
+// dele): rasante sobre trilhos/dormentes e sobre a borda leito/terreno, rampa
+// de lado e de frente, teto do trem rasante, portal de perto, chão e base da
+// parede dentro do túnel, prédios e terreno numa curva e o portal de saída.
+// As fotos (uma por pose) são para inspeção visual; o final_check confere que
+// todas as poses rodaram e que a câmera livre seguiu ativa (sem erro de GL).
+struct AuditPose
+{
+    const char* label;
+    int   where;           // 0 = largada (rampa/trem), 1 = túnel, 2 = curva
+    float player_ds;       // s do jogador relativo à âncora
+    float cam_ds, cam_x, cam_y;    // câmera: (s relativo, lateral, altura)
+    float look_ds, look_x, look_y; // ponto olhado
+};
+static const float AUDIT_POSE_TIME = 0.7f;
+static const float AUDIT_START     = 0.2f;
+// Âncoras: s = 0 na largada; túnel: entrada (s0) e saída (s1); curva: início.
+static const AuditPose AUDIT_POSES[] = {
+    {"rails_grazing",    0, 10.0f, 12.0f,  1.25f, 0.30f, 30.0f,  0.0f, 0.10f},
+    {"bed_edge_grazing", 0, 10.0f, 12.0f,  4.6f,  0.25f, 40.0f,  4.6f, 0.00f},
+    {"ramp_side",        0, 20.0f, 26.0f, -3.6f,  1.80f, 30.0f,  0.0f, 1.20f},
+    {"ramp_front_low",   0, 15.0f, 20.0f,  0.6f,  0.60f, 30.0f,  0.0f, 1.60f},
+    {"barrier_closeup",  0, 15.0f, 22.5f, -1.2f,  0.50f, 26.0f, -2.5f, 0.40f},
+    {"train_roof",       0, 25.0f, 35.5f,  0.6f,  3.50f, 46.0f,  0.0f, 3.20f},
+    {"portal_close",     1,-15.0f, -8.0f,  3.0f,  2.00f,  0.0f,  0.0f, 3.00f},
+    {"tunnel_floor",     1, 20.0f, 15.0f,  1.25f, 0.50f, 35.0f,  1.25f, 0.00f},
+    {"tunnel_wall_base", 1, 20.0f, 15.0f,  3.0f,  1.00f, 20.0f,  5.0f, 0.30f},
+    {"curve_buildings",  2, 20.0f, 20.0f,  0.0f, 12.00f, 40.0f, -9.0f, 3.00f},
+    {"curve_ground_in",  2, 10.0f,  5.0f, -5.0f,  0.40f, 25.0f, -5.0f, 0.00f},
+    {"curve_ground_out", 2, 10.0f,  5.0f, 17.0f,  0.50f, 25.0f, 17.0f, 0.00f},
+    {"exit_portal",      3, 10.0f, 22.0f, -2.0f,  2.00f,  0.0f,  0.0f, 3.00f},
+};
+static const int AUDIT_POSE_COUNT = (int)(sizeof(AUDIT_POSES) / sizeof(AUDIT_POSES[0]));
+static TrackSegment g_AuditTunnel, g_AuditCurve;
+static int  g_AuditFrame    = 0;
+static int  g_AuditMaxPose  = -1;
+static bool g_AuditLeftFree = false;
+
+static void SetupVisualAudit()
+{
+    SetupNoSpawn();
+    const Obstacle train = g_Game.MakeObstacle(ObstacleType::TRAIN, 0, 40.0f);
+    g_Game.obstacles.push_back(g_Game.MakeRampFor(train));
+    g_Game.obstacles.push_back(train);
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_LOW, -1, 26.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::SIGN, 1, 30.0f));
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::BARRIER_HIGH, 1, 55.0f));
+    Track copy = g_Game.track;
+    g_AuditTunnel = FindFirstSegment(&copy, true);
+    g_AuditCurve  = FindFirstSegment(&copy, false);
+    // A curva usada fica longe da largada (a primeira pode ser a da rampa).
+    g_Game.track.EnsureGeneratedUntil(g_AuditTunnel.s_start + g_AuditTunnel.length + 400.0f);
+}
+
+static glm::vec4 AuditPoint(float s, float x, float y)
+{
+    const TrackFrame f = g_Game.track.FrameAt(s);
+    return f.position + f.right * x + glm::vec4(0.0f, y, 0.0f, 0.0f);
+}
+
+static void Hook_VisualAudit()
+{
+    ++g_AuditFrame;
+    if (g_Game.mode != GameMode::FREE_CAMERA)
+    {
+        if (g_AuditMaxPose >= 0)
+            g_AuditLeftFree = true;
+        return;
+    }
+    const float t = g_AuditFrame * Autotest_FixedDt();
+    const int k = (int)std::floor((t - AUDIT_START) / AUDIT_POSE_TIME);
+    if (k < 0 || k >= AUDIT_POSE_COUNT)
+        return;
+    g_AuditMaxPose = std::max(g_AuditMaxPose, k);
+    const AuditPose& a = AUDIT_POSES[k];
+    float anchor = 0.0f;
+    if (a.where == 1) anchor = g_AuditTunnel.s_start;
+    if (a.where == 2) anchor = g_AuditCurve.s_start;
+    if (a.where == 3) anchor = g_AuditTunnel.s_start + g_AuditTunnel.length;
+    // Curva para a direita: espelha a lateral (o lado de dentro troca).
+    const float mirror = (a.where == 2 && g_AuditCurve.curvature < 0.0f) ? -1.0f : 1.0f;
+    g_Game.player.s = anchor + a.player_ds;
+    g_Game.track.EnsureGeneratedUntil(g_Game.player.s + SPAWN_AHEAD + 50.0f);
+    const glm::vec4 c = AuditPoint(anchor + a.cam_ds, mirror * a.cam_x, a.cam_y);
+    const glm::vec4 l = AuditPoint(anchor + a.look_ds, mirror * a.look_x, a.look_y);
+    CameraPose pose;
+    pose.position = c;
+    pose.view_vector = l - c;
+    pose.up = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    g_FreeCamera.StartAt(pose);
+}
+
+static bool Check_visual_audit(std::string* why)
+{
+    char buf[160];
+    if (g_AuditMaxPose != AUDIT_POSE_COUNT - 1 || g_AuditLeftFree)
+    {
+        snprintf(buf, sizeof(buf), "poses percorridas: %d de %d; saiu da camera livre = %d",
+                 g_AuditMaxPose + 1, AUDIT_POSE_COUNT, (int)g_AuditLeftFree);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -2325,6 +2434,24 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{2.0f, 0, 0, NULL, 0, 0, "Jogar"});
         s.steps.push_back(AutotestStep{2.5f, 0, 0, "h270_playing"});
         s.steps.push_back(AutotestStep{3.3f, 0, 0, "h600_playing"});
+        scenarios.push_back(s);
+    }
+
+    // visual_audit: câmera livre em poses fixas (veja Hook_VisualAudit); uma
+    // foto por pose, perto do fim de cada uma (a rampa de escurecimento do
+    // túnel, de 0.5 s, já terminou).
+    {
+        AutotestScenario s;
+        s.name        = "visual_audit";
+        s.duration    = AUDIT_START + AUDIT_POSE_COUNT * AUDIT_POSE_TIME + 0.1f;
+        s.final_check = Check_visual_audit;
+        s.setup       = SetupVisualAudit;
+        s.frame_hook  = Hook_VisualAudit;
+        s.steps.push_back(AutotestStep{0.1f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{0.15f, GLFW_KEY_C, GLFW_RELEASE, NULL});
+        for (int k = 0; k < AUDIT_POSE_COUNT; ++k)
+            s.steps.push_back(AutotestStep{AUDIT_START + (k + 0.85f) * AUDIT_POSE_TIME, 0, 0,
+                                           AUDIT_POSES[k].label});
         scenarios.push_back(s);
     }
 
