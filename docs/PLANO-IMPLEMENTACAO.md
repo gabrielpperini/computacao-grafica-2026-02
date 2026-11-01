@@ -678,6 +678,39 @@ public:
 - [x] Partida longa (10 min) sem crash, sem vazamento (contagem de obstáculos/moedas estável). (7.1a: E2E `marathon`)
 - [x] Todos os `TODO`, `printf` de debug e restos do lab removidos. (7.1b)
 
+#### Tarefa 7.1a — correções de lógica, colisão e testes (triagem dos minors adiados) (executada)
+
+*Executada: todos os itens abaixo foram feitos (exceto os 'Parqueados', que ficaram de fora de propósito). Commits: `git log --grep "Tarefa 7.1a"`. Texto integral da lista de correções entregue ao implementador.*
+
+1. Caixa do jogador vs modelo: modelo ~1.07 m de largura (com braços) × 0.53 m de profundidade; caixa atual 0.8×0.8 → morte ~0.13 m antes do contato frontal. Ajustar PLAYER_HALF_DEPTH (~0.27–0.3) e avaliar PLAYER_HALF_WIDTH (manter ≤ visual do tronco; braços podem atravessar levemente — documentar). Rever todos os testes/limiares que dependem disso (janelas de pulo/rolamento, rampas, junção rampa/trem, passabilidade) sem afrouxá-los cegamente.
+2. Retrovisor da cabine do trem sai ~0.4 m da caixa de colisão lateral: reduzir a escala lateral do carro-cabine para caber em 2.2 m (ou aceitar e documentar) — escolha a que não deixa o jogador atravessar visualmente o trem.
+3. Mover a união "caixa antes/depois" (sweep) de obstáculos/jogador para uma função em src/collisions.cpp (ex.: SweepAABBAlongZ) com teste unitário; game.cpp só chama.
+4. dt robusto: ComputeFrameDt e Game::Update filtram dt negativo e NaN (if (!(dt > 0)) → 0); EnsureGeneratedUntil ignora s não-finito (sem loop infinito). Testes.
+5. Frame em que vira GAME_OVER não soma moeda nem distância após a colisão (ordem: colisão antes de coleta/score, ou desfazer). Teste.
+6. Remap do tipo do cofrinho perto de túnel: usar constante derivada do enum (ex.: POWERUP_TYPE_COUNT) em vez de 3/2 fixos.
+7. Testes: limitar todos os while de testes de power-up com contador + assert (não travar em regressão); corrigir assert quase vácuo (logic_tests.cpp ~1670); Test_TrackFrameOutOfRange checar valores extrapolados; adicionar teste de não-sobreposição de obstáculos na mesma faixa ao longo do tempo (30 seeds, trens móveis).
+8. GUI: StepTunnelDimming com dt=0 em PAUSED; em FREE_CAMERA não bloquear mouse look por WantCaptureMouse (HUD/hint são NoInputs) e corrigir o comentário "hoje nunca"; E2E faltantes: Enter no MENU inicia; P/ESC a partir da câmera livre vai à pausa; Espaço/setas em MENU e PAUSED não pulam/trocam faixa.
+9. CLAUDE.md: corrigir "~1 em 3 trens móveis" (real ~22%); comentário game.h ~119 "ordenados por s" → ordem de geração por chunk/faixa.
+10. Partida longa: E2E `marathon` de 600 s simulados com piloto automático simples que desvia (ou spawn on + invulnerabilidade de teste) verificando: sem erro de GL, contagem de obstáculos/moedas/partículas limitada (sem vazamento), track com nº de segmentos limitado.
+
+Parqueados (não fazer): moedas do ímã atravessando trens em linha reta; moeda pousada coberta por trem móvel; faíscas não escurecem no túnel; seam mais difícil com rampas; lookup por string por instância; AutotestStep sem mods; UV_BBOX_XY NaN em bbox plana (modo não usado por objetos planos).
+
+#### Tarefa 7.1b — qualidade visual (triagem dos minors adiados) (executada)
+
+*Executada: todos os itens abaixo foram feitos (exceto os 'Parqueados', que ficaram de fora de propósito). Commits: `git log --grep "Tarefa 7.1b"`. Texto integral da lista de correções entregue ao implementador.*
+
+1. Corte abrupto do cenário em s+150: adicionar névoa (fog) por distância no fragment shader (cor = céu, início ~90 m, fim ~145 m), coerente com o clear color; partículas/GUI não afetados. Garanta que túnel escuro não fique "esbranquiçado" de forma estranha (fog pode ser atenuada pela mesma visibilidade de céu, ou usar cor escura dentro do túnel — sua decisão, olhe as screenshots).
+2. UV do terreno em curva: v = s/tile para todo x comprime/estica no lado interno/externo da curva (critério "textura esticada"). Escalar o comprimento de arco por (R − x·sinal)/R ao gerar v (ou equivalente) para chão, cascalho, dormentes/trilhos se aplicável; teste unitário no BuildStrip para curva (densidade de textura ~constante ao longo de x).
+3. Anel claro de ~1 m nos portais do túnel (SkyVisibility não cobre a profundidade do portal): estender o volume no shader por TUNNEL_PORTAL_DEPTH nas duas pontas, ou escurecer as faces internas do portal. Unificar MAX_SHADER_TUNNELS com o valor do shader (comentário de sincronia ou um único define gerado).
+4. Respiros do teto do trem atravessam o pé ~0.2 m: escalar/posicionar para que o teto caminhável coincida com o topo visual, ou remover os respiros da malha usada no teto (sem mexer no OBJ do Kenney — pode desenhar o carro sem o grupo de respiros se ele for um shape separado; senão aceitar e documentar).
+5. Partículas: clamp no chão (morrem ou quicam em y≤0.02 no espaço de pista — usar a altura do chão local, ou simplesmente matar ao cruzar y do ponto de emissão − 1 m) e, com pool cheio, sobrescrever a de menor vida restante em vez de descartar a nova. Testes.
+6. GUI: janela "Controles" não pode cortar em janelas < 600 px de altura (escala mínima/scroll); FPS do debug só quando H estiver ligado ou nunca no MENU.
+7. Assets sem uso: remover data/bunny.obj, data/sphere.obj, data/plane.obj e red_brick SE não forem carregados (o túnel usa red_brick? verificar — se usa, manter) e atualizar data/FONTES.txt; garantir que nada os referencia.
+8. Varredura de Z-fighting e texturas esticadas: E2E `visual_audit` com câmera livre posicionada (rasante sobre trilhos/chão, perto de portal, prédios em curva, rampa) e screenshots; corrija o que encontrar.
+9. Desempenho: compilar Release (cmake -DCMAKE_BUILD_TYPE=Release num diretório build-release separado) e medir fps em cenário pesado (túnel + partículas + porco); reportar; se < 60 fps em Release, otimizar (ordem de desenho, culling por distância).
+10. Remover TODO/printf de debug remanescentes.
+11. Testes: limitar com contador+assert os while sem limite restantes em tests/logic_tests.cpp (~1936, ~2174, ~2219 Test_ObstaclesSameLaneNeverOverlap, ~2245).
+
 ### Tarefa 7.2: Builds e documentação de apoio
 
 - [ ] Build limpo em Windows (MinGW e MSVC se possível), Linux (CMake) e macOS (Makefile).

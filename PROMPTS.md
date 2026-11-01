@@ -70,3 +70,36 @@ correspondente no plano (citada no corpo do commit como `Tarefa X.Y`).
 
 **Primeiro ajuste (este commit):** plano ganhou a Tarefa 0.3 (harness E2E com `--autotest`) e a
 regra de obtenção de assets CC0/procedurais na Tarefa 3.2.
+
+**Tarefa → commits (Tarefa 7.2, rastreabilidade):** todos os commits `IA: ...` das tarefas
+executadas até aqui, com o hash curto. Cada commit cita a tarefa no corpo da mensagem
+(`git log --grep "Tarefa 4.4"` lista os de uma tarefa). O prompt de cada um é o prompt desta
+entrada mais o texto da tarefa em `docs/PLANO-IMPLEMENTACAO.md`; as Tarefas 7.1a e 7.1b têm a
+lista de correções entregue ao implementador copiada na íntegra no próprio plano (subseções da
+Tarefa 7.1).
+
+| Tarefa | Commits (hash curto) |
+|---|---|
+| Plano (antes das tarefas) | `3c39030`, `9b4128c` |
+| 0.1 | `f2df87b` |
+| 0.2 | `9cb312b` |
+| 0.3 | `e84b581` |
+| 1.1 | `1b2bddd` |
+| 1.2 | `44dff4b` |
+| 1.3 | `16cf775`, `8e56b07` |
+| 2.1 | `8ccfca1` |
+| 2.2 | `683b2de` |
+| 3.1 | `5fe2ec3` |
+| 3.2 | `95d62da`, `57ed74b` |
+| 4.1 | `d39be0e` |
+| 4.2 | `5d181c7` |
+| 4.3 | `cf248b6` |
+| 4.4 | `009e36f`, `9eebfb6`, `1596faa` |
+| 5.1 | `a20ab65`, `1e6efda` |
+| 5.2 | `91d5de2` |
+| 5.3 | `dc626a0`, `24763d1` |
+| 6.1 | `7f491a3` |
+| 6.2 | `96e110c`, `f4b6158` |
+| 7.1a | `b62aeb7`, `041df36`, `8c5d68c`, `99504ef`, `7548316`, `a917cea`, `ad46e51`, `f97c1b6`, `c03ed66`, `e139af5` |
+| 7.1b | `7321849`, `046ce1e`, `cc37c90`, `c4da3e6`, `8d6cc85`, `7576b9f`, `af91574`, `47fdc05`, `3e6c56b`, `1cb2e11`, `dbbba11`, `31e4706`, `582bfc4` |
+| 7.2 | `c3d7efb` e os demais commits `Tarefa 7.2` (`git log --grep "Tarefa 7.2"`) |
