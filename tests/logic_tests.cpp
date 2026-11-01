@@ -10,6 +10,7 @@
 #include <glm/vec4.hpp>
 
 #include "camera.h"
+#include "collisions.h"
 #include "game.h"
 #include "game_config.h"
 #include "scenery.h"
@@ -449,6 +450,136 @@ void Test_BuildingsCoverVisibleRange()
                 matched++;
             }
     assert(matched > 10);
+}
+
+// ------------------------------------------------------- Colisões (2.1)
+
+static AABB Box(float x0, float y0, float z0, float x1, float y1, float z1)
+{
+    AABB b;
+    b.min = glm::vec3(x0, y0, z0);
+    b.max = glm::vec3(x1, y1, z1);
+    return b;
+}
+
+void Test_MakeAABB()
+{
+    AABB b = MakeAABB(glm::vec3(1, 2, 3), glm::vec3(0.5f, 1.0f, 2.0f));
+    assert(nearf(b.min.x, 0.5f) && nearf(b.min.y, 1.0f) && nearf(b.min.z, 1.0f));
+    assert(nearf(b.max.x, 1.5f) && nearf(b.max.y, 3.0f) && nearf(b.max.z, 5.0f));
+    // Semi-extensões negativas são tomadas em módulo (min <= max sempre).
+    AABB n = MakeAABB(glm::vec3(0, 0, 0), glm::vec3(-1, -1, -1));
+    assert(n.min.x <= n.max.x && n.min.y <= n.max.y && n.min.z <= n.max.z);
+}
+
+void Test_AABBTouchingIsHit() // faces encostadas contam como colisão
+{
+    AABB a = Box(0, 0, 0, 1, 1, 1);
+    AABB b = Box(1, 0, 0, 2, 1, 1);
+    assert(AABBIntersectsAABB(a, b));
+    assert(AABBIntersectsAABB(b, a));
+}
+
+void Test_AABBSeparatedInS()
+{
+    AABB a = Box(0, 0, 0, 1, 1, 1);
+    AABB b = Box(0, 0, 1.01f, 1, 1, 2);
+    assert(!AABBIntersectsAABB(a, b));
+    assert(!AABBIntersectsAABB(b, a));
+}
+
+void Test_AABBOverlap()
+{
+    AABB a = Box(0, 0, 0, 2, 2, 2);
+    assert(AABBIntersectsAABB(a, Box(1, 1, 1, 3, 3, 3)));
+    assert(AABBIntersectsAABB(a, Box(0.5f, 0.5f, 0.5f, 1, 1, 1))); // contido
+    assert(!AABBIntersectsAABB(a, Box(0, 2.5f, 0, 2, 3, 2)));      // acima
+    assert(!AABBIntersectsAABB(a, Box(2.5f, 0, 0, 3, 2, 2)));      // ao lado
+}
+
+void Test_SphereCornerMiss() // perto do canto, mas fora
+{
+    AABB box = Box(0, 0, 0, 1, 1, 1);
+    // Distância ao canto (1,1,1) = sqrt(3)*0.5 ~ 0.866 > r = 0.8.
+    assert(!SphereIntersectsAABB(glm::vec3(1.5f, 1.5f, 1.5f), 0.8f, box));
+    assert(SphereIntersectsAABB(glm::vec3(1.5f, 1.5f, 1.5f), 0.9f, box));
+    // Encostando exatamente na face: conta como colisão (<=).
+    assert(SphereIntersectsAABB(glm::vec3(1.5f, 0.5f, 0.5f), 0.5f, box));
+}
+
+void Test_SphereInside()
+{
+    AABB box = Box(0, 0, 0, 4, 4, 4);
+    assert(SphereIntersectsAABB(glm::vec3(2, 2, 2), 0.5f, box));
+    assert(SphereIntersectsAABB(glm::vec3(2, 2, 2), 100.0f, box)); // caixa dentro da esfera
+}
+
+void Test_SphereIntersectsSphere()
+{
+    assert(SphereIntersectsSphere(glm::vec3(0, 0, 0), 1.0f, glm::vec3(1.5f, 0, 0), 1.0f));
+    assert(SphereIntersectsSphere(glm::vec3(0, 0, 0), 1.0f, glm::vec3(2, 0, 0), 1.0f)); // tangentes
+    assert(!SphereIntersectsSphere(glm::vec3(0, 0, 0), 1.0f, glm::vec3(2.1f, 0, 0), 1.0f));
+    assert(!SphereIntersectsSphere(glm::vec3(0, 0, 0), 0.5f, glm::vec3(0, 3, 4), 1.0f));
+}
+
+void Test_RampMidHeight() // sobe de 0 a 2 em s = 0..4
+{
+    AABB ramp = Box(-1, 0, 0, 1, 2, 4);
+    float h = -1.0f;
+    assert(RampHeightAt(ramp, 0.0f, 2.0f, &h));
+    assert(nearf(h, 1.0f));
+}
+
+void Test_RampEnds()
+{
+    AABB ramp = Box(-1, 0, 0, 1, 2, 4);
+    float h = -1.0f;
+    assert(RampHeightAt(ramp, 0.0f, 0.0f, &h));
+    assert(nearf(h, 0.0f)); // início: min.y
+    assert(RampHeightAt(ramp, 0.0f, 4.0f, &h));
+    assert(nearf(h, 2.0f)); // fim: max.y
+}
+
+void Test_RampOutsideLane()
+{
+    AABB ramp = Box(-1, 0, 0, 1, 2, 4);
+    float h = 123.0f;
+    assert(!RampHeightAt(ramp, 1.5f, 2.0f, &h));
+    assert(!RampHeightAt(ramp, -1.5f, 2.0f, &h));
+    assert(!RampHeightAt(ramp, 0.0f, 4.5f, &h));  // além do fim
+    assert(!RampHeightAt(ramp, 0.0f, -0.5f, &h)); // antes do começo
+}
+
+void Test_RampZeroLength() // sem divisão por zero
+{
+    AABB ramp = Box(-1, 0, 3, 1, 2, 3);
+    float h = -1.0f;
+    assert(RampHeightAt(ramp, 0.0f, 3.0f, &h));
+    assert(std::isfinite(h));
+}
+
+void Test_LandsOnTopFromAbove()
+{
+    AABB train = Box(-1, 0, 10, 1, 3, 20);
+    AABB prev  = Box(-0.4f, 3.2f, 14, 0.4f, 5.0f, 14.8f); // base acima do teto
+    AABB now   = Box(-0.4f, 2.95f, 14.5f, 0.4f, 4.75f, 15.3f); // base atravessou o teto
+    assert(LandsOnTop(prev, now, train, 0.1f));
+}
+
+void Test_LandsOnTopFrontalHitIsFalse()
+{
+    AABB train = Box(-1, 0, 10, 1, 3, 20);
+    AABB prev  = Box(-0.4f, 0, 9, 0.4f, 1.8f, 9.8f);      // no chão, antes do trem
+    AABB now   = Box(-0.4f, 0, 9.5f, 0.4f, 1.8f, 10.3f);  // encostou na frente
+    assert(!LandsOnTop(prev, now, train, 0.1f));
+}
+
+void Test_LandsOnTopLaterallyApart()
+{
+    AABB train = Box(-1, 0, 10, 1, 3, 20);
+    AABB prev  = Box(2.6f, 3.2f, 14, 3.4f, 5.0f, 14.8f);
+    AABB now   = Box(2.6f, 2.95f, 14.5f, 3.4f, 4.75f, 15.3f);
+    assert(!LandsOnTop(prev, now, train, 0.1f));
 }
 
 int main()

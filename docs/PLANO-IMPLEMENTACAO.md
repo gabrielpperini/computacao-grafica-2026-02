@@ -406,13 +406,13 @@ bool  RampHeightAt(const AABB& ramp, float x, float s, float* out_height);
 bool  LandsOnTop(const AABB& player_prev, const AABB& player_now, const AABB& obstacle, float tolerance);
 ```
 
-- [ ] **Passo 1: testes** — `Test_AABBTouchingIsHit` (faces encostadas contam como colisão),
+- [x] **Passo 1: testes** — `Test_AABBTouchingIsHit` (faces encostadas contam como colisão),
   `Test_AABBSeparatedInS`, `Test_SphereCornerMiss` (esfera perto do canto mas fora → `false`),
   `Test_SphereInside`, `Test_RampMidHeight` (rampa `min.y=0,max.y=2`, `s` no meio → `1.0`),
   `Test_RampOutsideLane` (x fora → `false`), `Test_LandsOnTopFromAbove`,
   `Test_LandsOnTopFrontalHitIsFalse`.
-- [ ] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
-- [ ] **Passo 5:** commit `IA: testes de intersecção em collisions.cpp`.
+- [x] **Passo 2:** falha; **Passo 3:** implementar; **Passo 4:** `OK`.
+- [x] **Passo 5:** commit `IA: testes de intersecção em collisions.cpp`.
 
 ### Tarefa 2.2: Obstáculos, moedas, pontuação e game over
 

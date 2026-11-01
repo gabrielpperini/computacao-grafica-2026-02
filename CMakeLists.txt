@@ -9,6 +9,7 @@ set(SOURCES
   src/main.cpp
   src/autotest.cpp
   src/correcao.cpp
+  src/collisions.cpp
   src/track.cpp
   src/game.cpp
   src/camera.cpp
@@ -66,7 +67,7 @@ target_include_directories(${EXECUTABLE_NAME} BEFORE PRIVATE ${PROJECT_SOURCE_DI
 
 # Testes unitários da lógica do jogo (sem OpenGL/GLFW).
 # Compile com: cmake --build build --target logic_tests
-add_executable(logic_tests tests/logic_tests.cpp src/track.cpp src/game.cpp
+add_executable(logic_tests tests/logic_tests.cpp src/collisions.cpp src/track.cpp src/game.cpp
   src/camera.cpp src/scenery.cpp)
 target_include_directories(logic_tests BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/include)
 

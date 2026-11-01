@@ -131,7 +131,7 @@ implementado** — o base é só um visualizador.
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado |
 | Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`); falta a câmera livre |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ prédios: o VAO de `the_cube` desenhado a cada 12 m nos dois lados, cada um com sua `model` |
-| Testes de intersecção com propósito, em `collisions.cpp` | ❌ inexistente |
+| Testes de intersecção com propósito, em `collisions.cpp` | ⚠️ API pronta, integração na 2.2 |
 | Iluminação **não-trivial** em todos os objetos | ⚠️ só Lambert difuso com luz fixa; precisa de Phong/Blinn-Phong, especular, etc. |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 3 imagens (`red_brick`, `rocky_terrain_02`, `metal_plate`); revisar quando entrarem os modelos finais |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ❌ |
