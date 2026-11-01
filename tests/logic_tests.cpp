@@ -2543,6 +2543,126 @@ void Test_CameraFollowsGroundHeight()
     assert(near(a.Pose().view_vector, b.Pose().view_vector, 1e-3f));
 }
 
+// ---------------------------------------------------------------------------
+// Câmera livre (Tarefa 5.1)
+// ---------------------------------------------------------------------------
+
+static float Len4(const vec4& v)
+{
+    return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w);
+}
+
+static CameraPose SomePose()
+{
+    CameraPose p;
+    p.position = vec4(3.0f, 4.0f, 5.0f, 1.0f);
+    p.view_vector = vec4(1.0f, -0.5f, -2.0f, 0.0f);
+    p.up = vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    return p;
+}
+
+// StartAt reproduz a pose de origem (posição e direção do olhar), e Look com
+// delta zero não muda nada.
+void Test_FreeCamStartAtRoundTrip()
+{
+    CameraPose from = SomePose();
+    FreeCamera cam;
+    cam.StartAt(from);
+    CameraPose p = cam.Pose();
+    assert(near(p.position, from.position));
+    vec4 expected = from.view_vector / Len4(from.view_vector);
+    assert(nearf(Len4(p.view_vector), 1.0f, 1e-3f));
+    assert(near(p.view_vector, expected, 1e-3f));
+    assert(near(p.up, vec4(0.0f, 1.0f, 0.0f, 0.0f)));
+    assert(nearf(p.position.w, 1.0f) && nearf(p.view_vector.w, 0.0f));
+
+    cam.Look(0.0f, 0.0f);
+    CameraPose q = cam.Pose();
+    assert(near(q.position, p.position));
+    assert(near(q.view_vector, p.view_vector, 1e-4f));
+
+    // Olhar para o -Z do mundo (heading 0) e reto para cima também funcionam.
+    CameraPose z = SomePose();
+    z.view_vector = vec4(0.0f, 0.0f, -1.0f, 0.0f);
+    cam.StartAt(z);
+    assert(near(cam.Pose().view_vector, z.view_vector, 1e-4f));
+    z.view_vector = vec4(0.0f, 5.0f, 0.0f, 0.0f); // vertical: não pode gerar NaN
+    cam.StartAt(z);
+    CameraPose v = cam.Pose();
+    assert(v.view_vector.y > 0.99f && v.view_vector.y == v.view_vector.y);
+}
+
+// Pitch limitado a +-89 graus, por mais que o mouse corra.
+void Test_FreeCamPitchClamp()
+{
+    FreeCamera cam;
+    cam.StartAt(SomePose());
+    const float lim = std::sin(89.0f * kPi / 180.0f);
+    cam.Look(0.0f, -100000.0f); // mouse para cima: olha para cima
+    assert(cam.Pose().view_vector.y <= lim + 1e-4f);
+    assert(cam.Pose().view_vector.y >= lim - 1e-3f);
+    cam.Look(0.0f, 100000.0f);  // mouse para baixo: olha para baixo
+    assert(cam.Pose().view_vector.y >= -lim - 1e-4f);
+    assert(cam.Pose().view_vector.y <= -lim + 1e-3f);
+    assert(nearf(Len4(cam.Pose().view_vector), 1.0f, 1e-3f));
+
+    // Yaw: mouse para a direita gira o olhar para a direita (right = (cos h, 0, -sin h)).
+    CameraPose z = SomePose();
+    z.view_vector = vec4(0.0f, 0.0f, -1.0f, 0.0f);
+    cam.StartAt(z);
+    cam.Look(100.0f, 0.0f);
+    assert(cam.Pose().view_vector.x > 0.1f);
+    cam.StartAt(z);
+    cam.Look(0.0f, -100.0f);
+    assert(cam.Pose().view_vector.y > 0.1f);
+}
+
+// Mover 1 s é a mesma distância com dt de 1/30 e de 1/120; 10 m/s; direções
+// locais (direita, cima, frente).
+void Test_FreeCamMoveDt()
+{
+    CameraPose z = SomePose();
+    z.view_vector = vec4(0.0f, 0.0f, -1.0f, 0.0f);
+    FreeCamera a, b;
+    a.StartAt(z);
+    b.StartAt(z);
+    for (int i = 0; i < 30; i++) a.Move(glm::vec3(0.0f, 0.0f, 1.0f), 1.0f / 30.0f);
+    for (int i = 0; i < 120; i++) b.Move(glm::vec3(0.0f, 0.0f, 1.0f), 1.0f / 120.0f);
+    assert(near(a.Pose().position, b.Pose().position, 1e-3f));
+    float d = Len4(a.Pose().position - z.position);
+    assert(nearf(d, FREE_CAMERA_SPEED, 1e-3f));
+    assert(nearf(a.Pose().position.z, z.position.z - FREE_CAMERA_SPEED, 1e-3f)); // para frente = -Z
+
+    // Direita = +X quando olha para -Z; cima = +Y; recuar = oposto.
+    FreeCamera c;
+    c.StartAt(z);
+    c.Move(glm::vec3(1.0f, 0.0f, 0.0f), 0.5f);
+    assert(nearf(c.Pose().position.x, z.position.x + 0.5f * FREE_CAMERA_SPEED, 1e-3f));
+    c.Move(glm::vec3(0.0f, 1.0f, 0.0f), 0.5f);
+    assert(nearf(c.Pose().position.y, z.position.y + 0.5f * FREE_CAMERA_SPEED, 1e-3f));
+    c.Move(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f);
+    assert(nearf(c.Pose().position.z, z.position.z + 0.5f * FREE_CAMERA_SPEED, 1e-3f));
+
+    // Diagonal não é mais rápida (direção normalizada), e dir nulo / dt nulo ficam parados.
+    FreeCamera e;
+    e.StartAt(z);
+    e.Move(glm::vec3(1.0f, 0.0f, 1.0f), 1.0f);
+    assert(nearf(Len4(e.Pose().position - z.position), FREE_CAMERA_SPEED, 1e-3f));
+    FreeCamera f;
+    f.StartAt(z);
+    f.Move(glm::vec3(0.0f), 1.0f);
+    f.Move(glm::vec3(1.0f, 1.0f, 1.0f), 0.0f);
+    assert(near(f.Pose().position, z.position));
+
+    // "Voa": com o olhar inclinado, avançar inclui a componente vertical.
+    FreeCamera g;
+    g.StartAt(z);
+    g.Look(0.0f, -200.0f); // sobe o olhar
+    float y0 = g.Pose().position.y;
+    g.Move(glm::vec3(0.0f, 0.0f, 1.0f), 1.0f);
+    assert(g.Pose().position.y > y0 + 1.0f);
+}
+
 int main()
 {
     Test_TrackStraightFrame();
@@ -2665,6 +2785,9 @@ int main()
     Test_RampsDontDisturbSpawn();
     Test_GroundHeightIgnoresJumpArc();
     Test_CameraFollowsGroundHeight();
+    Test_FreeCamStartAtRoundTrip();
+    Test_FreeCamPitchClamp();
+    Test_FreeCamMoveDt();
     printf("OK\n");
     return 0;
 }

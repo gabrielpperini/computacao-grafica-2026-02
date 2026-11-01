@@ -572,9 +572,9 @@ public:
 - `C` alterna `PLAYING ↔ FREE_CAMERA` (jogo congelado: `Game::Update` não avança). `WASD` move,
   `Espaço`/`Shift` sobe/desce, mouse com botão esquerdo pressionado gira. Ao voltar, a 3ª pessoa
   faz `Snap`.
-- [ ] **Passo 1:** testes `Test_FreeCamPitchClamp`, `Test_FreeCamMoveDt` (mesma distância com
+- [x] **Passo 1:** testes `Test_FreeCamPitchClamp`, `Test_FreeCamMoveDt` (mesma distância com
   dt 1/30 e 1/120). Implementar; `OK`.
-- [ ] **Passo 2:** rodar: dá para dar a volta no cenário pausado; ao sair o jogo continua de onde
+- [x] **Passo 2:** rodar: dá para dar a volta no cenário pausado; ao sair o jogo continua de onde
   parou. Commit `IA: câmera livre com jogo pausado`.
 
 ### Tarefa 5.2: Power-ups clássicos

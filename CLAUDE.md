@@ -127,9 +127,9 @@ implementado** — o base é só um visualizador.
 |---|---|
 | Matrizes Model/View/Projection próprias | ✅ `include/matrices.h` |
 | Malhas poligonais complexas | ✅ Tarefa 3.2: personagem articulado (Kenney Blocky Characters, 6 partes), trem de metrô (3 carros do Kenney Train Kit, ~2–2.5k triângulos cada), 6 prédios (Kenney City Kit, 2.2–3.6k), poste curvo, e malhas procedurais (`tools/gen_models.py`): barreiras, placa, moeda com aro, ímã, tênis, ficha x2, cofrinho, porco voador (até ~3.9k), túnel (módulo de abóbada e portal com moldura) e rampa (estrutura metálica + tábuas) |
-| Interação por mouse **e** teclado | ⚠️ só teclado (controles do jogador em `HandleKey()`); a órbita de mouse do laboratório foi removida na Tarefa 1.3 — o mouse volta com a câmera livre |
+| Interação por mouse **e** teclado | ✅ teclado: controles do jogador em `HandleKey()`; mouse: na câmera livre (Tarefa 5.1, `C`) o cursor é capturado e o movimento gira o olhar (`CursorPosCallback`). O mouse não faz nada fora da câmera livre (botões clicáveis virão com a GUI da Tarefa 6.2) |
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
-| Duas câmeras consideravelmente distintas | ⚠️ câmera look-at em 3ª pessoa (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC ✅ (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); falta a câmera livre |
+| Duas câmeras consideravelmente distintas | ✅ (1) 3ª pessoa look-at (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); (2) câmera livre "fly" (`FreeCamera`, Tarefa 5.1): `C` alterna `PLAYING` ↔ `FREE_CAMERA` com o jogo congelado, WASD/Espaço/Shift voam a 10 m/s, o mouse gira (pitch ±89°) |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
 | Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`) → a cabeça não atravessa a abóbada |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
@@ -431,14 +431,29 @@ os dois pontos e gira sem tranco nas junções —, segue 1/3 do deslocamento la
 AABB de um OBJ com a base em y = 0. `PushMatrix()`/`PopMatrix()` implementam uma pilha de
 matrizes de modelagem para hierarquias de objetos.
 
+**Câmera livre (Tarefa 5.1, `FreeCamera` em `camera.h/.cpp`):** `C` (em `HandleKey()`) alterna
+`PLAYING` ↔ `FREE_CAMERA`. Ao entrar, `StartAt(g_Camera.Pose())` e o cursor é capturado
+(`GLFW_CURSOR_DISABLED`, movimento bruto se houver; o 1º evento após a captura é ignorado); ao sair,
+`g_Camera.Snap(...)` restaura a 3ª pessoa e o jogo continua de onde parou (`Game::Update` só avança
+em `PLAYING`; moedas, trens e passada também ficam parados). O mouse gira sem precisar de botão
+(`Look(dx, dy)`, 0.003 rad/px, yaw = convenção de heading da pista, pitch ±89°); `Move((direita,
+cima, frente), dt)` a 10 m/s, normalizado, com "frente" incluindo o pitch e "cima" = Y do mundo.
+As teclas seguradas ficam em `g_KeyHeld[]` (atualizada por `HandleKey()` em PRESS/RELEASE, vale
+também no E2E) e o movimento é aplicado todo quadro com `dt`. Limitação aceita: o cenário só é
+gerado ao redor do jogador (≈ −20…+150 m), então voar para longe mostra o vazio; o escurecimento do
+túnel usa a posição da câmera livre (`PointInsideTunnel`). O E2E injeta o mouse pelos campos
+`mouse_dx/mouse_dy` de `AutotestStep` (cenário `free_camera`).
+
 ### Estado e entrada
 
 Todo o estado da aplicação são variáveis globais `g_*` mutadas pelos callbacks do GLFW (o estado
 do jogo fica em `g_Game`). Controles atuais (só ao pressionar, sem repetição): `←`/`→` ou
 `A`/`D` trocam de faixa; `↑`, `W` ou `Espaço` pulam; `↓` ou `S` rolam; no GAME OVER, `Enter`
 (ou `Espaço`) reinicia a corrida; `H` liga e desliga o texto informativo (velocidade, faixa,
-FPS — o placar de pontos/moedas/distância fica sempre visível); `R` recarrega shaders; `ESC` fecha.
-Não há controle por mouse no momento. Todo atalho precisa acabar documentado no manual dentro
+FPS — o placar de pontos/moedas/distância fica sempre visível); `C` liga/desliga a câmera livre
+(jogo pausado; com ela ativa: mouse olha, `W`/`A`/`S`/`D` movem, `Espaço` sobe, `Shift` desce,
+`C` volta ao jogo); `R` recarrega shaders; `ESC` fecha. Fora da câmera livre o mouse não faz
+nada. Todo atalho precisa acabar documentado no manual dentro
 do `README.md`.
 
 `Correcao_KeyCallback()` (`src/correcao.cpp`) deve continuar sendo o primeiro comando de

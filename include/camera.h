@@ -1,6 +1,7 @@
 #ifndef _CAMERA_H
 #define _CAMERA_H
 
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
 #include "track.h"
@@ -73,6 +74,45 @@ private:
     float back_;        // recuo atual (suavizado)
     float ground_;      // altura do chão sob o jogador (suavizada)
     CameraPose pose_;
+};
+
+// Parâmetros da câmera livre (Tarefa 5.1).
+const float FREE_CAMERA_SPEED       = 10.0f;        // m/s
+const float FREE_CAMERA_SENSITIVITY = 0.003f;       // rad por pixel do mouse
+const float FREE_CAMERA_MAX_PITCH   = 1.55334303f;  // 89 graus, em rad
+
+// Câmera livre ("fly"), ativada com C com o jogo pausado: o jogador percorre
+// o cenário olhando para onde quiser. Guarda posição, yaw e pitch; o view
+// vector sai de yaw/pitch com a mesma convenção de heading da pista
+// (forward = (-sin yaw, 0, -cos yaw)), de modo que yaw = 0 olha para -Z do
+// mundo. O "up" é sempre o Y do mundo (sem rolagem), então o pitch é limitado
+// a +-89 graus para o view vector nunca ficar paralelo a ele (o que tornaria
+// a base da câmera, em Matrix_Camera_View, degenerada).
+class FreeCamera {
+public:
+    FreeCamera();
+
+    // Começa onde estava a câmera em 3ª pessoa: mesma posição e mesma direção
+    // do olhar (yaw/pitch derivados do view vector da pose).
+    void StartAt(const CameraPose& from);
+
+    // Gira o olhar. dx > 0 (mouse para a direita) olha para a direita;
+    // dy > 0 (mouse para baixo) olha para baixo. Em pixels, sem dt (o delta
+    // do mouse já é o deslocamento do quadro).
+    void Look(float dx_pixels, float dy_pixels);
+
+    // Move local_dir = (direita, cima, frente) no referencial da câmera, a
+    // FREE_CAMERA_SPEED m/s. "Frente" inclui o pitch (a câmera voa para onde
+    // olha) e "cima" é o Y do mundo. A direção é normalizada (a diagonal não
+    // é mais rápida); vetor nulo ou dt <= 0 não move.
+    void Move(glm::vec3 local_dir, float dt);
+
+    CameraPose Pose() const;
+
+private:
+    glm::vec4 position_;
+    float yaw_;    // rad, em torno de Y
+    float pitch_;  // rad, positivo = olha para cima
 };
 
 #endif // _CAMERA_H

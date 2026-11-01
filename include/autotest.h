@@ -14,12 +14,17 @@
 // Uma ação do script: no instante simulado 'time' (s) injeta a tecla 'key' com
 // 'action' (GLFW_PRESS / GLFW_RELEASE) e/ou, se 'screenshot' != NULL, salva o
 // quadro atual em e2e/<cenario>_<screenshot>.png. Use key = 0 para só tirar foto.
+// Opcionalmente (campos finais, zero quando omitidos) injeta um deslocamento do
+// mouse de (mouse_dx, mouse_dy) pixels, como o callback do cursor faria (só tem
+// efeito na câmera livre).
 struct AutotestStep
 {
     float       time;
     int         key;
     int         action;
     const char* screenshot;
+    float       mouse_dx;
+    float       mouse_dy;
 };
 
 struct AutotestScenario

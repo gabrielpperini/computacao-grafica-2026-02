@@ -75,3 +75,78 @@ void ThirdPersonCamera::ComputePose(const Track& track, float player_s)
     pose_.view_vector = look_at - position;
     pose_.up = kUp;
 }
+
+// ---------------------------------------------------------------------------
+// Câmera livre
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Direção do olhar para um yaw/pitch (convenção da pista: yaw = 0 -> -Z).
+glm::vec4 LookDirection(float yaw, float pitch)
+{
+    const float c = std::cos(pitch);
+    return glm::vec4(-std::sin(yaw) * c, std::sin(pitch), -std::cos(yaw) * c, 0.0f);
+}
+
+} // namespace
+
+FreeCamera::FreeCamera()
+    : position_(0.0f, CAMERA_HEIGHT, CAMERA_BACK, 1.0f), yaw_(0.0f), pitch_(0.0f)
+{
+}
+
+void FreeCamera::StartAt(const CameraPose& from)
+{
+    position_ = glm::vec4(from.position.x, from.position.y, from.position.z, 1.0f);
+
+    const glm::vec3 v(from.view_vector.x, from.view_vector.y, from.view_vector.z);
+    const float length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (length < 1e-6f) {
+        yaw_ = 0.0f;
+        pitch_ = 0.0f;
+        return;
+    }
+    float sin_pitch = v.y / length;
+    sin_pitch = std::fmax(-1.0f, std::fmin(1.0f, sin_pitch));
+    pitch_ = std::asin(sin_pitch);
+    pitch_ = std::fmax(-FREE_CAMERA_MAX_PITCH, std::fmin(FREE_CAMERA_MAX_PITCH, pitch_));
+    // Olhando (quase) reto para cima/baixo o yaw é indefinido: mantém o anterior.
+    if (v.x * v.x + v.z * v.z > 1e-12f)
+        yaw_ = std::atan2(-v.x, -v.z);  // inverso de (-sin yaw, -cos yaw)
+}
+
+void FreeCamera::Look(float dx_pixels, float dy_pixels)
+{
+    yaw_ -= dx_pixels * FREE_CAMERA_SENSITIVITY;  // mouse à direita: yaw diminui (right = (cos, 0, -sin))
+    pitch_ -= dy_pixels * FREE_CAMERA_SENSITIVITY;
+    pitch_ = std::fmax(-FREE_CAMERA_MAX_PITCH, std::fmin(FREE_CAMERA_MAX_PITCH, pitch_));
+    // Mantém o yaw em (-pi, pi] para não perder precisão em sessões longas.
+    const float two_pi = 6.28318531f;
+    yaw_ = std::fmod(yaw_, two_pi);
+    if (yaw_ > 3.14159265f) yaw_ -= two_pi;
+    if (yaw_ < -3.14159265f) yaw_ += two_pi;
+}
+
+void FreeCamera::Move(glm::vec3 local_dir, float dt)
+{
+    const float length = std::sqrt(local_dir.x * local_dir.x + local_dir.y * local_dir.y +
+                                   local_dir.z * local_dir.z);
+    if (length < 1e-6f || dt <= 0.0f)
+        return;
+    local_dir /= length;
+
+    const glm::vec4 forward = LookDirection(yaw_, pitch_);
+    const glm::vec4 right(std::cos(yaw_), 0.0f, -std::sin(yaw_), 0.0f);
+    const glm::vec4 delta = right * local_dir.x + kUp * local_dir.y + forward * local_dir.z;
+    position_ += delta * (FREE_CAMERA_SPEED * dt);
+}
+
+CameraPose FreeCamera::Pose() const
+{
+    CameraPose pose;
+    pose.position = position_;
+    pose.view_vector = LookDirection(yaw_, pitch_);
+    pose.up = kUp;
+    return pose;
+}

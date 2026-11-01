@@ -43,11 +43,16 @@
 
 // Definida em main.cpp: o mesmo tratamento de teclas que o KeyCallback usa.
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
+// Deslocamento do mouse em pixels (câmera livre), também definido em main.cpp.
+void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
 
 // Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
 extern Game g_Game;
 // Câmera em 3ª pessoa e rampa de escurecimento do túnel (main.cpp).
 extern ThirdPersonCamera g_Camera;
+// Câmera livre e teclas seguradas (main.cpp).
+extern FreeCamera g_FreeCamera;
+extern bool g_KeyHeld[];
 extern float g_TunnelDimming;
 
 // ---------------------------------------------------------------------------
@@ -837,6 +842,120 @@ static bool Check_ramp_side_block(std::string* why)
     return true;
 }
 
+// free_camera: corre 2 s, C (câmera livre, jogo congelado), voa para a frente
+// 1 s segurando W, gira o mouse (olha para trás e para baixo, vendo o jogador
+// de frente), sobe 0,5 s com Espaço, gira para o lado, C (volta) e corre mais
+// 1 s. O jogo não pode andar enquanto a câmera livre está ativa.
+static bool  g_FcSeen         = false;  // esteve em FREE_CAMERA
+static float g_FcStartS       = 0.0f;   // player.s ao entrar
+static float g_FcStartElapsed = 0.0f;
+static int   g_FcStartCoins   = 0;
+static float g_FcMaxDriftS    = 0.0f;   // maior |player.s - s de entrada| em FREE_CAMERA
+static bool  g_FcElapsedMoved = false;  // o relógio do jogo andou em FREE_CAMERA
+static glm::vec4 g_FcStartPos;          // posição da câmera livre no 1º quadro
+static glm::vec4 g_FcPosAfterW;         // posição no 1º quadro depois de soltar W
+static bool  g_FcWasHeld      = false;
+static bool  g_FcAfterWSaved  = false;
+static int   g_FcWFrames      = 0;      // quadros em FREE_CAMERA com W segurado
+static bool  g_FcResumed      = false;  // voltou a PLAYING depois da câmera livre
+static float g_FcResumeDist   = 1e9f;   // distância câmera 3ª pessoa-jogador ao voltar
+
+static void SetupFreeCamera()
+{
+    SetupNoSpawn();
+    // Um trem parado na faixa vizinha, para dar o que olhar.
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 1, 40.0f));
+}
+
+static void Hook_FreeCamera()
+{
+    const Player& p = g_Game.player;
+    if (g_Game.mode == GameMode::FREE_CAMERA)
+    {
+        const CameraPose pose = g_FreeCamera.Pose();
+        if (!g_FcSeen)
+        {
+            g_FcSeen = true;
+            g_FcStartS = p.s;
+            g_FcStartElapsed = g_Game.elapsed;
+            g_FcStartCoins = g_Game.coins_collected;
+            g_FcStartPos = pose.position;
+        }
+        g_FcMaxDriftS = std::max(g_FcMaxDriftS, std::fabs(p.s - g_FcStartS));
+        if (std::fabs(g_Game.elapsed - g_FcStartElapsed) > 1e-6f)
+            g_FcElapsedMoved = true;
+        const bool w = g_KeyHeld[GLFW_KEY_W];
+        if (w)
+            ++g_FcWFrames;
+        if (g_FcWasHeld && !w && !g_FcAfterWSaved)
+        {
+            g_FcAfterWSaved = true;
+            g_FcPosAfterW = pose.position;
+        }
+        g_FcWasHeld = w;
+    }
+    else if (g_FcSeen && !g_FcResumed && g_Game.mode == GameMode::PLAYING)
+    {
+        g_FcResumed = true;
+        const glm::vec4 c = g_Camera.Pose().position;
+        const glm::vec4 pl = g_Game.track.FrameAt(p.s).position;
+        g_FcResumeDist = std::sqrt((c.x - pl.x) * (c.x - pl.x) + (c.y - pl.y) * (c.y - pl.y) +
+                                   (c.z - pl.z) * (c.z - pl.z));
+    }
+}
+
+static bool Check_free_camera(std::string* why)
+{
+    char buf[200];
+    if (!g_FcSeen)
+    {
+        *why = "nunca entrou em FREE_CAMERA";
+        return false;
+    }
+    if (g_FcMaxDriftS > 1e-6f || g_FcElapsedMoved || g_Game.coins_collected != g_FcStartCoins)
+    {
+        snprintf(buf, sizeof(buf), "o jogo andou com a camera livre ativa (deriva de s = %.4f m)",
+                 g_FcMaxDriftS);
+        *why = buf;
+        return false;
+    }
+    // W segurado por ~1 s: 10 m/s * tempo (dt fixo 1/60), na direção em que olha.
+    if (g_FcWFrames < 55 || g_FcWFrames > 65 || !g_FcAfterWSaved)
+    {
+        snprintf(buf, sizeof(buf), "W segurado por %d quadros (esperava ~60)", g_FcWFrames);
+        *why = buf;
+        return false;
+    }
+    const glm::vec4 d = g_FcPosAfterW - g_FcStartPos;
+    const float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    const float expected = FREE_CAMERA_SPEED * (float)g_FcWFrames / 60.0f;
+    if (std::fabs(dist - expected) > 0.05f)
+    {
+        snprintf(buf, sizeof(buf), "deslocou %.3f m com W; esperava %.3f m (10 m/s x tempo)", dist, expected);
+        *why = buf;
+        return false;
+    }
+    if (!g_FcResumed || g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "nao voltou a PLAYING no fim";
+        return false;
+    }
+    if (g_FcResumeDist > 10.0f)
+    {
+        snprintf(buf, sizeof(buf), "ao voltar a camera de 3a pessoa ficou a %.1f m do jogador (Snap?)", g_FcResumeDist);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.player.s < g_FcStartS + 10.0f)
+    {
+        snprintf(buf, sizeof(buf), "o jogo nao continuou depois de voltar (s = %.1f, entrada = %.1f)",
+                 g_Game.player.s, g_FcStartS);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -1124,6 +1243,32 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
+    // free_camera: câmera livre (C) com o jogo congelado; mouse e WASD/Espaço.
+    {
+        AutotestScenario s;
+        s.name        = "free_camera";
+        s.duration    = 6.2f;
+        s.final_check = Check_free_camera;
+        s.setup       = SetupFreeCamera;
+        s.frame_hook  = Hook_FreeCamera;
+        s.steps.push_back(AutotestStep{1.9f, 0, 0, "chase"});
+        s.steps.push_back(AutotestStep{2.0f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.1f, GLFW_KEY_W, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.1f, GLFW_KEY_W, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{3.2f, 0, 0, "ahead"});
+        // Sobe 0,8 s com Espaço (~8 m) e, com o mouse, gira 1047 px * 0,003 rad/px
+        // = 180 graus (passa a olhar para trás, para o jogador) e 260 px para baixo.
+        s.steps.push_back(AutotestStep{3.3f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{4.1f, GLFW_KEY_SPACE, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{4.2f, 0, 0, NULL, 1047.0f, 260.0f});
+        s.steps.push_back(AutotestStep{4.4f, 0, 0, "looking_back"});
+        s.steps.push_back(AutotestStep{4.5f, 0, 0, NULL, -420.0f, -60.0f});
+        s.steps.push_back(AutotestStep{4.7f, 0, 0, "above_side"});
+        s.steps.push_back(AutotestStep{4.8f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{5.8f, 0, 0, "resumed"});
+        scenarios.push_back(s);
+    }
+
     return scenarios;
 }
 
@@ -1295,6 +1440,8 @@ void Autotest_AfterFrame(GLFWwindow* window, float sim_time)
         const AutotestStep& step = g_Scenario.steps[g_NextStep++];
         if (step.key != 0)
             HandleKey(window, step.key, step.action, 0);
+        if (step.mouse_dx != 0.0f || step.mouse_dy != 0.0f)
+            FreeCameraMouseLook(step.mouse_dx, step.mouse_dy);
         if (step.screenshot != NULL && !SaveScreenshot(window, step.screenshot, &why))
         {
             Finish(window, false, why);

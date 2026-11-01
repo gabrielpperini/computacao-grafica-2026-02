@@ -170,6 +170,7 @@ void TextRendering_PrintMatrixVectorProductDivW(GLFWwindow* window, glm::mat4 M,
 void TextRendering_ShowModelViewProjection(GLFWwindow* window, glm::mat4 projection, glm::mat4 view, glm::mat4 model, glm::vec4 p_model);
 void TextRendering_ShowRunInfo(GLFWwindow* window);
 void TextRendering_ShowGameOver(GLFWwindow* window);
+void TextRendering_ShowFreeCamera(GLFWwindow* window);
 void TextRendering_ShowFramesPerSecond(GLFWwindow* window);
 
 // Funções callback para comunicação com o sistema operacional e interação do
@@ -180,6 +181,14 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mode
 // Tratamento das teclas, separado do KeyCallback para que o harness E2E (autotest.cpp)
 // possa injetar teclas sem passar pelo Correcao_KeyCallback.
 void HandleKey(GLFWwindow* window, int key, int action, int mods);
+// Callback do mouse (câmera livre) e o tratamento do deslocamento em pixels,
+// separado para que o harness E2E possa injetar movimento do mouse.
+void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
+// Direção de movimento (direita, cima, frente) da câmera livre a partir das
+// teclas seguradas, e teste "ponto dentro de um túnel" (escurecimento).
+glm::vec3 FreeCameraInputDirection();
+bool PointInsideTunnel(const Track& track, const glm::vec4& point, float near_s);
 
 // Definimos uma estrutura que armazenará dados necessários para renderizar
 // cada objeto da cena virtual.
@@ -216,6 +225,22 @@ Game g_Game(12345);
 
 // Câmera em 3ª pessoa que segue o jogador (veja include/camera.h).
 ThirdPersonCamera g_Camera;
+
+// Câmera livre (tecla C, com o jogo pausado; veja include/camera.h). Global e
+// não-static para o harness E2E conferir o deslocamento.
+FreeCamera g_FreeCamera;
+
+// Teclas atualmente seguradas (atualizada por HandleKey em PRESS/RELEASE, tanto
+// no jogo real quanto no E2E): a câmera livre se move a cada quadro, com dt,
+// enquanto WASD/Espaço/Shift estão segurados, em vez de depender da repetição
+// automática de teclas do sistema operacional.
+bool g_KeyHeld[GLFW_KEY_LAST + 1] = {false};
+
+// Último ponto do cursor visto (para calcular o deslocamento do mouse). Ao
+// capturar o cursor ele "salta" para o centro da janela; por isso o 1o evento
+// após a captura só recalibra o ponto, sem girar a câmera.
+double g_LastCursorX = 0.0, g_LastCursorY = 0.0;
+bool   g_CursorPointValid = false;
 
 // Malha dinâmica de faixas (GL_TRIANGLE_STRIP): VAO e VBOs criados uma única
 // vez com capacidade máxima (GL_DYNAMIC_DRAW) e reenviados a cada quadro com
@@ -446,6 +471,9 @@ int main(int argc, char* argv[])
     // pressionar alguma tecla do teclado.
     glfwSetKeyCallback(window, KeyCallback);
 
+    // Mouse: usado na câmera livre (olhar ao redor).
+    glfwSetCursorPosCallback(window, CursorPosCallback);
+
     // Indicamos que as chamadas OpenGL deverão renderizar nesta janela
     glfwMakeContextCurrent(window);
 
@@ -604,7 +632,10 @@ int main(int argc, char* argv[])
 
         // Atualizamos a simulação do jogo e a câmera que segue o jogador.
         g_Game.Update(dt);
-        g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
+        // Câmera livre: o jogo fica congelado (nada se anima, nem as moedas).
+        const bool free_camera = g_Game.mode == GameMode::FREE_CAMERA;
+        if (!free_camera)
+            g_CoinSpin = std::fmod(g_CoinSpin + COIN_SPIN_SPEED * dt, 6.2831853f);
         // Passada do personagem: a fase avança com a distância corrida (para
         // de mexer as pernas no GAME_OVER).
         if (g_Game.mode == GameMode::PLAYING)
@@ -615,12 +646,24 @@ int main(int argc, char* argv[])
         TrackFrame player_frame = g_Game.track.FrameAt(player.s);
         // Câmera: recua/abaixa (suavemente) enquanto o JOGADOR está no túnel,
         // e sobe junto com o chão sob ele (rampa/teto de trem, não o pulo).
-        g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
-                        g_Game.GroundHeight());
+        // Na câmera livre a 3ª pessoa fica parada e a câmera livre anda com
+        // as teclas seguradas (WASD, Espaço sobe, Shift desce), com dt.
+        bool camera_in_tunnel;
+        if (free_camera)
+        {
+            g_FreeCamera.Move(FreeCameraInputDirection(), dt);
+            camera_in_tunnel = PointInsideTunnel(g_Game.track, g_FreeCamera.Pose().position,
+                                                 player.s);
+        }
+        else
+        {
+            g_Camera.Update(g_Game.track, player.s, player.x, g_Game.track.IsTunnelAt(player.s), dt,
+                            g_Game.GroundHeight());
+            camera_in_tunnel = g_Game.track.IsTunnelAt(player.s - g_Camera.Back());
+        }
         // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
-        // CÂMERA (em s - recuo) está dentro do túnel.
-        g_TunnelDimming = StepTunnelDimming(
-            g_TunnelDimming, g_Game.track.IsTunnelAt(player.s - g_Camera.Back()), dt);
+        // CÂMERA (em s - recuo, ou a câmera livre) está dentro do túnel.
+        g_TunnelDimming = StepTunnelDimming(g_TunnelDimming, camera_in_tunnel, dt);
 
         // Aqui executamos as operações de renderização
 
@@ -640,10 +683,11 @@ int main(int argc, char* argv[])
         // os shaders de vértice e fragmentos).
         glUseProgram(g_GpuProgramID);
 
-        // Câmera look-at em 3ª pessoa: posição, view vector e up vêm de
-        // ThirdPersonCamera (camera.cpp). Veja slides 195-227 e 229-234 do
-        // documento Aula_08_Sistemas_de_Coordenadas.pdf.
-        CameraPose pose = g_Camera.Pose();
+        // Duas câmeras look-at distintas: 3ª pessoa seguindo o jogador
+        // (ThirdPersonCamera) ou a câmera livre (FreeCamera), ambas em
+        // camera.cpp; cada uma devolve posição, view vector e up. Veja slides
+        // 195-227 e 229-234 do documento Aula_08_Sistemas_de_Coordenadas.pdf.
+        CameraPose pose = free_camera ? g_FreeCamera.Pose() : g_Camera.Pose();
 
         // Computamos a matriz "View" utilizando os parâmetros da câmera para
         // definir o sistema de coordenadas da câmera.  Veja slides 2-14, 184-190 e 236-242 do documento Aula_08_Sistemas_de_Coordenadas.pdf.
@@ -798,6 +842,7 @@ int main(int argc, char* argv[])
         // de GAME OVER centralizada.
         TextRendering_ShowRunInfo(window);
         TextRendering_ShowGameOver(window);
+        TextRendering_ShowFreeCamera(window);
 
         // Imprimimos na tela informação sobre o número de quadros renderizados
         // por segundo (frames per second).
@@ -1958,6 +2003,46 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mod)
 // Tratamento das teclas (chamado pelo KeyCallback e pelo harness E2E).
 void HandleKey(GLFWwindow* window, int key, int action, int mods)
 {
+    // Teclas seguradas (a repetição automática não muda o estado).
+    if (key >= 0 && key <= GLFW_KEY_LAST)
+    {
+        if (action == GLFW_PRESS)
+            g_KeyHeld[key] = true;
+        else if (action == GLFW_RELEASE)
+            g_KeyHeld[key] = false;
+    }
+
+    // Tecla C: alterna entre a corrida (3ª pessoa) e a câmera livre, com o
+    // jogo congelado. Só vale em PLAYING / FREE_CAMERA.
+    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+    {
+        if (g_Game.mode == GameMode::PLAYING)
+        {
+            // A câmera livre começa exatamente onde a 3ª pessoa estava; o
+            // cursor é capturado para o mouse girar o olhar sem limite.
+            g_Game.mode = GameMode::FREE_CAMERA;
+            g_FreeCamera.StartAt(g_Camera.Pose());
+            g_CursorPointValid = false;
+            if (!Autotest_Active()) // no E2E o cursor do desktop fica quieto
+            {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                if (glfwRawMouseMotionSupported())
+                    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+            }
+        }
+        else if (g_Game.mode == GameMode::FREE_CAMERA)
+        {
+            // Volta à corrida de onde parou, com a 3ª pessoa de novo no lugar
+            // certo (sem suavizar desde a posição da câmera livre).
+            g_Game.mode = GameMode::PLAYING;
+            g_Camera.Snap(g_Game.track, g_Game.player.s, g_Game.player.x,
+                          g_Game.track.IsTunnelAt(g_Game.player.s), g_Game.GroundHeight());
+            if (!Autotest_Active())
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+        return;
+    }
+
     // Se o usuário pressionar a tecla ESC, fechamos a janela.
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);
@@ -2015,6 +2100,68 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
         fprintf(stdout,"Shaders recarregados!\n");
         fflush(stdout);
     }
+}
+
+// Deslocamento do mouse em pixels -> gira a câmera livre (só no modo câmera
+// livre; no resto do jogo o mouse não faz nada).
+void FreeCameraMouseLook(float dx_pixels, float dy_pixels)
+{
+    if (g_Game.mode == GameMode::FREE_CAMERA)
+        g_FreeCamera.Look(dx_pixels, dy_pixels);
+}
+
+// Chamada pela GLFW a cada movimento do cursor.
+void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    if (g_Game.mode != GameMode::FREE_CAMERA)
+    {
+        g_CursorPointValid = false; // recalibra na próxima captura
+        return;
+    }
+    if (g_CursorPointValid)
+        FreeCameraMouseLook((float)(xpos - g_LastCursorX), (float)(ypos - g_LastCursorY));
+    g_LastCursorX = xpos;
+    g_LastCursorY = ypos;
+    g_CursorPointValid = true;
+}
+
+// (direita, cima, frente) pedido pelas teclas seguradas: D/A, Espaço/Shift, W/S.
+glm::vec3 FreeCameraInputDirection()
+{
+    glm::vec3 dir(0.0f, 0.0f, 0.0f);
+    if (g_KeyHeld[GLFW_KEY_D]) dir.x += 1.0f;
+    if (g_KeyHeld[GLFW_KEY_A]) dir.x -= 1.0f;
+    if (g_KeyHeld[GLFW_KEY_SPACE]) dir.y += 1.0f;
+    if (g_KeyHeld[GLFW_KEY_LEFT_SHIFT] || g_KeyHeld[GLFW_KEY_RIGHT_SHIFT]) dir.y -= 1.0f;
+    if (g_KeyHeld[GLFW_KEY_W]) dir.z += 1.0f;
+    if (g_KeyHeld[GLFW_KEY_S]) dir.z -= 1.0f;
+    return dir;
+}
+
+// Aproximação de "o ponto está dentro de um túnel?" para a câmera livre: acha
+// o ponto da pista mais próximo (amostrando s a cada 2 m ao redor do jogador,
+// onde há cenário) e confere se ele é de túnel e se o ponto está dentro da
+// seção (largura interna e altura do portal).
+bool PointInsideTunnel(const Track& track, const glm::vec4& point, float near_s)
+{
+    float best_s = near_s;
+    float best_d2 = 1e30f;
+    for (float s = near_s - 60.0f; s <= near_s + SPAWN_AHEAD + 60.0f; s += 2.0f)
+    {
+        const TrackFrame f = track.FrameAt(s);
+        const float dx = point.x - f.position.x;
+        const float dz = point.z - f.position.z;
+        const float d2 = dx * dx + dz * dz;
+        if (d2 < best_d2)
+        {
+            best_d2 = d2;
+            best_s = s;
+        }
+    }
+    if (!track.IsTunnelAt(best_s))
+        return false;
+    return best_d2 < TUNNEL_INNER_HALF_WIDTH * TUNNEL_INNER_HALF_WIDTH &&
+           point.y > 0.0f && point.y < TUNNEL_PORTAL_HEIGHT;
 }
 
 // Definimos o callback para impressão de erros da GLFW no terminal
@@ -2124,6 +2271,7 @@ void TextRendering_ShowRunInfo(GLFWwindow* window)
     snprintf(buffer, sizeof(buffer), "Velocidade: %4.1f m/s   Faixa: %+d",
              g_Game.player.speed, g_Game.player.lane);
     TextRendering_PrintString(window, buffer, -1.0f+lineheight/10, -1.0f+2*lineheight/10, 1.0f);
+    TextRendering_PrintString(window, "C: camera livre", -1.0f+lineheight/10, -1.0f+3.2f*lineheight, 1.0f);
 }
 
 // Imprime 'str' centralizado horizontalmente na altura y (NDC), com sombra.
@@ -2146,6 +2294,18 @@ void TextRendering_ShowGameOver(GLFWwindow* window)
     snprintf(buffer, sizeof(buffer), "Pontos: %d   Moedas: %d", (int)g_Game.score, g_Game.coins_collected);
     PrintCentered(window, buffer, 0.15f - 2.5f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
     PrintCentered(window, "Enter (ou Espaco) para reiniciar", 0.15f - 5.0f * lineheight, 2.0f, 1.0f, 1.0f, 1.0f);
+}
+
+// Câmera livre: aviso no topo da tela (ASCII, a fonte não tem acentos).
+void TextRendering_ShowFreeCamera(GLFWwindow* window)
+{
+    if (g_Game.mode != GameMode::FREE_CAMERA)
+        return;
+
+    float lineheight = TextRendering_LineHeight(window);
+    PrintCentered(window, "CAMERA LIVRE", 1.0f - 2.0f * lineheight, 2.0f, 1.0f, 0.9f, 0.3f);
+    PrintCentered(window, "WASD / Espaco / Shift movem   mouse olha   C volta ao jogo",
+                  1.0f - 4.5f * lineheight, 1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 // Escrevemos na tela o número de quadros renderizados por segundo (frames per
