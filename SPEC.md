@@ -11,7 +11,7 @@
 ## Detalhes do que será implementado
 
 - **Título do trabalho**: `Rail Rush`
-- **Parágrafo curto descrevendo o que será implementado**: `Jogo 3D de corrida infinita que soma pontos pela distância e coleta de moedas, com obstáculos e power-ups. O personagem principal corre automaticamente e o jogador pode trocar entre 3 faixas, rolar e pular para evitar obstáculos e coletar moedas. Vai ter os power ups classicos do jogo e mais um extra de distribuiçao de moedas em curva Bézier cúbica. A velocidade aumenta com o tempo e é game over quando ele colide com um obstáculo.`
+- **Parágrafo curto descrevendo o que será implementado**: `Jogo 3D de corrida infinita que soma pontos pela distância e coleta de moedas, com obstáculos e power-ups. O personagem principal corre automaticamente e o jogador pode trocar entre 3 faixas, rolar e pular para evitar obstáculos e coletar moedas. Vai ter os power ups clássicos do jogo e mais um extra de distribuição de moedas em curva Bézier cúbica. A velocidade aumenta com o tempo e é game over quando ele colide com um obstáculo. Também serão implementados trechos curvos da pista, seguindo a referência visual escolhida.`
 
 ## Especificação visual
 
@@ -53,7 +53,7 @@
 `Setas laterais trocam a faixa do personagem (movimento lateral), seta pra cima faz pular e pra baixo rolar.`
 
 ### Diferentes tipos de câmeras
-`A camera principal é look-at em 3ª pessoa, mas há também uma câmera livre com o jogo pausado que é ativada quando clica C. A camera principal tem posicionamento olhando para frente do personagem principal. A camera livre tem o jogo pausado e pode olhar ao redor do cenario se deslocando pela cena.`
+`A camera principal é look-at em 3ª pessoa, mas há também uma câmera livre com o jogo pausado que é ativada quando clica C. A camera principal tem posicionamento olhando para frente do personagem principal. A camera livre tem o jogo pausado e pode olhar ao redor do cenario se deslocando pela cena. Ao entrar em um túnel, a câmera principal irá alterar suavemente sua posição e altura para se adaptar ao espaço interno, retornando à posição original após a saída do túnel.`
 
 ### Instâncias de objetos
 `São as moedas, trens, placas, barreiras, túneis, power-ups.`
@@ -62,21 +62,24 @@
 `Todos estarão em collisions.cpp, personagens e obstaculos que viram game over, personagem e moedas pra coleta, personagem e power-ups pra coleta, rampas para subirem em trens.`
 
 ### Modelos de Iluminação em todos os objetos
-`Blinn-Phong (difuso + especular + ambiente), com uma luz direcional fazendo o papel de sol. Interpolação de Phong (por fragmento) na maioria dos objetos e Gouraud (por vértice) em moedas, para mostrar os dois modelos.`
+`Blinn-Phong (difuso + especular + ambiente), utilizando uma luz direcional fazendo o papel de sol e fontes de luz adicionais no cenário, principalmente em túneis e ambientes mais escuros. Interpolação de Phong (por fragmento) na maioria dos objetos e Gouraud (por vértice) em moedas, para mostrar os dois modelos. A quantidade e posição das fontes de luz serão ajustadas durante o desenvolvimento para atingir um visual próximo da referência.`
 
 ### Mapeamento de texturas em todos os objetos
-`Chão com trilhos, paredes com texturas de pedra, prédios do ambiente com texturas de tijolos, moedas com textura de ouro, personagem, trens, placas, túneis e power-ups com suas próprias texturas custumizadas.`
+`Chão com trilhos, paredes com texturas de pedra, prédios do ambiente com texturas de tijolos, moedas com textura de ouro, personagem, trens, placas, túneis e power-ups com suas próprias texturas custumizadas. As texturas e materiais terão cores mais saturadas e estilizadas para manter o visual cartoon da referência.`
 
 ### Movimentação com curva Bézier cúbica
 `Vai ter um power-up em formato de cofrinho de porco que ao ser coletado, faz um porquinho com asas voar em uma curva Bézier cúbica no céu, e distribuindo moedas pelo caminho deixando um rastro de moedas`
 
 ### Animações baseadas no tempo ($\Delta t$)
-`velocidade do personagem principal, velocidade dos obstáculos, velocidade dos trens em movimento, velocidade da camera principal, troca de faixa, pulo, rolamento e o fator t da curva Bézier cúbica do power-up de distribuição de moedas.`
+`velocidade do personagem principal, velocidade dos obstáculos, velocidade dos trens em movimento, velocidade da camera principal, troca de faixa, pulo, rolamento, movimento das partículas e o fator t da curva Bézier cúbica do power-up de distribuição de moedas.`
+
+### Pista curva
+`Serão implementados trechos curvos da pista, seguindo a referência visual do jogo. A orientação do percurso será alterada gradualmente, com o personagem, câmera, obstáculos e moedas acompanhando a direção local da pista. Durante as curvas o jogador continuará podendo trocar entre as três faixas normalmente.`
 
 ### Funcionalidade extra obrigatória
 
-`Ao coletar moedas e power ups irá ter um sistema de particulas na colisão para demonstrar a coleta. Também terá um GUI com menu, pausa e gameover.`
+`Ao coletar moedas e power ups irá ter um sistema de particulas na colisão para demonstrar a coleta. As partículas serão geradas dinamicamente no ponto de colisão, com posição, direção, velocidade e tempo de vida próprios, se movimentando e desaparecendo ao longo do tempo. Também terá um GUI com menu, pausa e gameover.`
 
 ## Limitações esperadas
 
-`Animaçoes do personagem, como braços e cabeça. Inspetor e cachorro não será implementado. O visual será mais simples e não tão cartoon como no jogo original, sombra no chão do personagem não será implementada, HUD completo com avatar e recorde não será implementado. Pista curva também não será implementada, apenas pista reta.`
+`Animaçoes detalhadas do personagem, como braços e cabeça, não serão implementadas. Inspetor e cachorro não será implementado. O visual seguirá o estilo cartoon da referência escolhida, porém com modelos, cenários e efeitos mais simples do que no jogo original. Sombra no chão do personagem poderá não ser implementada e HUD completo com avatar e recorde não será implementado.`
