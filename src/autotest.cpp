@@ -54,6 +54,9 @@ bool Gui_ClickButton(const char* label);
 // O botão foi desenhado no último quadro, inteiro dentro da janela (main.cpp).
 bool Gui_ButtonOnScreen(const char* label);
 
+// O que os callbacks de foco/minimização fazem ao perder o foco (main.cpp).
+void HandleWindowFocusLost(GLFWwindow* window);
+
 // Dispara as partículas dos eventos de coleta e limpa a lista (main.cpp).
 void EmitCollectParticles(Game& game);
 // Estado do jogo, definido em main.cpp (semente fixa 12345 no autotest).
@@ -1430,6 +1433,68 @@ static bool Check_pause_freeze(std::string* why)
     return true;
 }
 
+// focus_pause (Revisão final, item 9): perder o foco / minimizar a janela
+// pausa a corrida. Os callbacks da GLFW ignoram foco no autotest (a janela do
+// E2E perde o foco quando se mexe no desktop), então o hook chama direto o
+// tratamento deles, HandleWindowFocusLost(): em PLAYING (1 s) -> PAUSED, nada
+// anda na pausa, P continua; na câmera livre (C em 3 s, foco perdido em 3.5 s)
+// -> PAUSED (sai da câmera livre); "Continuar" volta; de novo em 4.7 s e
+// "Continuar" em 5 s. No fim o jogo está correndo.
+static const float FOCUS_PAUSE_DURATION = 6.0f;
+static int   g_FpFrame          = 0;
+static int   g_FpLostCalls      = 0;     // chamadas de HandleWindowFocusLost
+static int   g_FpPausedByFocus  = 0;     // chamadas que deixaram o jogo em PAUSED
+static bool  g_FpFreeCamOk      = false; // a da câmera livre pausou (e saiu dela)
+static float g_FpPauseS         = -1.0f; // s do jogador logo após a 1ª pausa
+static float g_FpPauseDrift     = 0.0f;  // quanto o jogador andou durante a 1ª pausa
+
+static void Hook_FocusPause()
+{
+    GLFWwindow* window = glfwGetCurrentContext();
+    const int f = g_FpFrame++;
+    // Quadros a 60 Hz: 1.0 s, 3.5 s e 4.7 s (o último com o jogo já pausado).
+    if (f == 60 || f == 210 || f == 282)
+    {
+        const bool was_free = g_Game.mode == GameMode::FREE_CAMERA;
+        HandleWindowFocusLost(window);
+        ++g_FpLostCalls;
+        if (g_Game.mode == GameMode::PAUSED)
+            ++g_FpPausedByFocus;
+        if (f == 60)
+            g_FpPauseS = g_Game.player.s;
+        if (f == 210)
+            g_FpFreeCamOk = was_free && g_Game.mode == GameMode::PAUSED;
+    }
+    if (f > 60 && f < 120 && g_Game.mode == GameMode::PAUSED)
+        g_FpPauseDrift = std::max(g_FpPauseDrift, std::fabs(g_Game.player.s - g_FpPauseS));
+}
+
+static bool Check_focus_pause(std::string* why)
+{
+    char buf[200];
+    if (g_FpLostCalls != 3 || g_FpPausedByFocus != 3 || !g_FpFreeCamOk)
+    {
+        snprintf(buf, sizeof(buf), "foco perdido %d vezes (3), pausado em %d (3), camera livre pausou = %d",
+                 g_FpLostCalls, g_FpPausedByFocus, (int)g_FpFreeCamOk);
+        *why = buf;
+        return false;
+    }
+    if (g_FpPauseDrift > 1e-4f)
+    {
+        snprintf(buf, sizeof(buf), "o jogador andou %.3f m na pausa por perda de foco", g_FpPauseDrift);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.mode != GameMode::PLAYING || g_Game.player.s < 30.0f)
+    {
+        snprintf(buf, sizeof(buf), "no fim o jogo devia estar correndo (modo %d, s = %.1f)", (int)g_Game.mode,
+                 g_Game.player.s);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 // marathon (Tarefa 7.1a): partida longa, com spawn ligado e um piloto
 // automático que segue a faixa segura de cada chunk e pula/rola as barreiras
 // dela, ocupando 600 s de JOGO. Para caber no tempo do E2E (cada quadro
@@ -2398,6 +2463,23 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{3.6f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{3.8f, 0, 0, NULL, 0, 0, "Continuar"});
         s.steps.push_back(AutotestStep{4.8f, 0, 0, "playing"});
+        scenarios.push_back(s);
+    }
+
+    // focus_pause (Revisão final, item 9): perda de foco/minimização pausa.
+    {
+        AutotestScenario s;
+        s.name        = "focus_pause";
+        s.duration    = FOCUS_PAUSE_DURATION;
+        s.final_check = Check_focus_pause;
+        s.setup       = SetupNoSpawn;
+        s.frame_hook  = Hook_FocusPause;
+        s.steps.push_back(AutotestStep{1.5f, 0, 0, "paused"});
+        s.steps.push_back(AutotestStep{2.0f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.0f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.8f, 0, 0, "paused_from_free_camera"});
+        s.steps.push_back(AutotestStep{4.0f, 0, 0, NULL, 0, 0, "Continuar"});
+        s.steps.push_back(AutotestStep{5.0f, 0, 0, NULL, 0, 0, "Continuar"});
         scenarios.push_back(s);
     }
 

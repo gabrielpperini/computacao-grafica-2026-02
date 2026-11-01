@@ -191,6 +191,12 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods);
 // separado para que o harness E2E possa injetar movimento do mouse.
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void FreeCameraMouseLook(float dx_pixels, float dy_pixels);
+// Foco/minimização da janela (Revisão final, item 9): os callbacks ignoram os
+// eventos no autotest (a janela do E2E perde o foco quando o usuário mexe no
+// desktop) e chamam HandleWindowFocusLost(), que o harness E2E chama direto.
+void WindowFocusCallback(GLFWwindow* window, int focused);
+void WindowIconifyCallback(GLFWwindow* window, int iconified);
+void HandleWindowFocusLost(GLFWwindow* window);
 // Direção de movimento (direita, cima, frente) da câmera livre a partir das
 // teclas seguradas.
 glm::vec3 FreeCameraInputDirection();
@@ -570,6 +576,12 @@ int main(int argc, char* argv[])
 
     // Mouse: usado na câmera livre (olhar ao redor).
     glfwSetCursorPosCallback(window, CursorPosCallback);
+
+    // Perder o foco ou minimizar a janela durante a corrida pausa o jogo
+    // (Revisão final, item 9). Antes do Gui_Init: o backend do ImGui encadeia
+    // o callback de foco e chama o nosso também.
+    glfwSetWindowFocusCallback(window, WindowFocusCallback);
+    glfwSetWindowIconifyCallback(window, WindowIconifyCallback);
 
     // Indicamos que as chamadas OpenGL deverão renderizar nesta janela
     glfwMakeContextCurrent(window);
@@ -2960,6 +2972,32 @@ void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
     g_LastCursorX = xpos;
     g_LastCursorY = ypos;
     g_CursorPointValid = true;
+}
+
+// Janela perdeu o foco (alt-tab, clique em outra janela) ou foi minimizada
+// durante a corrida (ou na câmera livre): pausa, como a tecla P. Ao voltar o
+// jogo continua pausado (o jogador decide quando continuar). Nas demais telas
+// (menu, pausa, fim de jogo) nada muda.
+void HandleWindowFocusLost(GLFWwindow* window)
+{
+    if (g_Game.mode == GameMode::PLAYING || g_Game.mode == GameMode::FREE_CAMERA)
+        PauseRun(window);
+}
+
+void WindowFocusCallback(GLFWwindow* window, int focused)
+{
+    if (Autotest_Active()) // o E2E chama HandleWindowFocusLost() direto
+        return;
+    if (!focused)
+        HandleWindowFocusLost(window);
+}
+
+void WindowIconifyCallback(GLFWwindow* window, int iconified)
+{
+    if (Autotest_Active())
+        return;
+    if (iconified)
+        HandleWindowFocusLost(window);
 }
 
 // (direita, cima, frente) pedido pelas teclas seguradas: D/A, Espaço/Shift, W/S.
