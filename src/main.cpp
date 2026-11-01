@@ -364,11 +364,15 @@ void DrawPowerUp(const PowerUp& p);
 
 // Porco voador (Tarefa 5.3): comprimento do corpo na tela (o modelo tem ~0.85 m,
 // pequeno demais para ser visto lá no alto), batida das asas (frequência e
-// amplitude) e raiz de cada asa no modelo (x = ±0.16, y = 0.50, z = 0.02, as
-// mesmas de tools/gen_models.py).
+// amplitude) e raiz de cada asa no modelo.
 const float PIG_DRAW_LENGTH   = 3.5f;  // m
 const float PIG_FLAP_FREQ     = 2.5f;  // batidas por segundo
 const float PIG_FLAP_AMPLITUDE = 0.6f; // rad
+// Raiz de cada asa no modelo flying_pig (x = ±PIG_WING_ROOT_X): os mesmos
+// números de model_flying_pig() em tools/gen_models.py (raiz nas costas).
+const float PIG_WING_ROOT_X = 0.16f;
+const float PIG_WING_ROOT_Y = 0.50f;
+const float PIG_WING_ROOT_Z = 0.02f;
 void DrawFlyingPig(const Game& game);
 
 // Recomeça a corrida (Enter/Espaço em GAME_OVER) e reposiciona a câmera.
@@ -1324,8 +1328,10 @@ void DrawFlyingPig(const Game& game)
     for (int i = 0; i < 2; ++i)
     {
         const float side = (i == 0) ? -1.0f : 1.0f;
-        const glm::mat4 wing = base * Matrix_Translate(side * 0.16f, 0.50f, 0.02f)
-                             * Matrix_Rotate_Z(side * flap) * Matrix_Translate(-side * 0.16f, -0.50f, -0.02f);
+        const float rx = side * PIG_WING_ROOT_X;
+        const glm::mat4 wing = base * Matrix_Translate(rx, PIG_WING_ROOT_Y, PIG_WING_ROOT_Z)
+                             * Matrix_Rotate_Z(side * flap)
+                             * Matrix_Translate(-rx, -PIG_WING_ROOT_Y, -PIG_WING_ROOT_Z);
         DrawObject(names[i], wing, FLYING_PIG, g_Tex.atlas, UV_OBJ);
     }
 }

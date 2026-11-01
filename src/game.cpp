@@ -362,6 +362,10 @@ void Game::StepFlyingPig(float dt)
 void Game::DropPigCoin()
 {
     const glm::vec3 pos = PigTrackPosition();
+    // Rede de segurança: nunca solta moeda dentro de um túnel (o teto da
+    // abóbada fica abaixo do porco). O spawn já evita túneis no voo.
+    if (track.IsTunnelAt(pos.z))
+        return;
     int lane = (int)std::floor(pos.x / LANE_WIDTH + 0.5f);
     lane = std::min(std::max(lane, -1), 1);
 
@@ -933,8 +937,18 @@ void Game::GeneratePowerUp(int index, int safe, size_t first_new, size_t first_c
                 free = false;
         if (!free)
             continue;
-        PowerUp p = {(PowerUpType)std::min((int)(kind * (float)POWERUP_TYPE_COUNT), POWERUP_TYPE_COUNT - 1),
-                     safe, s, false};
+        PowerUpType type = (PowerUpType)std::min((int)(kind * (float)POWERUP_TYPE_COUNT),
+                                                 POWERUP_TYPE_COUNT - 1);
+        if (type == PowerUpType::PIGGY) {
+            // O porco voa sobre os próximos PIGGY_SPAWN_TUNNEL_CLEARANCE m e
+            // atravessaria a abóbada de um túnel: nesse caso o cofrinho vira
+            // outro tipo (determinístico, a partir do mesmo sorteio u; os 3
+            // sorteios do chunk já foram consumidos).
+            track.EnsureGeneratedUntil(s + PIGGY_SPAWN_TUNNEL_CLEARANCE);
+            if (track.TunnelOverlaps(s, s + PIGGY_SPAWN_TUNNEL_CLEARANCE))
+                type = (PowerUpType)std::min((int)(u * 3.0f), 2);
+        }
+        PowerUp p = {type, safe, s, false};
         powerups.push_back(p);
         return;
     }

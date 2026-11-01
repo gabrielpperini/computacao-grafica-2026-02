@@ -118,12 +118,22 @@ struct FlyingPig { bool active; float t, coin_timer; glm::vec3 p[4]; };
 // Pontos de controle do voo (x, y, z relativos ao jogador). Floats simples (e
 // não glm::vec3) para terem inicialização constante: o g_Game global de
 // main.cpp é construído antes de main() e lê esta tabela no Reset.
+// (Valores ajustados em relação ao plano, que subia a 8-12 m: ali o porco
+// ficava na borda superior do quadro da câmera de perseguição e atrás dos
+// prédios. Aqui ele voa de 5 a ~7 m de altura, dentro do quadro, e continua
+// bem curvo na lateral (S: -5 -> 5) e na altura (arco 5 -> 7 -> 5).)
 const float PIGGY_CONTROL[4][3] = {
-    {-8.0f, 8.0f, 10.0f},
-    {-2.0f, 12.0f, 25.0f},
-    {4.0f, 12.0f, 35.0f},
-    {8.0f, 8.0f, 45.0f},
+    {-5.0f, 5.0f, 12.0f},
+    {3.0f, 8.0f, 20.0f},
+    {-3.0f, 8.0f, 28.0f},
+    {5.0f, 5.0f, 36.0f},
 };
+
+// O voo inteiro (a curva vai até PIGGY_CONTROL[3][2] à frente do jogador, que
+// anda até 4 s * PLAYER_MAX_SPEED) cabe em PIGGY_SPAWN_TUNNEL_CLEARANCE m a
+// partir do cofrinho: ele só nasce se não houver túnel nesse trecho (o porco
+// voa mais alto que a abóbada e as moedas cairiam através do teto).
+const float PIGGY_SPAWN_TUNNEL_CLEARANCE = 160.0f; // m
 
 // Câmera nos pulos altos: acima de CAMERA_JUMP_FREE_HEIGHT m do chão ela sobe
 // CAMERA_JUMP_FOLLOW do excesso (o pulo comum, de ~2 m, não a move).

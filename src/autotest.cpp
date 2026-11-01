@@ -397,7 +397,7 @@ static bool Check_piggy(std::string* why)
         *why = buf;
         return false;
     }
-    if (g_PigMinX > -7.0f || g_PigMaxX < 7.0f || g_PigMaxY < 9.5f)
+    if (g_PigMinX > -4.5f || g_PigMaxX < 4.5f || g_PigMaxY < 6.5f)
     {
         snprintf(buf, sizeof(buf), "curva do porco x = [%.1f, %.1f], altura max = %.1f (nao parece a Bezier)",
                  g_PigMinX, g_PigMaxX, g_PigMaxY);

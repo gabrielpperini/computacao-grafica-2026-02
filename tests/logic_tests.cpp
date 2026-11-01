@@ -3162,8 +3162,8 @@ void Test_SneakersTunnelEntryNoPop()
 
 // ------------------------------------------------- Bézier e porco voador (5.3)
 
-static const glm::vec3 kP0(-8.0f, 8.0f, 10.0f), kP1(-2.0f, 12.0f, 25.0f), kP2(4.0f, 12.0f, 35.0f),
-                       kP3(8.0f, 8.0f, 45.0f);
+static const glm::vec3 kP0(-5.0f, 5.0f, 12.0f), kP1(3.0f, 8.0f, 20.0f), kP2(-3.0f, 8.0f, 28.0f),
+                       kP3(5.0f, 5.0f, 36.0f);
 
 static bool nearv(const glm::vec3& a, const glm::vec3& b, float eps = kEps)
 {
@@ -3226,8 +3226,8 @@ void Test_PigDropsCoins()
     }
     assert(!g.pig.active);
     assert(g.pig_coins_dropped >= 25 && g.pig_coins_dropped <= 27);
-    // O rastro vai até perto do fim da curva (P3.z = 45 à frente do jogador).
-    assert(last_s > g.player.s + 20.0f);
+    // O rastro vai até perto do fim da curva (P3.z = 36 à frente do jogador).
+    assert(last_s > g.player.s + 30.0f);
 }
 
 // Cada moeda cai do porco até COIN_HEIGHT (animação por dt, nunca abaixo) e
@@ -3295,18 +3295,18 @@ void Test_PigDtIndependent()
     assert(std::abs(dropped[0] - dropped[2]) <= 1);
 }
 
-// A posição do porco acompanha o jogador: em t = 0 está em (-8, 8, s + 10) e
-// em t = 1, em (8, 8, s + 45), sendo s o do jogador naquele instante.
+// A posição do porco acompanha o jogador: em t = 0 está em (-5, 5, s + 12) e
+// em t = 1, em (5, 5, s + 36), sendo s o do jogador naquele instante.
 void Test_PigFollowsPlayer()
 {
     Game g = QuietGame();
     g.piggy_pickups = 1;
     g.Update(1e-6f); // lança com t ~ 0
     glm::vec3 p = g.PigTrackPosition();
-    assert(nearv(p, glm::vec3(-8.0f, 8.0f, g.player.s + 10.0f), 1e-2f));
+    assert(nearv(p, glm::vec3(-5.0f, 5.0f, g.player.s + 12.0f), 1e-2f));
     g.pig.t = 1.0f;
     p = g.PigTrackPosition();
-    assert(nearv(p, glm::vec3(8.0f, 8.0f, g.player.s + 45.0f), 1e-3f));
+    assert(nearv(p, glm::vec3(5.0f, 5.0f, g.player.s + 36.0f), 1e-3f));
     // A velocidade absoluta inclui a do jogador (sempre avançando).
     g.pig.t = 0.5f;
     assert(g.PigTrackVelocity().z > g.player.speed);
@@ -3346,6 +3346,61 @@ void Test_PigCoinsAvoidObstacles()
     }
     // Sem obstáculos sai o rastro inteiro; com eles, algumas moedas foram puladas.
     assert(g.pig_coins_dropped < free_game.pig_coins_dropped);
+}
+
+// Nenhum cofrinho nasce com um túnel nos PIGGY_SPAWN_TUNNEL_CLEARANCE m à
+// frente dele (o voo inteiro cabe aí); cofrinhos continuam existindo, e a
+// sequência de power-ups é determinística (o cofrinho só troca de tipo).
+void Test_PigNoSpawnBeforeTunnel()
+{
+    int piggies = 0, near_tunnel = 0;
+    for (unsigned seed = 1; seed <= 60; seed++) {
+        Game g(seed);
+        g.GenerateChunksUntil(400 * CHUNK_LENGTH);
+        for (size_t i = 0; i < g.powerups.size(); i++) {
+            const PowerUp& p = g.powerups[i];
+            if (g.track.TunnelOverlaps(p.s, p.s + PIGGY_SPAWN_TUNNEL_CLEARANCE)) near_tunnel++;
+            if (p.type != PowerUpType::PIGGY) continue;
+            piggies++;
+            assert(!g.track.TunnelOverlaps(p.s, p.s + PIGGY_SPAWN_TUNNEL_CLEARANCE));
+        }
+        Game h(seed);
+        h.GenerateChunksUntil(400 * CHUNK_LENGTH);
+        assert(h.powerups.size() == g.powerups.size());
+        for (size_t i = 0; i < g.powerups.size(); i++)
+            assert(h.powerups[i].type == g.powerups[i].type && h.powerups[i].s == g.powerups[i].s);
+    }
+    assert(piggies > 50);
+    assert(near_tunnel > 0); // há power-ups perto de túnel: a regra foi exercida
+}
+
+// Rede de segurança: com o porco sobrevoando um túnel, nenhuma moeda cai
+// dentro dele.
+void Test_PigNoCoinsInsideTunnel()
+{
+    for (unsigned seed = 1; seed <= 40; seed++) {
+        Game g(seed);
+        g.spawn_enabled = false;
+        g.track.EnsureGeneratedUntil(1000.0f);
+        float tunnel_start = -1.0f;
+        for (size_t i = 0; i < g.track.Segments().size(); i++)
+            if (g.track.Segments()[i].tunnel && g.track.Segments()[i].s_start > 40.0f) {
+                tunnel_start = g.track.Segments()[i].s_start;
+                break;
+            }
+        if (tunnel_start < 0.0f || tunnel_start > 500.0f) continue;
+        g.player.s = tunnel_start - 20.0f; // o rastro (12..36 m à frente) cruza a boca
+        LaunchPig(g);
+        for (int i = 0; i < 60 * 5; i++) {
+            g.player.speed = 0.0f;
+            g.Update(1.0f / 60.0f);
+            for (size_t k = 0; k < g.coins.size(); k++)
+                assert(!g.track.IsTunnelAt(g.coins[k].s));
+        }
+        assert(g.pig_coins_dropped > 0 && g.pig_coins_dropped < 25);
+        return; // uma semente com túnel perto basta
+    }
+    assert(false && "nenhuma semente com túnel na faixa esperada");
 }
 
 // Pausa (e câmera livre) congela o porco; Reset o apaga junto com as moedas.
@@ -3517,6 +3572,8 @@ int main()
     Test_PigDtIndependent();
     Test_PigFollowsPlayer();
     Test_PigCoinsAvoidObstacles();
+    Test_PigNoSpawnBeforeTunnel();
+    Test_PigNoCoinsInsideTunnel();
     Test_PigPauseAndReset();
     printf("OK\n");
     return 0;

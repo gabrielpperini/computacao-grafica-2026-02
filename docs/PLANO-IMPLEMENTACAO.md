@@ -600,7 +600,9 @@ glm::vec3 CubicBezierTangent(glm::vec3 p0, glm::vec3 p1, glm::vec3 p2, glm::vec3
 struct FlyingPig { bool active; float t, coin_timer; glm::vec3 p[4]; };  // em Game
 ```
 - Pontos de controle em coordenadas de pista **relativas ao jogador** (`z` somado a `player.s`):
-  `P0=(-8,8,10)`, `P1=(-2,12,25)`, `P2=(4,12,35)`, `P3=(8,8,45)`. `t += dt / PIGGY_FLIGHT_TIME`.
+  `P0=(-5,5,12)`, `P1=(3,8,20)`, `P2=(-3,8,28)`, `P3=(5,5,36)` (revisão da 5.3: os pontos
+  originais `(-8,8,10)…(8,8,45)` deixavam o porco na borda do quadro e atrás dos prédios; o cofrinho
+  também não nasce com túnel nos 160 m à frente). `t += dt / PIGGY_FLIGHT_TIME`.
   A cada `PIGGY_COIN_INTERVAL` solta uma moeda em `s` absoluto atual, na faixa mais próxima de `x`,
   altura `COIN_HEIGHT`. Orientação do porco pela tangente (heading = `atan2` da tangente). Coletar
   outro cofrinho com o porco ativo não cria um segundo porco.

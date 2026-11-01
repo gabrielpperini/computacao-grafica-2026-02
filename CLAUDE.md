@@ -425,7 +425,10 @@ moeda normal (coletável, o ímã a puxa). Se o ponto de pouso encosta em qualqu
 `PigTrackVelocity()` (derivada/`PIGGY_FLIGHT_TIME` + `player.speed` em z) orienta o desenho:
 `DrawFlyingPig()` (`main.cpp`) usa guinada `atan2(-vx, vz)` e arfagem pela componente vertical no
 referencial da pista no `s` do porco; o modelo `flying_pig` tem a cabeça em +Z (daí o meia-volta) e
-as asas (objetos `flying_pig_wing_*`) batem em torno da raiz com fase em função de `t`. E2E: `piggy`.
+as asas (objetos `flying_pig_wing_*`) batem em torno da raiz com fase em função de `t`. O cofrinho **não nasce** com túnel nos `PIGGY_SPAWN_TUNNEL_CLEARANCE` (160 m) à frente (viraria
+outro tipo, mesmo sorteio) e `DropPigCoin` pula moedas soltas dentro de túnel: o porco voa acima da
+abóbada. Pontos de controle (relativos ao jogador): `(-5,5,12)`, `(3,8,20)`, `(-3,8,28)`,
+`(5,5,36)`, dentro do quadro da câmera de perseguição. E2E: `piggy`.
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler
