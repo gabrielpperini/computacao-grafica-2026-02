@@ -1123,6 +1123,10 @@ void Test_TunnelDimmingSmooth()
     }
     assert(t > TUNNEL_DIM_TIME - 2.0f * dt);
     assert(StepTunnelDimming(1.0f, true, 1.0f) == 1.0f);
+    // dt = 0 (pausa, Tarefa 7.1a) e dt inválido congelam a rampa.
+    assert(StepTunnelDimming(0.5f, true, 0.0f) == 0.5f);
+    assert(StepTunnelDimming(0.5f, false, 0.0f) == 0.5f);
+    assert(StepTunnelDimming(0.5f, true, -1.0f) == 0.5f);
     // Saída: volta a 0 pelo mesmo caminho.
     float half = StepTunnelDimming(1.0f, false, 0.5f * TUNNEL_DIM_TIME);
     assert(nearf(half, 0.5f, 1e-4f));

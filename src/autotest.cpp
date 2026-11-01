@@ -1407,6 +1407,112 @@ static bool Check_pause_freeze(std::string* why)
     return true;
 }
 
+// gui_keys (Tarefa 7.1a): teclado fora da corrida. Setas/WASD no MENU e no
+// PAUSED não pulam, rolam nem trocam de faixa (o jogador fica como estava);
+// Enter no MENU inicia a corrida sem pular; P e ESC saem da câmera livre
+// direto para a pausa (duas vezes, uma com cada tecla). Sem obstáculos.
+static int   g_KeysMenuToPlaying = 0;     // transições MENU -> PLAYING
+static int   g_KeysFreeToPaused  = 0;     // transições FREE_CAMERA -> PAUSED
+static bool  g_KeysMenuMoved     = false; // o jogador mexeu (faixa/altura/rolamento) no MENU
+static bool  g_KeysPausedMoved   = false; // idem dentro de uma pausa
+static bool  g_KeysJumpOnStart   = false; // 1º quadro jogando já estava no ar / fora da faixa 0
+static bool  g_KeysCheckStart    = false;
+static int   g_KeysPausedLane    = 0;
+static float g_KeysPausedX       = 0.0f;
+static float g_KeysPausedY       = 0.0f;
+static float g_KeysPausedRoll    = 0.0f;
+static GameMode g_KeysPrevMode   = GameMode::PLAYING;
+
+static bool KeysPlayerMoved(int lane, float x, float y, float roll)
+{
+    const Player& p = g_Game.player;
+    return p.lane != lane || p.x != x || p.y != y || p.vy != 0.0f || p.roll_timer != roll;
+}
+
+static void Hook_GuiKeys()
+{
+    Hook_Gui();
+    const GameMode m = g_Game.mode;
+    if (m == GameMode::MENU && KeysPlayerMoved(0, 0.0f, 0.0f, 0.0f))
+        g_KeysMenuMoved = true;
+    if (g_KeysPrevMode == GameMode::MENU && m == GameMode::PLAYING)
+    {
+        ++g_KeysMenuToPlaying;
+        g_KeysCheckStart = true;
+    }
+    if (g_KeysCheckStart && m == GameMode::PLAYING)
+    {
+        // Enter não pode virar pulo na corrida nova.
+        g_KeysJumpOnStart = KeysPlayerMoved(0, 0.0f, 0.0f, 0.0f) || !g_Game.player.grounded;
+        g_KeysCheckStart  = false;
+    }
+    if (g_KeysPrevMode == GameMode::FREE_CAMERA && m == GameMode::PAUSED)
+        ++g_KeysFreeToPaused;
+    if (m == GameMode::PAUSED)
+    {
+        if (g_KeysPrevMode != GameMode::PAUSED)
+        {
+            g_KeysPausedLane = g_Game.player.lane;
+            g_KeysPausedX    = g_Game.player.x;
+            g_KeysPausedY    = g_Game.player.y;
+            g_KeysPausedRoll = g_Game.player.roll_timer;
+        }
+        else if (KeysPlayerMoved(g_KeysPausedLane, g_KeysPausedX, g_KeysPausedY, g_KeysPausedRoll))
+            g_KeysPausedMoved = true;
+    }
+    g_KeysPrevMode = m;
+}
+
+static bool Check_gui_keys(std::string* why)
+{
+    char buf[200];
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        snprintf(buf, sizeof(buf), "esperava PLAYING no fim; modo = %d", (int)g_Game.mode);
+        *why = buf;
+        return false;
+    }
+    if (g_KeysMenuToPlaying != 1 || g_GuiMenuFrames < 20 || g_GuiMenuMaxS != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "Enter no MENU: iniciou %d vez(es) (1), quadros no menu %d (>= 20), s max %.3f (0)",
+                 g_KeysMenuToPlaying, g_GuiMenuFrames, g_GuiMenuMaxS);
+        *why = buf;
+        return false;
+    }
+    if (g_KeysMenuMoved)
+    {
+        *why = "setas/WASD no MENU mexeram no jogador (faixa, altura ou rolamento)";
+        return false;
+    }
+    if (g_KeysJumpOnStart)
+    {
+        *why = "o Enter que iniciou a corrida virou pulo/troca de faixa";
+        return false;
+    }
+    if (g_KeysPausedMoved || g_GuiPauseDrift > 1e-6f)
+    {
+        snprintf(buf, sizeof(buf), "algo mexeu durante a pausa (jogador = %d, variacao = %g)",
+                 g_KeysPausedMoved ? 1 : 0, g_GuiPauseDrift);
+        *why = buf;
+        return false;
+    }
+    if (g_KeysFreeToPaused != 2 || g_GuiPauseEntries != 3 || g_GuiPausedFrames < 60)
+    {
+        snprintf(buf, sizeof(buf), "camera livre -> pausa: %d (2), pausas %d (3), quadros pausado %d (>= 60)",
+                 g_KeysFreeToPaused, g_GuiPauseEntries, g_GuiPausedFrames);
+        *why = buf;
+        return false;
+    }
+    if (g_Game.player.lane != 0 || g_Game.player.x != 0.0f || g_Game.player.s < 10.0f)
+    {
+        snprintf(buf, sizeof(buf), "no fim lane = %d, x = %.2f (0), s = %.1f (>= 10)",
+                 g_Game.player.lane, g_Game.player.x, g_Game.player.s);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 // gui_buttons: ESC pausa -> "Reiniciar" (corrida volta ao início); ESC ->
 // "Menu" -> "Jogar". Sem obstáculos.
 static void Hook_GuiButtons()
@@ -1851,6 +1957,61 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{2.5f, 0, 0, "still_paused"});
         s.steps.push_back(AutotestStep{2.6f, GLFW_KEY_P, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{2.9f, 0, 0, "resumed"});
+        scenarios.push_back(s);
+    }
+
+    // gui_keys (Tarefa 7.1a): setas/WASD/Espaço no menu e na pausa não mexem no
+    // jogador; Enter inicia; P e ESC saem da câmera livre direto para a pausa.
+    {
+        AutotestScenario s;
+        s.name          = "gui_keys";
+        s.duration      = 5.2f;
+        s.final_check   = Check_gui_keys;
+        s.setup         = SetupNoSpawn;
+        s.frame_hook    = Hook_GuiKeys;
+        s.start_in_menu = true;
+        // No MENU (Espaço e Enter iniciam a corrida, por isso só setas e WASD).
+        const int movers[8] = {GLFW_KEY_LEFT, GLFW_KEY_UP, GLFW_KEY_DOWN, GLFW_KEY_RIGHT,
+                               GLFW_KEY_A, GLFW_KEY_W, GLFW_KEY_S, GLFW_KEY_D};
+        for (int i = 0; i < 8; ++i)
+        {
+            s.steps.push_back(AutotestStep{0.20f + 0.04f * i, movers[i], GLFW_PRESS, NULL});
+            s.steps.push_back(AutotestStep{0.22f + 0.04f * i, movers[i], GLFW_RELEASE, NULL});
+        }
+        s.steps.push_back(AutotestStep{0.60f, 0, 0, "menu_after_keys"});
+        s.steps.push_back(AutotestStep{0.70f, GLFW_KEY_ENTER, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{0.72f, GLFW_KEY_ENTER, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{1.20f, 0, 0, "started"});
+        // Pausa (P) e teclas de jogo durante ela, inclusive Espaço.
+        s.steps.push_back(AutotestStep{1.50f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{1.52f, GLFW_KEY_P, GLFW_RELEASE, NULL});
+        const int paused_keys[9] = {GLFW_KEY_SPACE, GLFW_KEY_UP, GLFW_KEY_LEFT, GLFW_KEY_RIGHT,
+                                    GLFW_KEY_DOWN, GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D};
+        for (int i = 0; i < 9; ++i)
+        {
+            s.steps.push_back(AutotestStep{1.70f + 0.04f * i, paused_keys[i], GLFW_PRESS, NULL});
+            s.steps.push_back(AutotestStep{1.72f + 0.04f * i, paused_keys[i], GLFW_RELEASE, NULL});
+        }
+        s.steps.push_back(AutotestStep{2.20f, 0, 0, "paused_after_keys"});
+        s.steps.push_back(AutotestStep{2.40f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.42f, GLFW_KEY_P, GLFW_RELEASE, NULL});
+        // Câmera livre -> ESC -> pausa; ESC volta.
+        s.steps.push_back(AutotestStep{2.80f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.82f, GLFW_KEY_C, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{3.00f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.02f, GLFW_KEY_ESCAPE, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{3.20f, 0, 0, "pause_from_free_esc"});
+        s.steps.push_back(AutotestStep{3.40f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.42f, GLFW_KEY_ESCAPE, GLFW_RELEASE, NULL});
+        // Câmera livre -> P -> pausa; P volta.
+        s.steps.push_back(AutotestStep{3.80f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.82f, GLFW_KEY_C, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{4.00f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{4.02f, GLFW_KEY_P, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{4.20f, 0, 0, "pause_from_free_p"});
+        s.steps.push_back(AutotestStep{4.40f, GLFW_KEY_P, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{4.42f, GLFW_KEY_P, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{5.00f, 0, 0, "resumed"});
         scenarios.push_back(s);
     }
 

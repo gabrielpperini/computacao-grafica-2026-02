@@ -751,7 +751,9 @@ int main(int argc, char* argv[])
         }
         // Sol e céu escurecem (rampa de TUNNEL_DIM_TIME s) enquanto a própria
         // CÂMERA (em s - recuo, ou a câmera livre) está dentro do túnel.
-        g_TunnelDimming = StepTunnelDimming(g_TunnelDimming, camera_in_tunnel, dt);
+        // Na pausa a rampa também congela (dt = 0): sem isto o céu seguiria
+        // escurecendo/clareando com o jogo parado.
+        g_TunnelDimming = StepTunnelDimming(g_TunnelDimming, camera_in_tunnel, paused ? 0.0f : dt);
 
         // Aqui executamos as operações de renderização
 
@@ -2688,8 +2690,10 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
     }
 
     // Telas da GUI (menu, pausa, game over): se o ImGui estiver usando o
-    // teclado (ex.: um campo de texto em foco), a tecla é só dele. Hoje a GUI
-    // não tem campos de texto, então isto não bloqueia os atalhos abaixo.
+    // teclado (campo de texto em foco ou navegação por teclado, NavEnableKeyboard),
+    // a tecla é só dele. A GUI não tem campo de texto e a navegação por teclado
+    // está desligada, então WantCaptureKeyboard hoje nunca é verdadeiro aqui:
+    // a guarda é só uma rede de segurança para uma GUI futura.
     if (g_Game.mode != GameMode::PLAYING && g_Game.mode != GameMode::FREE_CAMERA &&
         ImGui::GetCurrentContext() != NULL && ImGui::GetIO().WantCaptureKeyboard)
         return;
@@ -2792,10 +2796,11 @@ void FreeCameraMouseLook(float dx_pixels, float dy_pixels)
 // Chamada pela GLFW a cada movimento do cursor.
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 {
-    // Fora da câmera livre (ou com o mouse sobre uma janela do ImGui) o
-    // movimento do cursor é só da GUI.
-    if (g_Game.mode != GameMode::FREE_CAMERA ||
-        (ImGui::GetCurrentContext() != NULL && ImGui::GetIO().WantCaptureMouse))
+    // Fora da câmera livre o movimento do cursor é só da GUI. Na câmera livre
+    // ele sempre gira o olhar: o cursor está capturado (invisível) e as únicas
+    // janelas na tela (HUD e dica) são NoInputs, então o ImGui nunca fica com
+    // o mouse (WantCaptureMouse não é consultado aqui, de propósito).
+    if (g_Game.mode != GameMode::FREE_CAMERA)
     {
         g_CursorPointValid = false; // recalibra na próxima captura
         return;
