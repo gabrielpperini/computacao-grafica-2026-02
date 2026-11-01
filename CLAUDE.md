@@ -373,14 +373,18 @@ túnel. Física (`Game::MoveVertically`): o "chão" é o apoio mais alto sob a p
 leito (0), rampas (`RampHeightUnder`: altura na frente da pegada, então os pés chegam a 3.2 m
 exatamente na emenda com o trem) e tetos em que ele pousou (`LandsOnTop`, tolerância
 `ROOF_TOLERANCE`; no ar só com `vy <= 0`). Em pé, segue o apoio (sobe a rampa); sem apoio (fim do
-trem, faixa vazia), cai. A rampa nunca mata (entrando de lado, o jogador é posto na superfície). No
-teste de morte o trem em cujo teto ele está é ignorado e os demais trens só matam abaixo de
+trem, faixa vazia), cai. A rampa nunca mata, e a **lateral dela é parede**
+(`Game::BlockRampSides` + `RampSideBlocks`): uma troca de faixa que entraria de lado na rampa
+acima de `RAMP_STEP_HEIGHT` (0.4 m) dos pés é desfeita (para encostado por fora, faixa alvo volta
+para a de onde veio, altura igual); no começo baixo da rampa entra e sobe. No
+teste de morte o trem em cujo teto ele está (ou em pé na altura do teto, sobre ele) é ignorado e os demais trens só matam abaixo de
 `teto - ROOF_TOLERANCE` (senão a caixa varrida de quem sai pela lateral do teto encostaria nele).
 No túnel a cabeça é limitada pela abóbada (`TunnelCeilingHeight` + `CeilingPenetration`).
 `Game::GroundHeight()` (apoio sob os pés, ignorando o arco do pulo) ergue a câmera
 (`ThirdPersonCamera::Update(..., ground_y)`, suavizada). Modelo: `data/procedural/ramp.obj` com
 `ramp_frame` (metal_plate) e `ramp_deck` (tábuas, rough_wood), desenhados com a AABB de
-`ramp_frame`; o topo das tábuas é a mesma reta de `RampHeightAt`. E2E: `ramp_train`, `roof_hop`.
+`ramp_frame`; o topo das tábuas é a mesma reta de `RampHeightAt`. E2E: `ramp_train`, `roof_hop`,
+`ramp_side_block`.
 
 **Texturas**: há **uma** unidade de textura (0, sampler `TextureImage0`). `LoadTextureImage()`
 devolve o id da textura (`GL_REPEAT` em S e T, parâmetros guardados na própria textura, sem sampler

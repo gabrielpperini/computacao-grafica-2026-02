@@ -39,6 +39,16 @@ bool RampHeightAt(const AABB& ramp, float x, float s, float* out_height);
 // false (sem tocar em *out_height) se a pegada não toca a rampa.
 bool RampHeightUnder(const AABB& ramp, const AABB& box, float* out_height);
 
+// A lateral da rampa é parede para quem entra de lado. 'from' e 'to' são a
+// caixa do jogador no fim do passo com o x do começo e com o x novo (a troca
+// de faixa do passo). Bloqueia (true) se a pegada de 'from' não toca a rampa,
+// a de 'to' toca, e a altura da rampa sob 'to' passa de to.min.y +
+// step_height (degrau alto demais). Então *out_x = centro x mais próximo de
+// 'to', do lado de 'from', com a pegada fora da faixa x da rampa. Entrar pela
+// frente (pegada já na faixa x da rampa) não é lateral: devolve false.
+bool RampSideBlocks(const AABB& ramp, const AABB& from, const AABB& to, float step_height,
+                    float* out_x);
+
 // Sobreposição das pegadas (x e z) de duas caixas, ignorando a altura.
 bool FootprintsOverlap(const AABB& a, const AABB& b);
 

@@ -41,5 +41,8 @@ const float RAMP_TUNNEL_CLEARANCE = 20.0f; // m sem túnel depois do fim de um t
 // abaixo do teto ainda conta como "vindo de cima"; e o trem só mata abaixo de
 // teto - ROOF_TOLERANCE (bater de frente/de lado), nunca quem está em cima.
 const float ROOF_TOLERANCE        = 0.25f;
+// Degrau máximo (m) ao entrar de lado numa rampa: acima disso a lateral da
+// rampa é parede e a troca de faixa é desfeita (sem morrer, sem subir).
+const float RAMP_STEP_HEIGHT      = 0.4f;
 
 #endif // _GAME_CONFIG_H

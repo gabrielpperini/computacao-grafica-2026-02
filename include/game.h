@@ -49,7 +49,8 @@ const int OBSTACLE_TYPE_COUNT = 5;
 // data/procedural já são feitos nessas medidas). Para BARRIER_HIGH a altura é
 // a da viga, que começa em y = BARRIER_HIGH_CLEARANCE (vai de 1.1 a 3.0 m).
 // O trem são 3 carros do Train Kit (Kenney) em fila: 13 m deixa a escala dos
-// carros quase uniforme (2.0 x 2.0 x 1.7). São floats simples (e não
+// carros quase uniforme (2.0 x 2.2 x 1.7; a altura vai até o teto plano dos
+// carros, onde o jogador anda, Tarefa 4.4). São floats simples (e não
 // glm::vec3) para terem inicialização constante: o g_Game global de main.cpp
 // é construído antes de main() e lê esta tabela.
 const float OBSTACLE_SIZE[OBSTACLE_TYPE_COUNT][3] = {
@@ -198,6 +199,9 @@ private:
     // do trecho inicial livre, sem túnel até RAMP_TUNNEL_CLEARANCE depois do
     // fim do trem; veja GenerateChunk.)
     bool CanHaveRamp(const Obstacle& train, float chunk_start);
+    // Desfaz a troca de faixa do passo (x anterior: old_x) que entraria de
+    // lado numa rampa acima de RAMP_STEP_HEIGHT (RampSideBlocks).
+    void BlockRampSides(float old_x);
     // Movimento vertical do passo (veja Update): apoio, queda, pouso e teto
     // do túnel. 'before' = caixa do jogador antes do passo.
     void MoveVertically(const AABB& before, float dt);

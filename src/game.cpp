@@ -132,6 +132,7 @@ void Game::Update(float dt)
     player.s += 0.5f * (old_speed + player.speed) * dt;
 
     // Troca de faixa: anda até o alvo e para exatamente nele (sem overshoot).
+    const float old_x = player.x;
     float target_x = player.lane * LANE_WIDTH;
     float max_step = LANE_SWITCH_SPEED * dt;
     float diff = target_x - player.x;
@@ -139,6 +140,7 @@ void Game::Update(float dt)
         player.x = target_x;
     else
         player.x += (diff > 0.0f ? max_step : -max_step);
+    BlockRampSides(old_x);
 
     // Rolamento
     player.roll_timer = std::max(player.roll_timer - dt, 0.0f);
@@ -175,6 +177,11 @@ void Game::Update(float dt)
         if (o.type == ObstacleType::RAMP)
             continue;
         if (o.type == ObstacleType::TRAIN && LandsOnTop(before, now, o.box, ROOF_TOLERANCE))
+            continue;
+        // Em pé (apoiado na rampa ou num teto) na altura do teto, sobre a
+        // pegada do trem: está em cima dele, qualquer que seja a fase do passo.
+        if (o.type == ObstacleType::TRAIN && player.grounded &&
+            now.min.y >= o.box.max.y - ROOF_TOLERANCE && FootprintsOverlap(now, o.box))
             continue;
         int n = ObstacleParts(o, parts);
         if (o.type == ObstacleType::TRAIN)
@@ -231,6 +238,34 @@ AABB Game::PlayerBox() const
     b.min = glm::vec3(player.x - PLAYER_HALF_WIDTH, player.y, player.s - PLAYER_HALF_DEPTH);
     b.max = glm::vec3(player.x + PLAYER_HALF_WIDTH, player.y + h, player.s + PLAYER_HALF_DEPTH);
     return b;
+}
+
+// A lateral da rampa é parede (Tarefa 4.4): se a troca de faixa deste passo
+// faria a pegada entrar de lado numa rampa acima de RAMP_STEP_HEIGHT dos pés,
+// ela é desfeita: o jogador para encostado por fora da lateral, a faixa alvo
+// volta a ser a vizinha do lado de onde veio, e a altura não muda (sem
+// "teletransporte" para cima, sem game over). Como a rampa e o trem colado
+// nela têm a mesma faixa x, na emenda rampa/trem o resultado é sempre o mesmo
+// enquanto a pegada ainda toca a rampa, qualquer que seja a fase do quadro.
+void Game::BlockRampSides(float old_x)
+{
+    if (player.x == old_x)
+        return;
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        const Obstacle& o = obstacles[i];
+        if (o.type != ObstacleType::RAMP)
+            continue;
+        const AABB to = PlayerBox();
+        AABB from = to;
+        from.min.x += old_x - player.x;
+        from.max.x += old_x - player.x;
+        float x;
+        if (RampSideBlocks(o.box, from, to, RAMP_STEP_HEIGHT, &x)) {
+            const int back = (old_x < player.x) ? -1 : 1;
+            player.x = x;
+            player.lane = std::min(std::max(o.lane + back, -1), 1);
+        }
+    }
 }
 
 // Movimento vertical do jogador (Tarefa 4.4). O "chão" é o apoio mais alto

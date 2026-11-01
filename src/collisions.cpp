@@ -76,6 +76,23 @@ bool RampHeightUnder(const AABB& ramp, const AABB& box, float* out_height)
     return RampHeightAt(ramp, x, s, out_height);
 }
 
+bool RampSideBlocks(const AABB& ramp, const AABB& from, const AABB& to, float step_height,
+                    float* out_x)
+{
+    float h;
+    if (FootprintsOverlap(from, ramp) || !RampHeightUnder(ramp, to, &h))
+        return false; // já estava sobre a rampa (ou entrou pela frente), ou não chegou nela
+    if (h <= to.min.y + step_height)
+        return false; // degrau pequeno (começo baixo da rampa, ou chegando de cima)
+    // Para encostado na lateral, por fora (1 mm de folga: intervalos fechados).
+    const float half = 0.5f * (to.max.x - to.min.x);
+    const float gap = 1e-3f;
+    const bool from_left = from.min.x + from.max.x < ramp.min.x + ramp.max.x;
+    if (out_x)
+        *out_x = from_left ? ramp.min.x - half - gap : ramp.max.x + half + gap;
+    return true;
+}
+
 bool FootprintsOverlap(const AABB& a, const AABB& b)
 {
     return a.min.x <= b.max.x && a.max.x >= b.min.x &&

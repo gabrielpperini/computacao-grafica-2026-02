@@ -785,6 +785,58 @@ static bool Check_roof_hop(std::string* why)
     return true;
 }
 
+// ramp_side_block: rampa + trem na faixa 1, jogador na faixa 0 troca para a
+// direita ao lado do trecho alto da rampa: a lateral é parede, a troca é
+// desfeita (volta para a faixa 0), sem subir e sem morrer.
+static float g_SideMaxX = 0.0f;   // maior x do jogador (chegou a encostar?)
+static bool  g_SideInRamp = false; // pegada dentro da faixa x da rampa em algum quadro
+
+static void SetupRampSide()
+{
+    SetupNoSpawn();
+    Obstacle t = g_Game.MakeObstacle(ObstacleType::TRAIN, 1, RAMP_TRAIN_S);
+    g_Game.obstacles.push_back(g_Game.MakeRampFor(t));
+    g_Game.obstacles.push_back(t);
+}
+
+static void Hook_RampSide()
+{
+    const Player& p = g_Game.player;
+    g_RoofMaxY = std::max(g_RoofMaxY, p.y);
+    g_SideMaxX = std::max(g_SideMaxX, p.x);
+    if (!g_Game.obstacles.empty() && g_Game.PlayerBox().max.x >= g_Game.obstacles[0].box.min.x)
+        g_SideInRamp = true;
+}
+
+static bool Check_ramp_side_block(std::string* why)
+{
+    char buf[200];
+    const Player& p = g_Game.player;
+    if (g_Game.mode != GameMode::PLAYING)
+    {
+        *why = "o jogo acabou (bateu na lateral da rampa/trem?)";
+        return false;
+    }
+    if (g_RoofMaxY != 0.0f || g_SideInRamp)
+    {
+        snprintf(buf, sizeof(buf), "entrou na lateral da rampa: altura maxima %.3f m", g_RoofMaxY);
+        *why = buf;
+        return false;
+    }
+    if (g_SideMaxX < 0.9f)
+    {
+        *why = "o jogador nem chegou a encostar na lateral da rampa";
+        return false;
+    }
+    if (p.lane != 0 || p.x != 0.0f)
+    {
+        snprintf(buf, sizeof(buf), "esperava a troca desfeita (faixa 0, x = 0); faixa %d, x = %.3f", p.lane, p.x);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -1054,6 +1106,21 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{TimeToRun(47.5f), 0, 0, "drop"});
         s.steps.push_back(AutotestStep{TimeToRun(58.0f), 0, 0, "landed"});
         s.duration = TimeToRun(60.0f);
+        scenarios.push_back(s);
+    }
+
+    // ramp_side_block: troca de faixa contra a lateral alta da rampa é desfeita.
+    {
+        AutotestScenario s;
+        s.name        = "ramp_side_block";
+        s.final_check = Check_ramp_side_block;
+        s.setup       = SetupRampSide;
+        s.frame_hook  = Hook_RampSide;
+        s.steps.push_back(AutotestStep{TimeToRun(28.0f), GLFW_KEY_RIGHT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{TimeToRun(29.1f), 0, 0, "blocked"});
+        s.steps.push_back(AutotestStep{TimeToRun(31.0f), 0, 0, "back"});
+        s.steps.push_back(AutotestStep{TimeToRun(40.0f), 0, 0, "alongside"});
+        s.duration = TimeToRun(42.0f);
         scenarios.push_back(s);
     }
 

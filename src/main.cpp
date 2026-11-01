@@ -519,7 +519,7 @@ int main(int argc, char* argv[])
     LoadObjToScene("../../data/procedural/tunnel_section.obj");
     LoadObjToScene("../../data/procedural/tunnel_portal.obj");
     LoadObjToScene("../../data/procedural/ramp.obj"); // ramp_frame + ramp_deck (Tarefa 4.4)
-    // Cubo: cabeça emissiva dos postes e a rampa (Tarefa 4.4, ainda sem modelo).
+    // Cubo: cabeça emissiva dos postes e luminárias do teto dos túneis.
     LoadObjToScene("../../data/cube.obj");
 
     if ( argc > 1 && !autotest && argv[1][0] != '-' )
