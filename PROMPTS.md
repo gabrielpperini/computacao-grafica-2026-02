@@ -132,3 +132,18 @@ Tarefa 7.1).
 Homebrew no `Makefile.macOS` (`/opt/homebrew/lib`); viewport inicial pelo tamanho do framebuffer
 (`glfwGetFramebufferSize`, em `main.cpp`), que no Retina é o dobro da janela; `CLAUDE.md` e
 `COMPILACAO.md` passam a registrar o macOS como testado.
+
+---
+
+## 2026-11-04 — Tela "Controles" separada no menu
+
+**Ferramenta:** Claude Code (Claude Opus 5.5)
+
+**Prompt:**
+
+> vamos fazer um ajuste no menu, nao quero que seja um accordion a parte dos controles, toda hora eu
+> clico sair achando que vou sair dos controles e saio do jogo, ajusta isso pra mim
+
+**Gerado:** "Controles" troca o menu por uma tela própria (`Gui_MenuControls()` em `main.cpp`) com
+a lista e só o botão "Voltar" (`Esc` também volta); cenários E2E `menu_pause` e `gui_small_window`
+ajustados; `CLAUDE.md` atualizado.

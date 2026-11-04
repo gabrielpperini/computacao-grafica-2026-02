@@ -1372,9 +1372,11 @@ static bool CheckGuiCommon(float duration, std::string* why)
     return true;
 }
 
-// menu_pause: começa no menu (o jogador parado), abre "Controles", clica em
-// "Jogar"; pausa com P e volta com P; pausa com ESC (que não fecha mais a
-// janela) e volta clicando em "Continuar".
+// menu_pause: começa no menu (o jogador parado), abre a tela "Controles" (sem
+// "Jogar" nem "Sair" nela), volta pelo botão "Voltar", abre de novo e volta
+// com ESC (que no menu não pausa nem fecha), clica em "Jogar"; pausa com P e
+// volta com P; pausa com ESC (que não fecha mais a janela) e volta clicando
+// em "Continuar".
 static const float MENU_PAUSE_DURATION = 5.0f;
 static bool Check_menu_pause(std::string* why)
 {
@@ -1805,15 +1807,16 @@ static bool CheckGameOverGui(bool via_menu, std::string* why)
 static bool Check_game_over_gui(std::string* why)  { return CheckGameOverGui(false, why); }
 static bool Check_game_over_menu(std::string* why) { return CheckGameOverGui(true, why); }
 
-// gui_small_window (Tarefa 7.1b): o menu com a lista de "Controles" aberta não
-// pode ser cortado em janelas com menos de 600 px de altura. O hook encolhe a
-// janela para 640x400 (a GUI escala para 0.67x: tudo cabe, os 3 botões ficam
-// inteiros na tela) e depois para 480x270 (abaixo da escala mínima: a janela
-// do menu ganha rolagem e não passa da tela; "Jogar", no topo, continua
-// clicável). No fim volta a 800x600.
+// gui_small_window (Tarefa 7.1b): a tela "Controles" do menu não pode ser
+// cortada em janelas com menos de 600 px de altura. O hook encolhe a janela
+// para 640x400 (a GUI escala para 0.67x: a lista cabe e "Voltar" fica inteiro
+// na tela; "Jogar" e "Sair" não aparecem nela) e, depois que o cenário clica
+// em "Voltar", para 480x270 (abaixo da escala mínima: a janela do menu ganha
+// rolagem e não passa da tela; "Jogar", no topo, continua clicável). No fim
+// volta a 800x600.
 static int  g_SwFrame       = 0;
 static bool g_SwSized400    = false; // a janela chegou a 640x400
-static bool g_SwAllOn400    = false; // Jogar, Controles e Sair inteiros na tela em 640x400
+static bool g_SwAllOn400    = false; // tela Controles em 640x400: Voltar inteiro, sem Jogar/Sair
 static bool g_SwSized270    = false;
 static bool g_SwJogarOn270  = false;
 
@@ -1828,8 +1831,8 @@ static void Hook_SmallWindow()
     else if (g_SwFrame == 55 && w == 640 && h == 400)
     {
         g_SwSized400 = true;
-        g_SwAllOn400 = Gui_ButtonOnScreen("Jogar") && Gui_ButtonOnScreen("Controles") &&
-                       Gui_ButtonOnScreen("Sair");
+        g_SwAllOn400 = Gui_ButtonOnScreen("Voltar") && !Gui_ButtonOnScreen("Jogar") &&
+                       !Gui_ButtonOnScreen("Sair");
     }
     else if (g_SwFrame == 60)
         glfwSetWindowSize(window, 480, 270);
@@ -1854,7 +1857,7 @@ static bool Check_gui_small_window(std::string* why)
     }
     if (!g_SwAllOn400 || !g_SwJogarOn270)
     {
-        snprintf(buf, sizeof(buf), "botoes do menu cortados: todos em 640x400 = %d, Jogar em 480x270 = %d",
+        snprintf(buf, sizeof(buf), "botoes do menu: so Voltar inteiro em 640x400 = %d, Jogar em 480x270 = %d",
                  (int)g_SwAllOn400, (int)g_SwJogarOn270);
         *why = buf;
         return false;
@@ -2451,7 +2454,8 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
-    // menu_pause (Tarefa 6.2): menu -> Controles -> Jogar; P pausa e P volta;
+    // menu_pause (Tarefa 6.2): menu -> Controles -> Voltar -> Controles -> ESC
+    // -> Jogar; P pausa e P volta;
     // ESC pausa (sem fechar a janela) e o botão "Continuar" volta.
     {
         AutotestScenario s;
@@ -2463,7 +2467,10 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.steps.push_back(AutotestStep{0.3f, 0, 0, "menu"});
         s.steps.push_back(AutotestStep{0.4f, 0, 0, NULL, 0, 0, "Controles"});
         s.steps.push_back(AutotestStep{0.6f, 0, 0, "controls"});
-        s.steps.push_back(AutotestStep{0.7f, 0, 0, NULL, 0, 0, "Jogar"});
+        s.steps.push_back(AutotestStep{0.7f, 0, 0, NULL, 0, 0, "Voltar"});
+        s.steps.push_back(AutotestStep{0.9f, 0, 0, NULL, 0, 0, "Controles"});
+        s.steps.push_back(AutotestStep{1.1f, GLFW_KEY_ESCAPE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{1.3f, 0, 0, NULL, 0, 0, "Jogar"});
         s.steps.push_back(AutotestStep{2.0f, GLFW_KEY_P, GLFW_PRESS, NULL});
         s.steps.push_back(AutotestStep{2.4f, 0, 0, "paused"});
         s.steps.push_back(AutotestStep{3.2f, GLFW_KEY_P, GLFW_PRESS, NULL});
@@ -2620,8 +2627,8 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
-    // gui_small_window: menu com "Controles" aberto em janelas de 640x400 e
-    // 480x270 (veja Hook_SmallWindow); "Jogar" clicado na janela pequena.
+    // gui_small_window: tela "Controles" em 640x400 e menu em 480x270 (veja
+    // Hook_SmallWindow); "Jogar" clicado na janela pequena.
     {
         AutotestScenario s;
         s.name          = "gui_small_window";
@@ -2631,7 +2638,8 @@ static std::vector<AutotestScenario> BuildScenarios()
         s.start_in_menu = true;
         s.steps.push_back(AutotestStep{0.4f, 0, 0, NULL, 0, 0, "Controles"});
         s.steps.push_back(AutotestStep{0.85f, 0, 0, "h400_controls"});
-        s.steps.push_back(AutotestStep{1.85f, 0, 0, "h270_controls"});
+        s.steps.push_back(AutotestStep{0.9f, 0, 0, NULL, 0, 0, "Voltar"});
+        s.steps.push_back(AutotestStep{1.85f, 0, 0, "h270_menu"});
         s.steps.push_back(AutotestStep{2.0f, 0, 0, NULL, 0, 0, "Jogar"});
         s.steps.push_back(AutotestStep{2.5f, 0, 0, "h270_playing"});
         s.steps.push_back(AutotestStep{3.3f, 0, 0, "h600_playing"});

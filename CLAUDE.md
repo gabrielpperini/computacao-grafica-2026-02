@@ -270,7 +270,7 @@ ao lado / não desvia e bate no instante previsto pela cinemática), `tunnel`
 (atravessa o 1º túnel com um trem parado na faixa -1 e troca de faixa lá dentro; confere altura
 da câmera antes/dentro/depois, transições sem salto, folga até o teto e o escurecimento) e
 `tunnel_side` (portal visto de longe, saindo da curva anterior), e os da GUI (Tarefa 6.2):
-`menu_pause` (menu → "Controles" → "Jogar"; P pausa/continua; ESC pausa sem fechar a janela e
+`menu_pause` (menu → "Controles" → "Voltar" → "Controles" → `Esc` → "Jogar"; P pausa/continua; ESC pausa sem fechar a janela e
 "Continuar" volta; confere que o relógio do jogo só anda em PLAYING), `pause_freeze` (pausa no
 meio do voo do porco com partículas e ímã ativos: nada se mexe), `gui_buttons` ("Reiniciar",
 "Menu", "Jogar"), `game_over_gui` (janela de fim de jogo; Enter recomeça) e `game_over_menu`
@@ -280,7 +280,7 @@ no jogador, Enter inicia sem pular, P e ESC saem da câmera livre direto para a 
 60 s de quadros × 10 passos de lógica por quadro, feitos no `frame_hook`; confere 0 mortes, sem erro de GL
 e que obstáculos, moedas, power-ups, partículas e segmentos da pista ficam em contagens limitadas; leva ~30 s,
 dentro do timeout de 60 s do `run_e2e.sh`); da Tarefa 7.1b, `gui_small_window` (o hook redimensiona a
-janela para 640x400 e 480x270 com "Controles" aberto: botões inteiros na tela, "Jogar" clicável),
+janela para 640x400 com a tela "Controles" — "Voltar" inteiro, sem "Jogar"/"Sair" — e para 480x270 no menu: "Jogar" clicável),
 `visual_audit` (câmera livre posta pelo hook com `g_FreeCamera.StartAt()` em 18 poses rasantes —
 trilhos, borda do leito, rampa, barreira, teto do trem, portal, chão e parede do túnel, prédios e
 terreno numa curva, portal de saída e, da revisão final, topo e ponta do muro de pedra, fachada de
@@ -650,7 +650,7 @@ chama primeiro, então o `KeyCallback` com o `Correcao_KeyCallback` segue valend
 com botões laranja) e `Gui_Frame()` (a cada quadro, depois da cena 3D: escala estilo e fonte pela
 altura da janela, 600 px = 1x, entre 0.5x e 2x — abaixo de 300 px as janelas centralizadas ganham rolagem e
 nunca passam da tela (Tarefa 7.1b), e desenha conforme `g_Game.mode`: `MENU` → título "RAIL
-RUSH", "Jogar", "Controles" (abre a lista de controles na mesma janela), "Sair"; `PLAYING` → HUD
+RUSH", "Jogar", "Controles" (troca o menu por uma tela só com a lista e "Voltar"; `Esc` também volta — assim "Sair" nunca fica logo abaixo da lista), "Sair"; `PLAYING` → HUD
 transparente no canto superior esquerdo; `PAUSED` → HUD + "Continuar", "Reiniciar", "Menu";
 `FREE_CAMERA` → aviso no topo; `GAME_OVER` → pontos, moedas, distância, "Jogar de novo", "Menu").
 A cena continua sendo desenhada atrás (escurecida) e congelada. O jogo abre em `MENU` (`main()`
@@ -686,7 +686,7 @@ Lista final de atalhos, para a dupla escrever o manual do `README.md` (a IA não
 | `←` / `→` ou `A` / `D` | troca de faixa (esquerda / direita; faixas -1, 0, 1) |
 | `↑`, `W` ou `Espaço` | pula (com o tênis, pula mais alto e passa por cima de placas) |
 | `↓` ou `S` | rola (passa sob a barreira alta e a placa) |
-| `P` ou `ESC` | pausa / continua (`ESC` **não** fecha o programa; sair é pelo botão "Sair" do menu) |
+| `P` ou `ESC` | pausa / continua (`ESC` **não** fecha o programa; sair é pelo botão "Sair" do menu); na tela "Controles" do menu, `ESC` volta ao menu |
 | `Enter` (ou `Espaço`) | no menu: "Jogar"; no game over: "Jogar de novo" |
 | `C` | liga / desliga a câmera livre (jogo congelado) |
 | câmera livre: `W` `A` `S` `D` | voa para frente / esquerda / trás / direita (10 m/s) |

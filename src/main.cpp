@@ -2005,13 +2005,31 @@ static void Gui_Menu(GLFWwindow* window)
     if (GuiButton("Jogar"))
         StartRunFromMenu();
     if (GuiButton("Controles"))
-        g_GuiShowControls = !g_GuiShowControls;
-    if (g_GuiShowControls)
-        GuiControlsTable();
+        g_GuiShowControls = true;
     if (GuiButton("Sair"))
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     ImGui::Spacing();
     GuiTextCentered("Enter: jogar", GUI_TEXT_DIM);
+    ImGui::End();
+}
+
+// Tela "Controles" do menu: substitui o menu (em vez de abrir a lista no meio
+// dele), com só o botão "Voltar". Assim "Sair" nunca aparece logo abaixo da
+// lista e não é clicado por engano achando que fecha os controles.
+static void Gui_MenuControls()
+{
+    GuiDimBackground();
+    GuiBeginCentered("##menu_controles", 17.0f);
+    GuiTitle("CONTROLES", GUI_ACCENT, 2.0f);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    GuiControlsTable();
+    ImGui::Spacing();
+    if (GuiButton("Voltar"))
+        g_GuiShowControls = false;
+    ImGui::Spacing();
+    GuiTextCentered("Esc: voltar", GUI_TEXT_DIM);
     ImGui::End();
 }
 
@@ -2166,7 +2184,12 @@ void Gui_Frame(GLFWwindow* window)
 
     switch (g_Game.mode)
     {
-    case GameMode::MENU:        Gui_Menu(window);       break;
+    case GameMode::MENU:
+        if (g_GuiShowControls)
+            Gui_MenuControls();
+        else
+            Gui_Menu(window);
+        break;
     case GameMode::PLAYING:     Gui_Hud();              break;
     case GameMode::PAUSED:      Gui_Hud(); Gui_Pause(); break;
     case GameMode::FREE_CAMERA: Gui_FreeCameraHint();   break;
@@ -2951,6 +2974,13 @@ void HandleKey(GLFWwindow* window, int key, int action, int mods)
     // P ou ESC: pausa a corrida / continua. ESC não fecha mais o programa
     // (sair é pelo botão "Sair" do menu). Na câmera livre, P/ESC sai dela
     // (devolve o cursor) e já entra na pausa.
+    // ESC na tela "Controles" do menu volta para o menu.
+    if (key == GLFW_KEY_ESCAPE && press && g_Game.mode == GameMode::MENU && g_GuiShowControls)
+    {
+        g_GuiShowControls = false;
+        return;
+    }
+
     if ((key == GLFW_KEY_P || key == GLFW_KEY_ESCAPE) && press)
     {
         if (g_Game.mode == GameMode::PLAYING || g_Game.mode == GameMode::FREE_CAMERA)
