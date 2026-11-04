@@ -606,7 +606,14 @@ int main(int argc, char* argv[])
     // redimensionada, por consequência alterando o tamanho do "framebuffer"
     // (região de memória onde são armazenados os pixels da imagem).
     glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
-    FramebufferSizeCallback(window, 800, 600); // Forçamos a chamada do callback acima, para definir g_ScreenRatio.
+    // Forçamos a chamada do callback acima, para definir g_ScreenRatio e o viewport.
+    // O tamanho vem do framebuffer (pixels), não da janela (pontos): em telas de alta
+    // densidade (Retina no macOS) o framebuffer de uma janela 800x600 tem 1600x1200.
+    {
+        int fb_width = 0, fb_height = 0;
+        glfwGetFramebufferSize(window, &fb_width, &fb_height);
+        FramebufferSizeCallback(window, fb_width, fb_height);
+    }
 
     // Imprimimos no terminal informações sobre a GPU do sistema
     const GLubyte *vendor      = glGetString(GL_VENDOR);

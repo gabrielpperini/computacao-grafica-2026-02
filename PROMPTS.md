@@ -116,3 +116,19 @@ Tarefa 7.1).
 | 7.1b | `7321849`, `046ce1e`, `cc37c90`, `c4da3e6`, `8d6cc85`, `7576b9f`, `af91574`, `47fdc05`, `3e6c56b`, `1cb2e11`, `dbbba11`, `31e4706`, `582bfc4` |
 | 7.2 | `c3d7efb` e os demais commits `Tarefa 7.2` (`git log --grep "Tarefa 7.2"`) |
 | Revisão final (onda de correção, `docs/prompts/final-fixlist.md`) | `ccbfb4d`, `9ccc85e`, `1b128a5`, `42861b8`, `f326a9b`, `f0ada16`, `7faa9b6`, `2bda2c9`, `a44a4eb`, `92c6297` e os seguintes com `Revisão final` no corpo (`git log --grep "Revisão final"`: docs/prompts, CLAUDE.md) |
+
+---
+
+## 2026-11-04 — Build e execução no macOS
+
+**Ferramenta:** Claude Code (Claude Opus 5.5)
+
+**Prompt:**
+
+> le todo o repo, valida oq foi feito, baixa todas ferramentas necessarias pra gente rodar e me da o
+> comando pra rodar o jogo
+
+**Gerado:** primeira compilação real no macOS (Apple Silicon). Correções: caminho da GLFW do
+Homebrew no `Makefile.macOS` (`/opt/homebrew/lib`); viewport inicial pelo tamanho do framebuffer
+(`glfwGetFramebufferSize`, em `main.cpp`), que no Retina é o dobro da janela; `CLAUDE.md` e
+`COMPILACAO.md` passam a registrar o macOS como testado.

@@ -12,7 +12,7 @@ Resumo do que foi testado (Tarefa 7.2):
 | Windows 11, MinGW-w64 UCRT (GCC 16) + CMake + Ninja, Debug e Release | testado: compila sem warnings do nosso código, `logic_tests` OK, E2E completo OK |
 | Windows com MSVC (`lib-vc2022/`) | **não testado** (sem Visual Studio na máquina de teste) |
 | Linux (Ubuntu 24.04) com CMake e com `make` | testado num contêiner Docker: compila sem warnings, linka e `logic_tests` OK; o cenário E2E `smoke` rodou (OpenGL por software, Xvfb + Mesa). O jogo completo só foi jogado/inspecionado no Windows |
-| macOS (`Makefile.macOS`) | **não testado** (sem macOS disponível); só se conferiu que a lista de fontes e as flags batem com o `CMakeLists.txt` |
+| macOS 26 (Apple Silicon), clang do Xcode Command Line Tools + `brew install glfw` (`Makefile.macOS`) | testado: compila sem warnings do nosso código, `logic_tests` OK (via CMake, só esse alvo), E2E completo OK |
 
 > [!IMPORTANT]
 > O executável precisa ser executado **de dentro de `bin/<plataforma>/`**, porque carrega os
@@ -120,11 +120,12 @@ https://github.com/microsoft/vscode-cmake-tools/blob/main/docs/README.md
 
 # macOS
 
-> [!WARNING]
-> **Não testado.** Esta equipe não tinha acesso a um macOS. O `Makefile.macOS` lista os mesmos
-> fontes do `CMakeLists.txt` (incluindo o ImGui e os `-I` dos seus backends) e o mesmo comando
-> foi compilado num Linux (sem warnings, e o binário rodou o E2E `smoke`) trocando só as flags específicas
-> do macOS (`-framework OpenGL` por `-lGL`), mas isso não substitui um teste real.
+> [!NOTE]
+> Testado num Mac com Apple Silicon (macOS 26). O `Makefile.macOS` procura a GLFW do Homebrew em
+> `/opt/homebrew/lib` (Apple Silicon) e `/usr/local/lib` (Intel). No macOS o CMake só serve para o alvo
+> `logic_tests` (`cmake -B build -S . && cmake --build build --target logic_tests && ./bin/Linux/logic_tests`,
+> requer `brew install cmake`); o jogo é compilado pelo `Makefile.macOS`. Testes E2E:
+> `E2E_BIN_DIR=bin/macOS bash tests/run_e2e.sh` (não clique nem digite nas janelas que abrem durante a suíte).
 
 Para compilar e executar esse projeto no macOS, primeiro você precisa instalar o
 HOMEBREW, um gerenciador de pacotes para facilitar a instação de bibliotecas. O

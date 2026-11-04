@@ -172,9 +172,13 @@ fica alinhada com ele (geometria, não é Z-fighting).
 
 **Builds e testes verificados (Tarefa 7.2):** Windows (MinGW UCRT, Debug e Release, `-G Ninja`, build limpo
 sem warnings do nosso código) e Linux (Ubuntu 24.04 em Docker: `make`, `cmake --build`, `logic_tests`; o
-binário `main` linka com `lib-linux/libglfw3.a`). **macOS nunca foi testado** (não há macOS disponível): só
-se conferiu que a lista de fontes e as flags do `Makefile.macOS` batem com o `CMakeLists.txt` e que o mesmo
-comando compila no Linux (sem warnings; o binário rodou o E2E `smoke`) trocando `-framework OpenGL` por `-lGL`. MSVC (`lib-vc2022/`) também não foi testado.
+binário `main` linka com `lib-linux/libglfw3.a`). **macOS** (2026-11-04, Apple Silicon, macOS 26, clang do
+Xcode CLT, `brew install glfw cmake`): `make -f Makefile.macOS` compila sem warnings do nosso código,
+`logic_tests` OK (alvo CMake, que só funciona para ele no macOS: o `main` do CMake linka com a GLFW do Linux)
+e o E2E completo com `E2E_BIN_DIR=bin/macOS` (34/34; `perf_heavy` ~110 fps no build `-g` do Makefile). Dois
+bugs corrigidos nesse teste: o `-L` da GLFW do Homebrew no ARM é `/opt/homebrew/lib` (não `Cellar`), e o
+viewport inicial vem de `glfwGetFramebufferSize` (no Retina o framebuffer de 800x600 tem 1600x1200; antes a
+cena ocupava só 1/4 da janela). MSVC (`lib-vc2022/`) não foi testado.
 Apt/winget/CMake exigidos estão em `COMPILACAO.md`.
 
 **Resto do laboratório anterior, sem efeito:** `src/buildtriangles.cpp` não é compilado por
@@ -305,7 +309,6 @@ numa cópia de `g_Game.track` em `BuildScenarios()` quando os tempos dependem do
 Os fontes do Dear ImGui (`third_party/imgui/`) ficam numa lista separada, `IMGUI_SOURCES`, só do
 executável `main` (não do `logic_tests`); no `Makefile.macOS` estão na mesma linha do `g++`, com
 `-I ./third_party/imgui -I ./third_party/imgui/backends`.
-(Não verificado por build local no macOS.)
 
 ---
 
@@ -712,7 +715,7 @@ em Bézier solta moedas), 10 s cada, renovam ao pegar de novo.
   revisão final), então na prática são ~7 luzes fortes por quadro.
 - Windows App Control pode bloquear um `.exe` recém-linkado ("Permission denied"): toque num `.cpp`
   e recompile.
-- macOS e MSVC nunca foram compilados (sem máquina disponível); o Linux foi verificado só num
+- MSVC nunca foi compilado (sem máquina disponível); o Linux foi verificado só num
   contêiner Ubuntu 24.04 (compila, linka, passa nos `logic_tests` e roda o E2E `smoke` sob Xvfb + Mesa; o jogo
   completo só foi jogado e inspecionado no Windows).
 - Em Release o `stb_image.h` (vendorizado, não editável) gera um aviso `-Wstringop-overflow` do GCC.
