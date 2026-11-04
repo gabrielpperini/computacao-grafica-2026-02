@@ -3363,6 +3363,149 @@ void Test_PointInsideTunnel()
     assert(!PointInsideTunnelSegment(t.Segments()[0], TrackPoint(t, 10.0f, 0.0f, 3.0f)));
 }
 
+// ------------------------------------------------- Câmera livre x cenário
+
+// WorldToTrack é o inverso de FrameAt(s).position + right * lat + up * y, em
+// retas e em curvas para os dois lados (inclusive nas emendas).
+void Test_WorldToTrackRoundTrip()
+{
+    Track t(1);
+    const float R = 40.0f;
+    t.AppendSegment(30.0f, 0.0f, false);
+    t.AppendSegment(0.5f * kPi * R, 1.0f / R, false);   // 90° à esquerda
+    t.AppendSegment(40.0f, 0.0f, false);
+    t.AppendSegment(0.25f * kPi * R, -1.0f / R, false); // 45° à direita
+    t.AppendSegment(60.0f, 0.0f, false);
+    const float end = t.Segments().back().s_start + t.Segments().back().length;
+    const float lats[5] = {-12.0f, -3.0f, 0.0f, 4.0f, 12.0f};
+    for (float s = 0.0f; s <= end; s += 0.7f)
+        for (int i = 0; i < 5; ++i)
+            for (float y = 0.0f; y <= 5.0f; y += 2.5f) {
+                glm::vec3 out;
+                assert(t.WorldToTrack(TrackPoint(t, s, lats[i], y), FREE_CAMERA_TRACK_REACH, &out));
+                assert(std::fabs(out.x - lats[i]) < 2e-3f);
+                assert(std::fabs(out.y - y) < 1e-4f);
+                assert(std::fabs(out.z - s) < 2e-3f);
+            }
+    glm::vec3 out(123.0f);
+    // Longe da pista (lateral >= alcance) ou antes do 1º segmento: false, *out intacto.
+    assert(!t.WorldToTrack(TrackPoint(t, 10.0f, 35.0f, 1.0f), FREE_CAMERA_TRACK_REACH, &out));
+    assert(!t.WorldToTrack(TrackPoint(t, -5.0f, 0.0f, 1.0f), FREE_CAMERA_TRACK_REACH, &out));
+    assert(out.x == 123.0f);
+}
+
+// Esfera da câmera livre x chão, caixa e peças do túnel (colisão da câmera livre, 2026-11-04).
+void Test_FreeCameraBlocked()
+{
+    float ts, te;
+    Track t = TunnelTrack(&ts, &te);
+    const float r = FREE_CAMERA_RADIUS;
+    std::vector<AABB> none;
+    // Chão (fora do túnel).
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, 20.0f, 0.0f, r - 0.1f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, 20.0f, 0.0f, r + 0.1f), r));
+    // Caixa sólida em coordenadas de pista.
+    std::vector<AABB> box(1);
+    box[0].min = glm::vec3(-1.0f, 0.0f, 10.0f);
+    box[0].max = glm::vec3(1.0f, 3.0f, 12.0f);
+    assert(FreeCameraBlocked(t, box, TrackPoint(t, 10.0f - r + 0.1f, 0.0f, 1.5f), r));
+    assert(!FreeCameraBlocked(t, box, TrackPoint(t, 10.0f - r - 0.1f, 0.0f, 1.5f), r));
+    assert(FreeCameraBlocked(t, box, TrackPoint(t, 11.0f, 0.0f, 3.0f + r - 0.1f), r));
+    assert(!FreeCameraBlocked(t, box, TrackPoint(t, 11.0f, 0.0f, 3.0f + r + 0.1f), r));
+    // Túnel: dentro (livre), junto à abóbada e às paredes (bloqueado), do lado
+    // de fora da parede e acima da abóbada (livre só a mais de r da casca).
+    const float mid = ts + 30.0f;
+    const float top_in = TUNNEL_SPRING_HEIGHT + TUNNEL_INNER_HALF_WIDTH;    // 7 m
+    const float top_out = top_in + TUNNEL_WALL_THICKNESS;                   // 7.6 m
+    const float side_out = TUNNEL_INNER_HALF_WIDTH + TUNNEL_WALL_THICKNESS; // 5.6 m
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, mid, 0.0f, 3.0f), r));
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, mid, 0.0f, top_in - r + 0.1f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, mid, 0.0f, top_in - r - 0.1f), r));
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, mid, TUNNEL_INNER_HALF_WIDTH - r + 0.1f, 1.0f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, mid, -(TUNNEL_INNER_HALF_WIDTH - r - 0.1f), 1.0f), r));
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, mid, side_out + r - 0.1f, 1.0f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, mid, -(side_out + r + 0.1f), 1.0f), r));
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, mid, 0.0f, top_out + r - 0.1f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, mid, 0.0f, top_out + r + 0.1f), r));
+    // Portal de entrada: parede cheia fora da abertura; a abertura é livre.
+    const float portal = ts - 0.5f * TUNNEL_PORTAL_DEPTH;
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, portal, 6.5f, 1.0f), r));
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, portal, 0.0f, 8.5f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, portal, 0.0f, 3.0f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, ts - TUNNEL_PORTAL_DEPTH - r - 0.1f, 6.5f, 1.0f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, portal, 0.0f, TUNNEL_PORTAL_HEIGHT + r + 0.1f), r));
+    // Portal de saída, idem.
+    assert(FreeCameraBlocked(t, none, TrackPoint(t, te + 0.5f * TUNNEL_PORTAL_DEPTH, -6.5f, 1.0f), r));
+    assert(!FreeCameraBlocked(t, none, TrackPoint(t, te + TUNNEL_PORTAL_DEPTH + r + 0.1f, -6.5f, 1.0f), r));
+}
+
+// FreeCamera::Move com colisão: para antes da parede, desliza ao longo dela,
+// não desce abaixo do chão e escapa se começar dentro de algo.
+void Test_FreeCameraSlides()
+{
+    float ts, te;
+    Track t = TunnelTrack(&ts, &te); // reta de 50 m com heading 0 antes do túnel
+    std::vector<AABB> wall(1);
+    wall[0].min = glm::vec3(-10.0f, 0.0f, 20.0f);
+    wall[0].max = glm::vec3(10.0f, 10.0f, 21.0f);
+    const FreeCameraBlockedFn blocked = [&](const glm::vec3& p) {
+        return FreeCameraBlocked(t, wall, p, FREE_CAMERA_RADIUS);
+    };
+    const float dt = 1.0f / 60.0f;
+    glm::vec3 tp;
+
+    // Olhando ao longo da pista (-Z do mundo), em s = 10, 2 m de altura.
+    FreeCamera cam;
+    CameraPose pose;
+    const glm::vec3 start = TrackPoint(t, 10.0f, 0.0f, 2.0f);
+    pose.position = vec4(start.x, start.y, start.z, 1.0f);
+    pose.view_vector = t.FrameAt(10.0f).forward;
+    pose.up = vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    cam.StartAt(pose);
+
+    // 2 s para a frente: sem colisão iria 20 m (até s = 30); para encostado.
+    for (int i = 0; i < 120; ++i)
+        cam.Move(glm::vec3(0.0f, 0.0f, 1.0f), dt, blocked);
+    vec4 c = cam.Pose().position;
+    assert(t.WorldToTrack(glm::vec3(c.x, c.y, c.z), 30.0f, &tp));
+    assert(tp.z <= 20.0f - FREE_CAMERA_RADIUS + 1e-3f);
+    assert(tp.z > 20.0f - FREE_CAMERA_RADIUS - FREE_CAMERA_COLLISION_STEP - 1e-3f);
+    assert(!blocked(glm::vec3(c.x, c.y, c.z)));
+
+    // Frente + direita: o avanço é barrado, a lateral continua (desliza).
+    const float s_before = tp.z;
+    for (int i = 0; i < 30; ++i)
+        cam.Move(glm::vec3(1.0f, 0.0f, 1.0f), dt, blocked);
+    c = cam.Pose().position;
+    assert(t.WorldToTrack(glm::vec3(c.x, c.y, c.z), 30.0f, &tp));
+    assert(std::fabs(tp.z - s_before) < FREE_CAMERA_COLLISION_STEP);
+    assert(tp.x > 1.5f); // 0.5 s a ~7 m/s na lateral
+
+    // Descendo por 2 s: para no chão (centro a FREE_CAMERA_RADIUS de altura).
+    for (int i = 0; i < 120; ++i)
+        cam.Move(glm::vec3(0.0f, -1.0f, 0.0f), dt, blocked);
+    c = cam.Pose().position;
+    assert(c.y >= FREE_CAMERA_RADIUS - 1e-4f);
+    assert(c.y < FREE_CAMERA_RADIUS + FREE_CAMERA_COLLISION_STEP + 1e-3f);
+
+    // Começando dentro da parede: anda livre e sai dela.
+    const glm::vec3 inside = TrackPoint(t, 20.5f, 0.0f, 2.0f);
+    pose.position = vec4(inside.x, inside.y, inside.z, 1.0f);
+    cam.StartAt(pose);
+    for (int i = 0; i < 30; ++i)
+        cam.Move(glm::vec3(0.0f, 0.0f, -1.0f), dt, blocked);
+    c = cam.Pose().position;
+    assert(!blocked(glm::vec3(c.x, c.y, c.z)));
+
+    // Sem teste de colisão (função vazia): igual ao Move sem colisão.
+    FreeCamera a, b;
+    a.StartAt(pose);
+    b.StartAt(pose);
+    a.Move(glm::vec3(0.3f, 0.2f, 1.0f), 0.1f);
+    b.Move(glm::vec3(0.3f, 0.2f, 1.0f), 0.1f, FreeCameraBlockedFn());
+    assert(glm::length(a.Pose().position - b.Pose().position) < 1e-6f);
+}
+
 // ---------------------------------------------------------- Power-ups (5.2)
 
 // Power-up de 'type' na faixa e em s (ordem de s preservada pelo chamador).
@@ -4556,6 +4699,9 @@ int main()
     Test_FreeCamPitchClamp();
     Test_FreeCamMoveDt();
     Test_PointInsideTunnel();
+    Test_WorldToTrackRoundTrip();
+    Test_FreeCameraBlocked();
+    Test_FreeCameraSlides();
     // Power-ups (5.2)
     Test_SameTypeRenewsTimer();
     Test_MagnetPullsCoin();

@@ -13,7 +13,10 @@
 //     (CeilingPenetration) e o teto efetivo na aproximação da boca
 //     (TunnelApproachCeiling);
 //   - câmera livre: ponto de mundo x volume interior do túnel
-//     (PointInsideTunnel), para escurecer o sol/céu só dentro dele;
+//     (PointInsideTunnel), para escurecer o sol/céu só dentro dele; e esfera
+//     da câmera x chão, caixas do cenário/obstáculos/jogador e peças dos
+//     túneis (FreeCameraBlocked, SphereHitsTunnel), para ela não atravessar
+//     nada (FreeCamera::Move desliza ao longo do que encosta);
 //   - ímã: esfera de alcance do jogador x esfera da moeda -> a moeda é atraída
 //     (SphereIntersectsSphere).
 //   - em pé sobre o teto do trem (StandsOnTop): o trem não mata quem está em
@@ -233,6 +236,62 @@ bool PointInsideTunnel(const Track& track, glm::vec3 point)
     const std::vector<TrackSegment>& segs = track.Segments();
     for (size_t i = 0; i < segs.size(); ++i)
         if (PointInsideTunnelSegment(segs[i], point))
+            return true;
+    return false;
+}
+
+// Distância "radial" de (lat, y) ao eixo da seção do túnel: abaixo do arranque
+// da abóbada (paredes retas) é |lat|; acima, a distância ao centro do arco
+// (0, TUNNEL_SPRING_HEIGHT). Intradorso = TUNNEL_INNER_HALF_WIDTH; extradorso
+// = + TUNNEL_WALL_THICKNESS (contínuo nas duas regiões).
+static float TunnelRadial(float lat, float y)
+{
+    if (y <= TUNNEL_SPRING_HEIGHT)
+        return std::fabs(lat);
+    const float dy = y - TUNNEL_SPRING_HEIGHT;
+    return std::sqrt(lat * lat + dy * dy);
+}
+
+bool SphereHitsTunnel(const TrackSegment& seg, glm::vec3 p, float radius)
+{
+    if (!seg.tunnel)
+        return false;
+    const float lat = p.x, y = p.y, s = p.z;
+    const float s0 = seg.s_start;
+    const float s1 = seg.s_start + seg.length;
+    const float r_in = TUNNEL_INNER_HALF_WIDTH;
+    const float r_out = TUNNEL_INNER_HALF_WIDTH + TUNNEL_WALL_THICKNESS;
+    const float radial = TunnelRadial(lat, y);
+    if (y < -radius)
+        return false;
+
+    // Casca (paredes + abóbada) ao longo do segmento.
+    if (s >= s0 - radius && s <= s1 + radius && radial > r_in - radius && radial < r_out + radius)
+        return true;
+
+    // Portais: [s0 - DEPTH, s0] e [s1, s1 + DEPTH], parede cheia menos a abertura.
+    const bool in_entry = s >= s0 - TUNNEL_PORTAL_DEPTH - radius && s <= s0 + radius;
+    const bool in_exit = s >= s1 - radius && s <= s1 + TUNNEL_PORTAL_DEPTH + radius;
+    if ((in_entry || in_exit) && std::fabs(lat) <= TUNNEL_PORTAL_HALF_WIDTH + radius &&
+        y <= TUNNEL_PORTAL_HEIGHT + radius && radial > r_in - radius)
+        return true;
+    return false;
+}
+
+bool FreeCameraBlocked(const Track& track, const std::vector<AABB>& solids, glm::vec3 world,
+                       float radius)
+{
+    glm::vec3 p;
+    if (!track.WorldToTrack(world, FREE_CAMERA_TRACK_REACH, &p))
+        return world.y < radius; // longe da pista: só o chão
+    if (p.y < radius)
+        return true;
+    for (size_t i = 0; i < solids.size(); ++i)
+        if (SphereIntersectsAABB(p, radius, solids[i]))
+            return true;
+    const std::vector<TrackSegment>& segs = track.Segments();
+    for (size_t i = 0; i < segs.size(); ++i)
+        if (SphereHitsTunnel(segs[i], p, radius))
             return true;
     return false;
 }

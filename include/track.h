@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
 // Pista do Rail Rush: sequência de segmentos (reta/curva/túnel) com
@@ -124,6 +125,17 @@ public:
 
     // Segmento que contém s; nullptr se s está fora dos segmentos mantidos.
     const TrackSegment* SegmentAt(float s) const;
+
+    // Inverso de "FrameAt(s).position + right * lateral + up * altura": projeta
+    // um ponto de MUNDO na pista e devolve *out = (lateral, altura, s), as
+    // mesmas coordenadas de pista dos obstáculos (x lateral, y altura, z = s).
+    // Projeção exata em cada segmento mantido (reta: no eixo; curva: pelo
+    // centro do arco); entre os segmentos cujo trecho contém a projeção, fica
+    // o de menor |lateral|. Devolve false (sem tocar em *out) se nenhum
+    // contém (antes do primeiro / depois do último segmento mantido) ou se o
+    // ponto está a max_lateral m ou mais da pista. Usado pela câmera livre
+    // (colisão com o cenário, 2026-11-04).
+    bool WorldToTrack(glm::vec3 world, float max_lateral, glm::vec3* out) const;
 
     // Faixa de malha entre lateral [x0,x1] na altura y, de s0 a s1 em passos de
     // step. Gera 2 vértices por passo (ordem de triangle strip: x0 depois x1),

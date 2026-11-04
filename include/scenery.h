@@ -6,6 +6,7 @@
 
 #include <glm/vec3.hpp>
 
+#include "collisions.h"
 #include "game_config.h"
 #include "track.h"
 
@@ -172,6 +173,15 @@ void BuildRetainingWallStrips(const Track& track, float player_s, StripBatch* ou
 
 // Capacidade (vértices) para BuildRetainingWallStrips.
 size_t MaxRetainingWallVertices();
+
+// Caixas sólidas (coordenadas de pista: x lateral, y altura, z = s) do
+// cenário fixo do trecho visível, para a colisão da câmera livre: os muros de
+// contenção (um por trecho e lado) e cada poste (haste e braço com a cabeça,
+// aproximados por duas caixas). Os prédios dependem do tamanho dos modelos
+// e ficam com main.cpp. Acrescenta em *out (não limpa).
+const float LAMP_POLE_HALF          = 0.1f;   // m: meia espessura da haste (colisão)
+const float LAMP_ARM_REACH          = 1.4f;   // m: alcance do braço para dentro (colisão)
+void AppendSceneryCollisionBoxes(const Track& track, float player_s, std::vector<AABB>* out);
 
 // Par (distância², índice) usado por PickNearestPoints.
 struct PointDistance {

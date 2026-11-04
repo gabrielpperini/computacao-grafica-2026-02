@@ -147,3 +147,21 @@ Homebrew no `Makefile.macOS` (`/opt/homebrew/lib`); viewport inicial pelo tamanh
 **Gerado:** "Controles" troca o menu por uma tela própria (`Gui_MenuControls()` em `main.cpp`) com
 a lista e só o botão "Voltar" (`Esc` também volta); cenários E2E `menu_pause` e `gui_small_window`
 ajustados; `CLAUDE.md` atualizado.
+
+---
+
+## 2026-11-04 — Colisões da câmera livre
+
+**Ferramenta:** Claude Code (Claude Opus 5.5)
+
+**Prompt:**
+
+> pode comitar e depois ja segue pra fazer um ajuste que a camera livre tem que ter colisoes
+
+**Gerado:** a câmera livre vira uma esfera que não atravessa o chão, prédios, muros, postes, trens,
+barreiras, rampas, o jogador e as paredes/portais dos túneis, deslizando ao longo do que encosta:
+`Track::WorldToTrack` (`track.cpp`), `SphereHitsTunnel` e `FreeCameraBlocked` (`collisions.cpp`),
+`FreeCamera::Move` com teste de colisão (`camera.cpp`), `AppendSceneryCollisionBoxes`
+(`scenery.cpp`), `CollectFreeCameraSolids`/`BuildingCollisionBox` (`main.cpp`); testes em
+`logic_tests` e o E2E `free_camera_collision`; o E2E `free_camera` sobe antes de voar (o jogador
+agora é sólido para a câmera).

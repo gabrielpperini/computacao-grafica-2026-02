@@ -54,6 +54,9 @@ bool Gui_ClickButton(const char* label);
 // O botão foi desenhado no último quadro, inteiro dentro da janela (main.cpp).
 bool Gui_ButtonOnScreen(const char* label);
 
+// Caixa de colisão de um prédio, em coordenadas de pista (main.cpp).
+AABB BuildingCollisionBox(const BuildingInstance& b);
+
 // O que os callbacks de foco/minimização fazem ao perder o foco (main.cpp).
 void HandleWindowFocusLost(GLFWwindow* window);
 
@@ -1134,8 +1137,10 @@ static bool Check_ramp_side_block(std::string* why)
     return true;
 }
 
-// free_camera: corre 2 s, C (câmera livre, jogo congelado), voa para a frente
-// 1 s segurando W, gira o mouse (olha para trás e para baixo, vendo o jogador
+// free_camera: corre 2 s, C (câmera livre, jogo congelado), sobe 0,3 s com
+// Espaço (a câmera de 3ª pessoa olha para baixo: voando reto para a frente
+// dela, a 3.5 m, ela bateria no jogador, que agora é sólido para a câmera
+// livre), voa para a frente 1 s segurando W, gira o mouse (olha para trás e para baixo, vendo o jogador
 // de frente), sobe 0,5 s com Espaço, gira para o lado, C (volta) e corre mais
 // 1 s. O jogo não pode andar enquanto a câmera livre está ativa.
 static bool  g_FcSeen         = false;  // esteve em FREE_CAMERA
@@ -1145,6 +1150,8 @@ static int   g_FcStartCoins   = 0;
 static float g_FcMaxDriftS    = 0.0f;   // maior |player.s - s de entrada| em FREE_CAMERA
 static bool  g_FcElapsedMoved = false;  // o relógio do jogo andou em FREE_CAMERA
 static glm::vec4 g_FcStartPos;          // posição da câmera livre no 1º quadro
+static glm::vec4 g_FcPosAtW;            // posição no quadro anterior ao 1º com W segurado
+static bool  g_FcAtWSaved     = false;
 static glm::vec4 g_FcPosAfterW;         // posição no 1º quadro depois de soltar W
 static glm::vec4 g_FcStartView;         // view vector no 1º quadro em FREE_CAMERA
 static glm::vec4 g_FcLastView;          // view vector no último quadro em FREE_CAMERA
@@ -1182,6 +1189,15 @@ static void Hook_FreeCamera()
         const bool w = g_KeyHeld[GLFW_KEY_W];
         if (w)
             ++g_FcWFrames;
+        // O hook roda depois do Move do quadro: a posição de partida do W é a
+        // do último quadro sem ele.
+        if (!g_FcAtWSaved)
+        {
+            if (w)
+                g_FcAtWSaved = true;
+            else
+                g_FcPosAtW = pose.position;
+        }
         if (g_FcWasHeld && !w && !g_FcAfterWSaved)
         {
             g_FcAfterWSaved = true;
@@ -1222,7 +1238,12 @@ static bool Check_free_camera(std::string* why)
         *why = buf;
         return false;
     }
-    const glm::vec4 d = g_FcPosAfterW - g_FcStartPos;
+    if (!g_FcAtWSaved)
+    {
+        *why = "nao registrou a posicao ao apertar W";
+        return false;
+    }
+    const glm::vec4 d = g_FcPosAfterW - g_FcPosAtW;
     const float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
     const float expected = FREE_CAMERA_SPEED * (float)g_FcWFrames / 60.0f;
     if (std::fabs(dist - expected) > 0.05f)
@@ -2097,6 +2118,157 @@ static bool Check_visual_audit(std::string* why)
     return true;
 }
 
+// free_camera_collision (colisão da câmera livre, 2026-11-04): a câmera livre não atravessa o
+// cenário. O hook põe a câmera em 3 poses e o roteiro segura uma tecla em
+// cada uma: (A) na faixa 1, a 2 m de altura, olhando para um trem parado 15 m
+// à frente, W por 2 s (iria 20 m): para encostada na frente do trem; (B) na
+// faixa 0 a 3 m de altura, Shift por 1 s (desceria 10 m): para no chão; (C)
+// no centro da pista, a 3 m de altura, olhando para o lado de um prédio da
+// direita, W por 1.5 s: para encostada na fachada (o muro de pedra, de 1.6 m,
+// fica por baixo). Cada parada é conferida com a esfera de FREE_CAMERA_RADIUS:
+// encostada (a menos de um sub-passo) e sem entrar.
+static const float CC_ENTER  = 0.2f;  // C: entra na câmera livre
+static const float CC_POSE_A = 0.35f;
+static const float CC_POSE_B = 2.6f;
+static const float CC_POSE_C = 3.9f;
+static int   g_CcFrame = 0;
+static bool  g_CcPosed[3] = {false, false, false};
+static bool  g_CcMeasured[3] = {false, false, false};
+static float g_CcTrainFront = 0.0f;   // s da frente do trem
+static float g_CcStopS = 0.0f;        // (A) s da câmera depois do W
+static float g_CcStopY = 0.0f;        // (B) altura da câmera depois do Shift
+static float g_CcFace = 0.0f;         // (C) lateral da fachada do prédio
+static float g_CcStopLat = 0.0f;      // (C) lateral da câmera depois do W
+static bool  g_CcFoundBuilding = false;
+static float g_CcBuildingS = 0.0f;
+
+static void SetupFreeCameraCollision()
+{
+    SetupNoSpawn();
+    g_Game.obstacles.push_back(g_Game.MakeObstacle(ObstacleType::TRAIN, 1, 40.0f));
+}
+
+// Põe a câmera livre em (lateral, altura, s) olhando para 'dir' (mundo).
+static void CcPose(float lat, float y, float s, glm::vec4 dir)
+{
+    const TrackFrame f = g_Game.track.FrameAt(s);
+    CameraPose pose;
+    pose.position = f.position + f.right * lat + glm::vec4(0.0f, y, 0.0f, 0.0f);
+    pose.view_vector = dir;
+    pose.up = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    g_FreeCamera.StartAt(pose);
+}
+
+static glm::vec3 CcTrackPos()
+{
+    const glm::vec4 c = g_FreeCamera.Pose().position;
+    glm::vec3 p(0.0f, -100.0f, -1.0f);
+    g_Game.track.WorldToTrack(glm::vec3(c.x, c.y, c.z), FREE_CAMERA_TRACK_REACH, &p);
+    return p;
+}
+
+static void Hook_FreeCameraCollision()
+{
+    ++g_CcFrame;
+    if (g_Game.mode != GameMode::FREE_CAMERA)
+        return;
+    const float t = g_CcFrame * Autotest_FixedDt();
+    const Obstacle* train = NULL;
+    for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
+        if (g_Game.obstacles[i].type == ObstacleType::TRAIN)
+            train = &g_Game.obstacles[i];
+    if (train == NULL)
+        return;
+
+    if (!g_CcPosed[0] && t >= CC_POSE_A)
+    {
+        g_CcPosed[0] = true;
+        g_CcTrainFront = train->box.min.z;
+        const float s = g_CcTrainFront - 15.0f;
+        CcPose(LANE_WIDTH, 2.0f, s, g_Game.track.FrameAt(s).forward);
+    }
+    else if (g_CcPosed[0] && !g_CcMeasured[0] && t >= CC_POSE_B - 0.05f)
+    {
+        g_CcMeasured[0] = true;
+        g_CcStopS = CcTrackPos().z;
+    }
+    if (!g_CcPosed[1] && t >= CC_POSE_B)
+    {
+        g_CcPosed[1] = true;
+        const float s = g_Game.player.s + 10.0f;
+        CcPose(0.0f, 3.0f, s, g_Game.track.FrameAt(s).forward);
+    }
+    else if (g_CcPosed[1] && !g_CcMeasured[1] && t >= CC_POSE_C - 0.05f)
+    {
+        g_CcMeasured[1] = true;
+        g_CcStopY = CcTrackPos().y;
+    }
+    if (!g_CcPosed[2] && t >= CC_POSE_C)
+    {
+        g_CcPosed[2] = true;
+        // Prédio da direita longe do trem e dos postes (o braço do poste, a
+        // 4.5 m, ficaria no caminho).
+        std::vector<BuildingInstance> bs;
+        ComputeBuildings(g_Game.track, g_Game.player.s, &bs);
+        for (size_t i = 0; i < bs.size() && !g_CcFoundBuilding; ++i)
+        {
+            const BuildingInstance& b = bs[i];
+            const float lamp_gap = std::fabs(std::remainder(b.s, LAMP_SPACING));
+            if (b.x > 0.0f && b.s > g_Game.player.s + 15.0f &&
+                (b.s < train->box.min.z - 10.0f || b.s > train->box.max.z + 10.0f) &&
+                lamp_gap > 2.0f && g_Game.track.IsStraightRange(b.s - 5.0f, b.s + 5.0f))
+            {
+                g_CcFoundBuilding = true;
+                g_CcBuildingS = b.s;
+                g_CcFace = BuildingCollisionBox(b).min.x;
+            }
+        }
+        if (g_CcFoundBuilding)
+            CcPose(0.0f, 3.0f, g_CcBuildingS, g_Game.track.FrameAt(g_CcBuildingS).right);
+    }
+    else if (g_CcPosed[2] && !g_CcMeasured[2] && t >= CC_POSE_C + 1.75f)
+    {
+        g_CcMeasured[2] = true;
+        g_CcStopLat = CcTrackPos().x;
+    }
+}
+
+static bool Check_free_camera_collision(std::string* why)
+{
+    char buf[220];
+    const float r = FREE_CAMERA_RADIUS;
+    const float tol = FREE_CAMERA_COLLISION_STEP + 0.02f;
+    if (!g_CcMeasured[0] || !g_CcMeasured[1] || !g_CcMeasured[2] || !g_CcFoundBuilding)
+    {
+        snprintf(buf, sizeof(buf), "fases medidas: trem %d, chao %d, predio %d (predio achado %d)",
+                 (int)g_CcMeasured[0], (int)g_CcMeasured[1], (int)g_CcMeasured[2], (int)g_CcFoundBuilding);
+        *why = buf;
+        return false;
+    }
+    const float limit_s = g_CcTrainFront - r;
+    if (g_CcStopS > limit_s + 1e-3f || g_CcStopS < limit_s - tol)
+    {
+        snprintf(buf, sizeof(buf), "trem: camera parou em s = %.3f; esperava encostada em %.3f", g_CcStopS, limit_s);
+        *why = buf;
+        return false;
+    }
+    if (g_CcStopY < r - 1e-3f || g_CcStopY > r + tol)
+    {
+        snprintf(buf, sizeof(buf), "chao: camera parou a %.3f m; esperava encostada em %.3f", g_CcStopY, r);
+        *why = buf;
+        return false;
+    }
+    const float limit_lat = g_CcFace - r;
+    if (g_CcStopLat > limit_lat + 1e-3f || g_CcStopLat < limit_lat - tol)
+    {
+        snprintf(buf, sizeof(buf), "predio (s = %.1f): camera parou na lateral %.3f; esperava encostada em %.3f",
+                 g_CcBuildingS, g_CcStopLat, limit_lat);
+        *why = buf;
+        return false;
+    }
+    return true;
+}
+
 static std::vector<AutotestScenario> BuildScenarios()
 {
     std::vector<AutotestScenario> scenarios;
@@ -2428,29 +2600,53 @@ static std::vector<AutotestScenario> BuildScenarios()
         scenarios.push_back(s);
     }
 
+    // free_camera_collision: a câmera livre para no trem, no chão e no prédio.
+    {
+        AutotestScenario s;
+        s.name        = "free_camera_collision";
+        s.duration    = 6.0f;
+        s.final_check = Check_free_camera_collision;
+        s.setup       = SetupFreeCameraCollision;
+        s.frame_hook  = Hook_FreeCameraCollision;
+        s.steps.push_back(AutotestStep{CC_ENTER, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{CC_ENTER + 0.05f, GLFW_KEY_C, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_A + 0.05f, GLFW_KEY_W, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_A + 2.05f, GLFW_KEY_W, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_B - 0.1f, 0, 0, "train"});
+        s.steps.push_back(AutotestStep{CC_POSE_B + 0.05f, GLFW_KEY_LEFT_SHIFT, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_B + 1.05f, GLFW_KEY_LEFT_SHIFT, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_C - 0.1f, 0, 0, "ground"});
+        s.steps.push_back(AutotestStep{CC_POSE_C + 0.05f, GLFW_KEY_W, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_C + 1.55f, GLFW_KEY_W, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{CC_POSE_C + 1.7f, 0, 0, "building"});
+        scenarios.push_back(s);
+    }
+
     // free_camera: câmera livre (C) com o jogo congelado; mouse e WASD/Espaço.
     {
         AutotestScenario s;
         s.name        = "free_camera";
-        s.duration    = 6.2f;
+        s.duration    = 6.5f;
         s.final_check = Check_free_camera;
         s.setup       = SetupFreeCamera;
         s.frame_hook  = Hook_FreeCamera;
         s.steps.push_back(AutotestStep{1.9f, 0, 0, "chase"});
         s.steps.push_back(AutotestStep{2.0f, GLFW_KEY_C, GLFW_PRESS, NULL});
-        s.steps.push_back(AutotestStep{2.1f, GLFW_KEY_W, GLFW_PRESS, NULL});
-        s.steps.push_back(AutotestStep{3.1f, GLFW_KEY_W, GLFW_RELEASE, NULL});
-        s.steps.push_back(AutotestStep{3.2f, 0, 0, "ahead"});
+        s.steps.push_back(AutotestStep{2.05f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{2.35f, GLFW_KEY_SPACE, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{2.4f, GLFW_KEY_W, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{3.4f, GLFW_KEY_W, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{3.5f, 0, 0, "ahead"});
         // Sobe 0,8 s com Espaço (~8 m) e, com o mouse, gira 1047 px * 0,003 rad/px
         // = 180 graus (passa a olhar para trás, para o jogador) e 260 px para baixo.
-        s.steps.push_back(AutotestStep{3.3f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
-        s.steps.push_back(AutotestStep{4.1f, GLFW_KEY_SPACE, GLFW_RELEASE, NULL});
-        s.steps.push_back(AutotestStep{4.2f, 0, 0, NULL, 1047.0f, 260.0f});
-        s.steps.push_back(AutotestStep{4.4f, 0, 0, "looking_back"});
-        s.steps.push_back(AutotestStep{4.5f, 0, 0, NULL, -420.0f, -60.0f});
-        s.steps.push_back(AutotestStep{4.7f, 0, 0, "above_side"});
-        s.steps.push_back(AutotestStep{4.8f, GLFW_KEY_C, GLFW_PRESS, NULL});
-        s.steps.push_back(AutotestStep{5.8f, 0, 0, "resumed"});
+        s.steps.push_back(AutotestStep{3.6f, GLFW_KEY_SPACE, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{4.4f, GLFW_KEY_SPACE, GLFW_RELEASE, NULL});
+        s.steps.push_back(AutotestStep{4.5f, 0, 0, NULL, 1047.0f, 260.0f});
+        s.steps.push_back(AutotestStep{4.7f, 0, 0, "looking_back"});
+        s.steps.push_back(AutotestStep{4.8f, 0, 0, NULL, -420.0f, -60.0f});
+        s.steps.push_back(AutotestStep{5.0f, 0, 0, "above_side"});
+        s.steps.push_back(AutotestStep{5.1f, GLFW_KEY_C, GLFW_PRESS, NULL});
+        s.steps.push_back(AutotestStep{6.1f, 0, 0, "resumed"});
         scenarios.push_back(s);
     }
 

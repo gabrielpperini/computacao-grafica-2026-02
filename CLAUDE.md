@@ -137,7 +137,7 @@ mora no código e como é verificado.
 | Transformações geométricas controladas pelo usuário | ✅ o jogador (troca de faixa, pulo, rolamento achatando o modelo) é transformado pela matriz de pista a partir do teclado; braços/pernas giram em torno de ombro/quadril (hierarquia com `PushMatrix`/`PopMatrix`) conforme corre, pula ou rola |
 | Duas câmeras consideravelmente distintas | ✅ (1) 3ª pessoa look-at (`ThirdPersonCamera`, `camera.cpp`), com a adaptação ao túnel do SPEC (Tarefa 4.2: dentro do túnel desce para 2.2 m e chega a 4 m do jogador, suavemente, e volta ao sair; nunca encosta no teto de 7 m); (2) câmera livre "fly" (`FreeCamera`, Tarefa 5.1): `C` alterna `PLAYING` ↔ `FREE_CAMERA` com o jogo congelado, WASD/Espaço/Shift voam a 10 m/s, o mouse gira (pitch ±89°) |
 | Instâncias (≥2 Model matrices sobre o mesmo VAO) | ✅ cada modelo é carregado uma vez e desenhado com uma `model` por ocorrência: moedas, barreiras, placas, carros de trem, prédios (6 modelos da Kenney + 3 de tijolo em ~28 posições), postes, módulos de túnel (um a cada 4 m) e portais |
-| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`, com a varredura em `SweepAABB`/`SweepAABBAlongZ`, também em `collisions.cpp`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada; revisão final: em pé sobre o teto (`StandsOnTop`) → o trem não mata e vira o chão da câmera, trem móvel × obstáculo à frente na faixa (`StopBehindAlongZ`) → para, e sobreposição ao longo de s no spawn (`SpanTouchesBoxAlongZ`, `PointNearBoxAlongZ`) — `game.cpp` só chama |
+| Testes de intersecção com propósito, em `collisions.cpp` | ✅ `Game::Update()`: caixa varrida do jogador × partes dos obstáculos (`AABBIntersectsAABB`, com a varredura em `SweepAABB`/`SweepAABBAlongZ`, também em `collisions.cpp`) → game over; esfera da moeda × caixa do jogador (`SphereIntersectsAABB`) → coleta; Tarefa 4.4: rampa sob a pegada (`RampHeightUnder`/`RampHeightAt`) → o jogador sobe nela; pouso no teto do trem (`LandsOnTop`, com a base interpolada no instante em que entra na pegada do trem) → anda em cima dele (o trem só mata abaixo do teto); teto do túnel (`CeilingPenetration`, `TunnelApproachCeiling`) → a cabeça não atravessa a abóbada; Tarefa 5.2: power-up × caixa do jogador (`SphereIntersectsAABB`) → coleta, e esfera de alcance do ímã × moeda (`SphereIntersectsSphere`) → a moeda é puxada; revisão final: em pé sobre o teto (`StandsOnTop`) → o trem não mata e vira o chão da câmera, trem móvel × obstáculo à frente na faixa (`StopBehindAlongZ`) → para, e sobreposição ao longo de s no spawn (`SpanTouchesBoxAlongZ`, `PointNearBoxAlongZ`); câmera livre: esfera da câmera × chão, caixas do cenário/obstáculos/jogador e peças do túnel (`FreeCameraBlocked`, `SphereHitsTunnel`) → ela não atravessa nada e desliza ao longo do que encosta — `game.cpp` e `main.cpp` só chamam |
 | Iluminação **não-trivial** em todos os objetos | ✅ Blinn-Phong (ambiente + difuso + especular) com sol direcional + até 8 luzes pontuais (lâmpadas dos postes e do teto dos túneis, atenuação quadrática, com fade suave ao entrar/sair das 8 mais próximas — revisão final); dentro dos túneis o sol e o céu não chegam (`SkyVisibility()` no shader) e, com a câmera lá dentro, o sol cai para 20% numa rampa de 0.5 s; **Phong** (por fragmento) em todos os objetos e **Gouraud** (por vértice, `shading_mode = 1`) nas moedas; material por tipo de objeto em `MaterialFor()` (`main.cpp`) |
 | Texturas em todos os objetos, ≥3 imagens distintas | ✅ `DrawObject()` liga uma textura por objeto na unidade 0; 12 imagens (`g_Tex`): terreno, brita, madeira dos dormentes, metal dos trilhos, tijolos (portais e prédios de tijolo), pedra dos muros (`stone_wall`) e da abóbada dos túneis (`castle_wall_slates`) (Poly Haven), colormaps/skin da Kenney (trem, personagem, prédios, poste) e o atlas procedural (barreiras, placa, moeda, power-ups, vidraças); padrões em densidade fixa por metro (nada esticado). SPEC "paredes com texturas de pedra, prédios com texturas de tijolos": muros de pedra contínuos ao lado da pista e 1 em cada 3 prédios de tijolo (revisão final, veja "Muros de pedra e prédios de tijolo") |
 | Curva de Bézier cúbica movimentando ≥1 objeto | ✅ `include/bezier.h`, `src/bezier.cpp`; porco voador do cofrinho (`Game::pig`, Tarefa 5.3) |
@@ -290,7 +290,9 @@ e `perf_heavy` (túnel + trens + moedas + ímã + porco + 80 partículas por qua
 **falha se a média passar de 16 ms** — `PERF_MAX_AVG_MS`, vale também no Debug, onde mede ~7 ms na GTX 1070; com
 OpenGL por software — `GL_RENDERER` llvmpipe/softpipe/"Software"/"Microsoft Basic Render" — só avisa, revisão final)
 e, da revisão final, `focus_pause` (perder o foco/minimizar pausa: o hook chama `HandleWindowFocusLost()`, o
-mesmo tratamento dos callbacks de foco e minimização, que ignoram os eventos reais no autotest).
+mesmo tratamento dos callbacks de foco e minimização, que ignoram os eventos reais no autotest) e
+`free_camera_collision` (a câmera livre, posta pelo hook em 3 poses, voa contra a frente de um trem, desce até o
+chão e voa de lado contra um prédio; confere que para encostada, a menos de um sub-passo, sem entrar).
 `run_e2e.sh` roda tudo em ~10 min no Windows (o `marathon` sozinho leva ~30 s) e, se o comando `timeout` não existir
 (macOS padrão), roda os cenários sem limite de tempo (usa `gtimeout` se houver).
 **Não fixe valores de s ligados
@@ -319,7 +321,7 @@ executável `main` (não do `logic_tests`); no `Makefile.macOS` estão na mesma 
 | Arquivo | Papel | GL? |
 |---|---|---|
 | `include/game_config.h` | constantes de gameplay | não |
-| `src/collisions.cpp` | todos os testes de intersecção (AABB, esfera, rampa, pouso, varredura, túnel) | não |
+| `src/collisions.cpp` | todos os testes de intersecção (AABB, esfera, rampa, pouso, varredura, túnel, câmera livre) | não |
 | `src/bezier.cpp` | Bézier cúbica e tangente (porco do cofrinho) | não |
 | `src/track.cpp` | segmentos reta/curva/túnel, `FrameAt(s)`, faixas de malha do chão | não |
 | `src/game.cpp` | estados, jogador, spawn, pontuação, power-ups, porco | não |
@@ -626,7 +628,21 @@ também no E2E) e o movimento é aplicado todo quadro com `dt`. Limitação acei
 gerado ao redor do jogador (≈ −20…+150 m), então voar para longe mostra só o chão até o horizonte
 (`DrawGroundPlane`) e a névoa; o escurecimento do
 túnel usa a posição da câmera livre (`PointInsideTunnel`, em `collisions.cpp`: ponto de mundo dentro da abóbada, com `TunnelCeilingHeight`). O E2E injeta o mouse pelos campos
-`mouse_dx/mouse_dy` de `AutotestStep` (cenário `free_camera`).
+`mouse_dx/mouse_dy` de `AutotestStep` (cenário `free_camera`, que sobe 3 m com Espaço antes do W para não bater no jogador).
+
+**Colisão da câmera livre** (2026-11-04, pedido da dupla): a câmera é uma esfera de `FREE_CAMERA_RADIUS` (0.5 m,
+cobre os cantos do plano near). A cada quadro em `FREE_CAMERA`, `CollectFreeCameraSolids()` (`main.cpp`) refaz a
+lista de caixas sólidas em coordenadas de pista do trecho visível: prédios (`BuildingCollisionBox`, AABB do modelo
+na escala do desenho), muros e postes (`AppendSceneryCollisionBoxes`, `scenery.cpp`: haste + braço com a cabeça),
+partes dos obstáculos (`ObstacleParts`) e o jogador (`PlayerBox`). `FreeCameraBlocked()` (`collisions.cpp`)
+projeta a posição de mundo na pista (`Track::WorldToTrack`: inverso exato de `FrameAt` em retas e curvas, até
+`FREE_CAMERA_TRACK_REACH` = 30 m da pista; mais longe só há o chão) e testa chão (centro abaixo do raio), as caixas
+(`SphereIntersectsAABB`) e a casca/portais dos túneis (`SphereHitsTunnel`, pela seção exata). `FreeCamera::Move(dir,
+dt, blocked)` (`camera.cpp`) anda em sub-passos de no máximo `FREE_CAMERA_COLLISION_STEP` (0.1 m) e eixo a eixo do
+mundo (x, z, y), descartando o eixo bloqueado: a câmera desliza ao longo de paredes e do chão. Começando dentro de algo
+(pose posta por `StartAt`, ex.: `visual_audit`), anda livre até sair. Os prédios em curvas são caixas em
+coordenadas de pista (levemente "curvadas" em relação ao modelo rígido: erro < 0.25 m, dentro do raio).
+Testes: `Test_WorldToTrackRoundTrip`, `Test_FreeCameraBlocked`, `Test_FreeCameraSlides` e o E2E `free_camera_collision`.
 
 ### Estado e entrada
 

@@ -1,5 +1,6 @@
 #include "camera.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -140,6 +141,45 @@ void FreeCamera::Move(glm::vec3 local_dir, float dt)
     const glm::vec4 right(std::cos(yaw_), 0.0f, -std::sin(yaw_), 0.0f);
     const glm::vec4 delta = right * local_dir.x + kUp * local_dir.y + forward * local_dir.z;
     position_ += delta * (FREE_CAMERA_SPEED * dt);
+}
+
+void FreeCamera::Move(glm::vec3 local_dir, float dt, const FreeCameraBlockedFn& blocked)
+{
+    if (!blocked) {
+        Move(local_dir, dt);
+        return;
+    }
+    const float length = std::sqrt(local_dir.x * local_dir.x + local_dir.y * local_dir.y +
+                                   local_dir.z * local_dir.z);
+    if (length < 1e-6f || dt <= 0.0f)
+        return;
+    local_dir /= length;
+
+    const glm::vec4 forward = LookDirection(yaw_, pitch_);
+    const glm::vec4 right(std::cos(yaw_), 0.0f, -std::sin(yaw_), 0.0f);
+    const glm::vec4 delta4 = (right * local_dir.x + kUp * local_dir.y + forward * local_dir.z) *
+                             (FREE_CAMERA_SPEED * dt);
+    const glm::vec3 delta(delta4.x, delta4.y, delta4.z);
+    const float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    const int steps = std::max(1, (int)std::ceil(dist / FREE_CAMERA_COLLISION_STEP));
+    const glm::vec3 step = delta / (float)steps;
+
+    glm::vec3 p(position_.x, position_.y, position_.z);
+    for (int i = 0; i < steps; ++i) {
+        // Eixos horizontais primeiro: subir/descer encostado numa parede
+        // continua deslizando.
+        const int order[3] = {0, 2, 1};
+        for (int a = 0; a < 3; ++a) {
+            const int axis = order[a];
+            if (step[axis] == 0.0f)
+                continue;
+            glm::vec3 q = p;
+            q[axis] += step[axis];
+            if (!blocked(q) || blocked(p))
+                p = q;
+        }
+    }
+    position_ = glm::vec4(p.x, p.y, p.z, 1.0f);
 }
 
 CameraPose FreeCamera::Pose() const

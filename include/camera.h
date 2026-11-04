@@ -1,6 +1,8 @@
 #ifndef _CAMERA_H
 #define _CAMERA_H
 
+#include <functional>
+
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -80,6 +82,17 @@ private:
 const float FREE_CAMERA_SPEED       = 10.0f;        // m/s
 const float FREE_CAMERA_SENSITIVITY = 0.003f;       // rad por pixel do mouse
 const float FREE_CAMERA_MAX_PITCH   = 1.55334303f;  // 89 graus, em rad
+// Colisão da câmera livre: ela é uma esfera deste raio (m). Cobre os cantos do
+// plano near (0.3 m à frente, ~0.42 m até o canto), então ela nunca "entra"
+// numa parede a ponto de ver o lado de dentro.
+const float FREE_CAMERA_RADIUS      = 0.5f;
+// Maior passo (m) entre dois testes de colisão num mesmo Move: bem menor que
+// a peça mais fina inflada pelo raio (muro de 0.24 m + 2 * 0.5 m), sem
+// atravessar nada mesmo com dt grande.
+const float FREE_CAMERA_COLLISION_STEP = 0.1f;
+
+// Teste "esta posição (mundo) encosta em algo sólido?" usado por Move.
+typedef std::function<bool(const glm::vec3&)> FreeCameraBlockedFn;
 
 // Câmera livre ("fly"), ativada com C com o jogo pausado: o jogador percorre
 // o cenário olhando para onde quiser. Guarda posição, yaw e pitch; o view
@@ -106,6 +119,15 @@ public:
     // olha) e "cima" é o Y do mundo. A direção é normalizada (a diagonal não
     // é mais rápida); vetor nulo ou dt <= 0 não move.
     void Move(glm::vec3 local_dir, float dt);
+
+    // Idem com colisão: o deslocamento é feito em sub-passos de no máximo
+    // FREE_CAMERA_COLLISION_STEP e, em cada um, eixo a eixo do mundo (x, z,
+    // y); o eixo cujo passo levaria a câmera a uma posição bloqueada é
+    // descartado e os outros continuam, então ela desliza ao longo de paredes
+    // e do chão em vez de parar. Se a câmera JÁ está numa posição bloqueada
+    // (ex.: posta ali por StartAt), anda livre até sair. blocked vazio = Move
+    // sem colisão.
+    void Move(glm::vec3 local_dir, float dt, const FreeCameraBlockedFn& blocked);
 
     CameraPose Pose() const;
 

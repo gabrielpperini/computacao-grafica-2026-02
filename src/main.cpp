@@ -345,6 +345,17 @@ const glm::vec3 BUILDING_TINTS[BUILDING_TINT_COUNT] = {
     glm::vec3(0.90f, 0.90f, 0.90f), glm::vec3(1.00f, 0.76f, 0.60f),
     glm::vec3(0.70f, 0.84f, 1.00f), glm::vec3(0.78f, 0.95f, 0.74f)};
 void DrawBuilding(const Track& track, const BuildingInstance& b);
+// Caixa sólida do prédio em coordenadas de pista (colisão da câmera livre),
+// com as medidas do modelo desenhado (mesma escala de DrawBuilding).
+AABB BuildingCollisionBox(const BuildingInstance& b);
+// Colisão da câmera livre: refaz a cada quadro a lista de caixas sólidas
+// (coordenadas de pista) do trecho visível: prédios, muros, postes,
+// obstáculos e o jogador. FreeCameraBlocked (collisions.cpp) testa a esfera
+// da câmera contra elas, o chão e os túneis.
+std::vector<AABB> g_FreeCameraSolids;
+std::vector<BuildingInstance> g_FreeCameraBuildings; // memória de trabalho
+void CollectFreeCameraSolids(std::vector<AABB>* out);
+bool FreeCameraBlockedAt(const glm::vec3& world);
 void DrawBrickBuilding(const Track& track, const BuildingInstance& b); // b.brick_floors > 0
 // Tom do acabamento de concreto dos prédios de tijolo (embasamento, peitoris, cornija).
 const glm::vec3 BRICK_TRIM_TINT = glm::vec3(1.05f, 1.02f, 0.95f);
@@ -809,7 +820,10 @@ int main(int argc, char* argv[])
         bool camera_in_tunnel;
         if (free_camera)
         {
-            g_FreeCamera.Move(FreeCameraInputDirection(), dt);
+            // Com colisão: a câmera não atravessa prédios, muros, postes,
+            // trens/barreiras, o jogador, as paredes do túnel nem o chão.
+            CollectFreeCameraSolids(&g_FreeCameraSolids);
+            g_FreeCamera.Move(FreeCameraInputDirection(), dt, FreeCameraBlockedAt);
             // Câmera livre dentro do volume do túnel (collisions.cpp), não só "sobre" ele.
             const glm::vec4 cp = g_FreeCamera.Pose().position;
             camera_in_tunnel = PointInsideTunnel(g_Game.track, glm::vec3(cp.x, cp.y, cp.z));
@@ -1417,6 +1431,65 @@ void DrawBuilding(const Track& track, const BuildingInstance& b)
     glm::mat4 model = TrackPlacement(track.FrameAt(b.s), b.x, 0.0f, yaw)
                     * Matrix_OnGround(name, k, k, k);
     DrawObject(name, model, BUILDING, g_Tex.city, UV_OBJ, 1.0f, BUILDING_TINTS[b.tint]);
+}
+
+AABB BuildingCollisionBox(const BuildingInstance& b)
+{
+    // Meias-extensões do modelo (unidades do modelo) em torno do eixo de
+    // posicionamento e altura, já na escala do desenho. O prédio é girado
+    // +-90 graus: o X do modelo fica ao longo da pista e o Z, na lateral.
+    float half_x, half_z, height;
+    if (b.brick_floors > 0)
+    {
+        const int floors = std::min(std::max(b.brick_floors, BRICK_BUILDING_MIN_FLOORS), BRICK_BUILDING_MAX_FLOORS);
+        static const char* const SUFFIX[3] = {"_walls", "_windows", "_trim"};
+        half_x = half_z = height = 0.0f;
+        for (int i = 0; i < 3; ++i)
+        {
+            char name[64];
+            snprintf(name, sizeof(name), "brick_building_%d%s", floors, SUFFIX[i]);
+            const SceneObject& o = FindSceneObject(name);
+            half_x = std::max(half_x, std::max(std::fabs(o.bbox_min.x), std::fabs(o.bbox_max.x)));
+            half_z = std::max(half_z, std::max(std::fabs(o.bbox_min.z), std::fabs(o.bbox_max.z)));
+            height = std::max(height, o.bbox_max.y);
+        }
+    }
+    else
+    {
+        const glm::vec3 ms = ObjectSize(BUILDING_MODELS[b.variant]);
+        const float k = BUILDING_WIDTH / std::max(ms.x, ms.z);
+        half_x = 0.5f * ms.x * k; // Matrix_OnGround centra o modelo em x e z
+        half_z = 0.5f * ms.z * k;
+        height = ms.y * k;
+    }
+    AABB box;
+    box.min = glm::vec3(b.x - half_z, 0.0f, b.s - half_x);
+    box.max = glm::vec3(b.x + half_z, height, b.s + half_x);
+    return box;
+}
+
+void CollectFreeCameraSolids(std::vector<AABB>* out)
+{
+    out->clear();
+    const Track& track = g_Game.track;
+    const float player_s = g_Game.player.s;
+    ComputeBuildings(track, player_s, &g_FreeCameraBuildings);
+    for (size_t i = 0; i < g_FreeCameraBuildings.size(); ++i)
+        out->push_back(BuildingCollisionBox(g_FreeCameraBuildings[i]));
+    AppendSceneryCollisionBoxes(track, player_s, out);
+    for (size_t i = 0; i < g_Game.obstacles.size(); ++i)
+    {
+        AABB parts[3];
+        const int n = ObstacleParts(g_Game.obstacles[i], parts);
+        for (int k = 0; k < n; ++k)
+            out->push_back(parts[k]);
+    }
+    out->push_back(g_Game.PlayerBox());
+}
+
+bool FreeCameraBlockedAt(const glm::vec3& world)
+{
+    return FreeCameraBlocked(g_Game.track, g_FreeCameraSolids, world, FREE_CAMERA_RADIUS);
 }
 
 // Rotação do poste em torno de Y: o braço (-Z do modelo) aponta para o centro

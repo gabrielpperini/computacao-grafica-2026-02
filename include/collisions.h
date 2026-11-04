@@ -1,6 +1,8 @@
 #ifndef _COLLISIONS_H
 #define _COLLISIONS_H
 
+#include <vector>
+
 #include <glm/vec3.hpp>
 
 #include "track.h"
@@ -121,5 +123,30 @@ bool PointInsideTunnelSegment(const TrackSegment& seg, glm::vec3 point);
 
 // Idem para qualquer túnel mantido da pista.
 bool PointInsideTunnel(const Track& track, glm::vec3 point);
+
+// ---- Câmera livre x cenário ----
+//
+// A câmera livre é uma esfera de raio 'radius' (veja FREE_CAMERA_RADIUS em
+// camera.h). As peças sólidas do túnel (paredes, abóbada e portais) são
+// testadas pela forma exata da seção, em coordenadas de pista
+// p = (lateral, altura, s): a casca da abóbada é a região entre o intradorso
+// (TUNNEL_INNER_HALF_WIDTH) e o extradorso (+ TUNNEL_WALL_THICKNESS), no
+// trecho do segmento; cada portal é uma parede de 2 *
+// TUNNEL_PORTAL_HALF_WIDTH x TUNNEL_PORTAL_HEIGHT x TUNNEL_PORTAL_DEPTH com a
+// abertura do intradorso, logo antes da entrada e logo depois da saída. A
+// esfera é aproximada pela região sólida inflada de 'radius' (conservador
+// nos cantos). 'seg' que não é túnel: false.
+bool SphereHitsTunnel(const TrackSegment& seg, glm::vec3 p, float radius);
+
+// A câmera livre (esfera de centro 'world', em coordenadas de MUNDO) encosta
+// em algo sólido? Chão: centro abaixo de 'radius' (na altura da pista, se o
+// ponto se projeta nela; senão, y do mundo). Perto da pista
+// (Track::WorldToTrack até FREE_CAMERA_TRACK_REACH m): as caixas 'solids' em
+// coordenadas de pista (obstáculos, muros, postes, prédios, jogador) com
+// SphereIntersectsAABB e as peças dos túneis mantidos (SphereHitsTunnel).
+// Longe da pista, só o chão (lá não há cenário gerado).
+const float FREE_CAMERA_TRACK_REACH = 30.0f; // m
+bool FreeCameraBlocked(const Track& track, const std::vector<AABB>& solids, glm::vec3 world,
+                       float radius);
 
 #endif

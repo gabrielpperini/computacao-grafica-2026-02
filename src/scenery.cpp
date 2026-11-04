@@ -523,3 +523,42 @@ float StepTunnelDimming(float dimming, bool camera_in_tunnel, float dt)
         return std::min(target, dimming + step);
     return std::max(target, dimming - step);
 }
+
+void AppendSceneryCollisionBoxes(const Track& track, float player_s, std::vector<AABB>* out)
+{
+    std::vector<TunnelSpan> ranges;
+    RetainingWallRanges(track, player_s, &ranges);
+    const float half_t = 0.5f * RETAINING_WALL_THICKNESS;
+    for (size_t i = 0; i < ranges.size(); ++i)
+        for (int side = -1; side <= 1; side += 2) {
+            AABB b;
+            b.min = glm::vec3(side * RETAINING_WALL_X - half_t, 0.0f, ranges[i].s0);
+            b.max = glm::vec3(side * RETAINING_WALL_X + half_t, RETAINING_WALL_HEIGHT, ranges[i].s1);
+            out->push_back(b);
+        }
+
+    std::vector<LampInstance> lamps;
+    ComputeLamps(track, player_s, &lamps);
+    for (size_t i = 0; i < lamps.size(); ++i) {
+        const LampInstance& l = lamps[i];
+        const float side = (l.x < 0.0f) ? -1.0f : 1.0f;
+        const float ax = std::fabs(l.x);
+        // Haste: de LAMP_OFFSET_X - meia espessura até LAMP_POLE_BACK atrás dele.
+        AABB pole;
+        pole.min = glm::vec3(ax - LAMP_POLE_HALF, 0.0f, l.s - LAMP_POLE_HALF);
+        pole.max = glm::vec3(ax + LAMP_POLE_BACK, LAMP_HEIGHT + LAMP_HEAD_HEIGHT, l.s + LAMP_POLE_HALF);
+        // Braço e cabeça: para dentro da pista, na altura da luz.
+        AABB arm;
+        arm.min = glm::vec3(ax - LAMP_ARM_REACH, LAMP_HEIGHT - LAMP_HEAD_HEIGHT, l.s - LAMP_HEAD_SIZE);
+        arm.max = glm::vec3(ax, LAMP_HEIGHT + 3.0f * LAMP_HEAD_HEIGHT, l.s + LAMP_HEAD_SIZE);
+        AABB boxes[2] = {pole, arm};
+        for (int k = 0; k < 2; ++k) {
+            if (side < 0.0f) { // espelha para o lado esquerdo
+                const float x0 = -boxes[k].max.x, x1 = -boxes[k].min.x;
+                boxes[k].min.x = x0;
+                boxes[k].max.x = x1;
+            }
+            out->push_back(boxes[k]);
+        }
+    }
+}

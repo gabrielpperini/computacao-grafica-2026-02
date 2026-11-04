@@ -221,6 +221,62 @@ TrackFrame Track::FrameInSegment(const TrackSegment& seg, float s)
     return f;
 }
 
+bool Track::WorldToTrack(glm::vec3 world, float max_lateral, glm::vec3* out) const
+{
+    bool found = false;
+    glm::vec3 best(0.0f);
+    for (size_t i = 0; i < segments_.size(); ++i) {
+        const TrackSegment& seg = segments_[i];
+        const float h0 = seg.start_heading;
+        const float k = seg.curvature;
+        float u, lat;
+        if (std::fabs(k) < kMinCurvature) {
+            // Reta: eixo = p0 + u * forward(h0); right(h0) dá a lateral.
+            const float dx = world.x - seg.start_position.x;
+            const float dz = world.z - seg.start_position.z;
+            u = dx * (-std::sin(h0)) + dz * (-std::cos(h0));
+            lat = dx * std::cos(h0) + dz * (-std::sin(h0));
+        } else {
+            // Curva: de FrameInSegment, posição(h) = C + right(h) / k, com o
+            // centro C = p0 - right(h0) / k. Para um ponto P, d = P - C é
+            // paralelo a right(h) (k > 0: mesmo sentido; k < 0: oposto), e a
+            // lateral x satisfaz d = right(h) * (1/k + x).
+            const float cx = seg.start_position.x - std::cos(h0) / k;
+            const float cz = seg.start_position.z + std::sin(h0) / k;
+            const float dx = world.x - cx;
+            const float dz = world.z - cz;
+            const float dist = std::sqrt(dx * dx + dz * dz);
+            if (dist < 1e-4f)
+                continue; // no centro do arco: direção indefinida
+            const float sign = (k > 0.0f) ? 1.0f : -1.0f;
+            // right(h) = (cos h, -sin h) = sign * d / |d|
+            const float h = std::atan2(-sign * dz, sign * dx);
+            float dh = h - h0;
+            const float pi = 3.14159265f;
+            while (dh > pi) dh -= 2.0f * pi;
+            while (dh <= -pi) dh += 2.0f * pi;
+            u = dh / k;
+            lat = sign * dist - 1.0f / k;
+            // Do outro lado do centro (|lateral| >= raio) a projeção não é única.
+            if (std::fabs(lat) >= std::fabs(1.0f / k))
+                continue;
+        }
+        const float eps = 1e-3f;
+        if (u < -eps || u > seg.length + eps)
+            continue;
+        if (std::fabs(lat) >= max_lateral)
+            continue;
+        if (!found || std::fabs(lat) < std::fabs(best.x)) {
+            found = true;
+            const float uc = std::max(0.0f, std::min(seg.length, u));
+            best = glm::vec3(lat, world.y - seg.start_position.y, seg.s_start + uc);
+        }
+    }
+    if (found)
+        *out = best;
+    return found;
+}
+
 TrackFrame Track::FrameAt(float s) const
 {
     const TrackSegment* seg = SegmentAt(s);
